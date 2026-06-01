@@ -13,7 +13,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$global:KbisRepo   = 'C:\Code RIG\RigApplication-testing\Source\Wpf'
+$global:KbisRepo   = $PSScriptRoot   # repo root (RIG-TV) ; auto-correct dans chaque worktree (projets a la racine)
 $global:KbisTvDir  = "$env:LOCALAPPDATA\rig-wpf-testviewer"
 $global:KbisCapPs1 = 'C:\Code RIG\Audit\screenshots-loop\kbis-tvdrive-B2\capture-tv.ps1'
 

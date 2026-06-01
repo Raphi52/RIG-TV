@@ -8,8 +8,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 
-$repoRoot = 'C:\Code RIG\RigApplication-testing'
-$projectDir = Join-Path $repoRoot ("Source\Wpf\Rig.Wpf.Kbis.{0}" -f $Project)
+$repoRoot = $PSScriptRoot   # repo root (RIG-TV) ; auto-correct dans chaque worktree
+$projectDir = Join-Path $repoRoot ("Rig.Wpf.Kbis.{0}" -f $Project)
 $csproj = Join-Path $projectDir ("Rig.Wpf.Kbis.{0}.csproj" -f $Project)
 $exe = Join-Path $projectDir ("bin\Release\net48\Rig.Wpf.Kbis.{0}.exe" -f $Project)
 
