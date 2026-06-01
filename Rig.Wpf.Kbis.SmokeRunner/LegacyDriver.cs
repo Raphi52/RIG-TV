@@ -3527,6 +3527,567 @@ public sealed class LegacyDriver : IDisposable
         throw new Exception($"Aucune des {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture. Dernière erreur : {last?.Message}");
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // DCADEMAT validation — step "Action" (Étape 3)
+    // Après OpenFirstDemandeAndVerify(dcademat:true) → écran "Configurer le dépôt".
+    // La grille "Exercices" a une 1re colonne "DCA" (case à cocher). Workflow :
+    //   a. cocher la case DCA de la 1re ligne d'exercice (si pas déjà cochée),
+    //   b. cliquer "Valider" (ClickValiderInActiveForm),
+    //   c. vérifier que les colonnes n° de dépôt / facture / demande apparaissent
+    //      (au minimum le n° de demande, préfixe "D") via lecture MSAA.
+    //
+    // La grille est un DataGridView WinForms custom → souvent aveugle à UIA (Grid/Table
+    // pattern absent). On réutilise donc le pattern MSAA de FindDemandeCells/CollectCellsMsaa
+    // (AccessibleObjectFromWindow OBJID_CLIENT + Walk récursif + accLocation centre écran).
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Sur l'écran "Configurer le dépôt" d'un DCADEMAT : coche la case "DCA" de la 1re ligne
+    /// d'exercice (si nécessaire), clique "Valider", puis vérifie le succès en lisant via MSAA
+    /// les colonnes n° (dépôt/facture/demande) — assertion : au moins le n° de demande ("D…")
+    /// apparaît. Les 3 valeurs sont loguées.
+    /// </summary>
+    public void ConfigurerDepotDcaEtValider(string numGestionAttendu)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + OpenFirstDemandeAndVerify doivent être appelés avant ConfigurerDepotDcaEtValider()");
+
+        EnsureWindowMaximized();
+
+        // ── Détection de l'écran actif ───────────────────────────────────────
+        // ⚠ Découverte run 2026-06-01 : une demande DCADEMAT "Qualifiée" (déjà configurée)
+        // ré-ouverte depuis l'alerte "DCA démat en attente" arrive DIRECTEMENT sur l'écran
+        // "Tableau des éditions" (envoi des courriers/pièces RCS par mail + impression), PAS
+        // sur "Configurer le dépôt" (grille Exercices + case DCA). Le dépôt est déjà créé.
+        // Sur cet écran, cliquer le bouton "Valider" global déclencherait l'ENVOI/IMPRESSION
+        // (colonne 🖨 cochée) → GARDE NE PAS IMPRIMER : on NE clique PAS Valider et on signale
+        // le blocage (mauvais état de la demande) au lieu de risquer un envoi/print.
+        if (IsTableauEditionsScreen())
+        {
+            DumpMsaaTree("Tableau des éditions (DCADEMAT déjà qualifiée — pas l'écran Configurer le dépôt)");
+            try { CaptureScreenshot("dca-validation-tableau-editions-bloque"); } catch { }
+            throw new Exception(
+                "BLOCAGE : la demande DCADEMAT ré-ouverte est déjà QUALIFIÉE et arrive sur l'écran "
+                + "'Tableau des éditions' (envoi courriers/pièces RCS), PAS sur 'Configurer le dépôt' "
+                + "(case DCA + grille Exercices). Le dépôt est déjà créé. Cliquer 'Valider' ici "
+                + "déclencherait un envoi/impression (garde NE PAS IMPRIMER respectée → non cliqué). "
+                + "Il faut une demande DCADEMAT au stade configuration (override RIG_ALERTES_DCADEMAT "
+                + "vers une demande non encore qualifiée, ou un autre jeu de données DEV).");
+        }
+
+        // ── (a) Cocher la case DCA de la 1re ligne d'exercice ────────────────
+        // Stratégie : UIA `DataItem` D'ABORD (la grille Exercices est un DataGridView WinForms qui
+        // expose ses CELLULES data en UIA comme DataItem — pattern PROUVÉ par UncheckImprimanteAndValidate
+        // côté XEX : "Imprimer Ligne 1"). La case DCA = DataItem dont le Name contient "DCA Ligne N".
+        // MSAA n'expose QUE les en-têtes de colonnes de ce DGV (vérifié runs 2026-06-01) → UIA est le bon chemin.
+        var dcaCell = FindDcaCheckboxDataItem();
+        if (dcaCell is not null)
+        {
+            CheckDcaCellAndValidateUia(dcaCell);
+        }
+        else
+        {
+            // Fallback MSAA (au cas où une autre version de RIG exposerait les lignes data en MSAA).
+            Console.WriteLine("      → Case DCA non trouvée en UIA (DataItem) — fallback MSAA…");
+            var grilleHwnd = FindExercicesGridHwnd();
+            var firstRow = grilleHwnd != IntPtr.Zero ? FindFirstExerciceRowMsaa(grilleHwnd) : null;
+            if (firstRow is null)
+            {
+                Console.WriteLine("      → Aucune case DCA atteignable (ni UIA DataItem, ni MSAA ligne data). Dumps :");
+                DumpExercicesDataItemsUia();
+                DumpDescendants(_window!, maxDepth: 4);
+                if (grilleHwnd != IntPtr.Zero) DumpMsaaTree("Configurer le dépôt — grille Exercices (0 ligne DATA, en-têtes seules)");
+                try { CaptureScreenshot("dca-validation-exercices-no-datarow"); } catch { }
+                throw new Exception("Case 'DCA' (grille Exercices) inatteignable : ni UIA DataItem ('DCA Ligne N'), "
+                    + "ni ligne data MSAA (seules les en-têtes de colonnes sont exposées). Voir dumps + screenshot "
+                    + "pour ajuster les sélecteurs.");
+            }
+            var (dcaCx, dcaCy, rowText, alreadyChecked) = firstRow.Value;
+            Console.WriteLine($"      → 1re ligne exercice (MSAA) : '{rowText}' ; case DCA @ ({dcaCx},{dcaCy}) ; cochée={alreadyChecked}");
+            if (!alreadyChecked)
+            {
+                Console.WriteLine("      → Coche la case DCA (clic cellule la plus à gauche, MSAA)");
+                Interaction.ClickAtScreenPoint(dcaCx, dcaCy, _app.ProcessId, doubleClick: false);
+                Thread.Sleep(600);
+            }
+            else Console.WriteLine("      → Case DCA déjà cochée (MSAA) — pas de clic.");
+            // ── (b) Valider (chemin MSAA) ──
+            ClickValiderInActiveForm("Configurer le dépôt (DCADEMAT)");
+        }
+
+        // ── (c) Vérifier le succès : n° dépôt / facture / demande apparaissent ─
+        // Poll-jusqu'à-condition : RIG crée le dépôt (DB + n° de demande) en asynchrone ; on relit la
+        // grille jusqu'à voir un n° de demande ("D…"), max 30s. Lecture UIA (DataItem) ET MSAA agrégés.
+        Console.WriteLine("      → Attente apparition n° de dépôt/facture/demande (relecture UIA+MSAA, max 30s)…");
+        var sw = Stopwatch.StartNew();
+        string? numDepot = null, numFacture = null, numDemande = null;
+        string lastAgg = "";
+        while (sw.Elapsed.TotalSeconds < 30 && numDemande is null)
+        {
+            string uiaText = ReadExercicesDataItemsTextUia();
+            string msaaText = "";
+            var h = FindExercicesGridHwnd();
+            if (h != IntPtr.Zero) msaaText = ReadAllExerciceRowsTextMsaa(h);
+            lastAgg = (uiaText + " || " + msaaText).Trim();
+            numDepot   = KbisTextChecks.FindNumDepot(lastAgg);
+            numFacture = KbisTextChecks.FindNumFacture(lastAgg);
+            numDemande = KbisTextChecks.FindNumDemande(lastAgg);
+            if (numDemande is null) Thread.Sleep(500);
+        }
+
+        Console.WriteLine($"      → Colonnes lues après Valider ({sw.Elapsed.TotalSeconds:F1}s) :");
+        Console.WriteLine($"          n° de dépôt   : {numDepot   ?? "(absent)"}");
+        Console.WriteLine($"          n° de facture : {numFacture ?? "(absent)"}");
+        Console.WriteLine($"          n° de demande : {numDemande ?? "(absent)"}");
+
+        if (numDemande is null)
+        {
+            Console.WriteLine($"      → Texte agrégé UIA+MSAA de la grille (pour diag) : '{lastAgg}'");
+            DumpExercicesDataItemsUia();
+            try { CaptureScreenshot("dca-validation-no-numero"); } catch { }
+            throw new Exception("Échec validation DCADEMAT : aucun n° de demande (préfixe 'D') détecté après Valider " +
+                "(le dépôt n'a pas été créé, ou les colonnes n° ne sont pas lisibles — voir dump + screenshot).");
+        }
+
+        Console.WriteLine($"      ✓ Validation DCADEMAT OK — dépôt créé (n° de demande {numDemande}"
+            + (numDepot != null ? $", n° de dépôt {numDepot}" : "")
+            + (numFacture != null ? $", n° de facture {numFacture}" : "") + ").");
+    }
+
+    /// <summary>
+    /// Cherche la case "DCA" de la 1re ligne DATA de la grille Exercices via UIA `DataItem` (pattern XEX :
+    /// le DataGridView WinForms expose ses cellules comme DataItem "Col Ligne N"). On vise "DCA Ligne N" avec
+    /// N>=1 (data), fallback "DCA Ligne 0". Retourne la cellule UIA ou null. Visible (non offscreen) requis.
+    /// </summary>
+    private AutomationElement? FindDcaCheckboxDataItem()
+    {
+        if (_window is null) return null;
+        List<AutomationElement> all;
+        try
+        {
+            all = _window.FindAllDescendants()
+                .Where(c => { try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; } })
+                .ToList();
+        }
+        catch { return null; }
+
+        bool IsDataItem(AutomationElement c)
+        { try { return c.ControlType.ToString().IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; } }
+
+        // "DCA Ligne N" data rows (N>=1), trié par Y (la 1re ligne en haut). Exclut "DCACO …" (autre colonne).
+        var dcaCells = all.Where(c =>
+        {
+            if (!IsDataItem(c)) return false;
+            var n = SafeText(() => c.Name);
+            if (n.StartsWith("DCACO", StringComparison.OrdinalIgnoreCase)) return false;
+            return n.StartsWith("DCA Ligne ", StringComparison.OrdinalIgnoreCase)
+                && !n.StartsWith("DCA Ligne 0", StringComparison.OrdinalIgnoreCase);
+        }).OrderBy(c => { try { return c.BoundingRectangle.Y; } catch { return double.MaxValue; } }).ToList();
+
+        var cell = dcaCells.FirstOrDefault();
+        if (cell is null)
+        {
+            // Fallback : "DCA Ligne 0" (selon l'indexation des lignes du DGV).
+            cell = all.FirstOrDefault(c => IsDataItem(c)
+                && SafeText(() => c.Name).Equals("DCA Ligne 0", StringComparison.OrdinalIgnoreCase));
+        }
+        if (cell is not null)
+        {
+            var r = cell.BoundingRectangle;
+            string toggle = "?"; try { if (cell.Patterns.Toggle.IsSupported) toggle = cell.Patterns.Toggle.Pattern.ToggleState.Value.ToString(); } catch { }
+            Console.WriteLine($"      → Case DCA (UIA DataItem) : Name='{SafeText(() => cell.Name)}' Rect=({r.X},{r.Y} {r.Width}×{r.Height}) Toggle={toggle}");
+        }
+        return cell;
+    }
+
+    /// <summary>État coché d'une cellule DCA UIA (TogglePattern.On, sinon Value "1"/"true"/"vrai"/"oui").</summary>
+    private bool IsDcaCellChecked(AutomationElement cell)
+    {
+        try { if (cell.Patterns.Toggle.IsSupported) return cell.Patterns.Toggle.Pattern.ToggleState.Value == ToggleState.On; } catch { }
+        try
+        {
+            if (cell.Patterns.Value.IsSupported)
+            {
+                var v = (cell.Patterns.Value.Pattern.Value.Value ?? "").Trim().ToLowerInvariant();
+                return v == "1" || v == "true" || v == "vrai" || v == "oui" || v == "coché" || v == "coche";
+            }
+        }
+        catch { }
+        return false;
+    }
+
+    /// <summary>Coche (si nécessaire) la case DCA UIA puis clique Valider. Toggle via TogglePattern si
+    /// dispo, sinon clic écran au centre de la cellule (pattern XEX). Confirme l'état via poll.</summary>
+    private void CheckDcaCellAndValidateUia(AutomationElement dcaCell)
+    {
+        bool already = IsDcaCellChecked(dcaCell);
+        if (already) Console.WriteLine("      → Case DCA déjà cochée (UIA) — pas de clic.");
+        else
+        {
+            Console.WriteLine("      → Coche la case DCA (UIA)…");
+            var r = dcaCell.BoundingRectangle;
+            int cx = (int)(r.X + r.Width / 2), cy = (int)(r.Y + r.Height / 2);
+            bool toggled = false;
+            try { if (dcaCell.Patterns.Toggle.IsSupported) { dcaCell.Patterns.Toggle.Pattern.Toggle(); toggled = true; } } catch { }
+            if (!toggled)
+            {
+                // Pas de TogglePattern → clic écran sur la cellule (CheckBoxCell DGV) ; double pour fiabiliser.
+                Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false);
+            }
+            // Poll-jusqu'à-condition (max 4s), re-clic une fois si besoin.
+            var swChk = Stopwatch.StartNew();
+            bool now = false; int reclicks = 0;
+            while (swChk.ElapsedMilliseconds < 4000)
+            {
+                Thread.Sleep(300);
+                var fresh = FindDcaCheckboxDataItem();
+                now = fresh is not null && IsDcaCellChecked(fresh);
+                if (now) break;
+                if (swChk.ElapsedMilliseconds > 1500 && reclicks == 0)
+                {
+                    reclicks++;
+                    Console.WriteLine("      → Case DCA toujours décochée après 1,5s — re-clic (double)");
+                    Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: true);
+                }
+            }
+            Console.WriteLine(now
+                ? $"      ✓ Case DCA cochée (confirmé UIA en {swChk.ElapsedMilliseconds}ms)"
+                : "      ⚠ État coché non confirmé via UIA — on tente Valider quand même (le succès = apparition des n°)");
+        }
+
+        // ── (b) Valider ──
+        ClickValiderInActiveForm("Configurer le dépôt (DCADEMAT)");
+    }
+
+    /// <summary>Texte agrégé des DataItem visibles de la grille Exercices (UIA) — pour détecter les n°
+    /// dépôt/facture/demande après Valider quand ils s'affichent comme cellules DataItem.</summary>
+    private string ReadExercicesDataItemsTextUia()
+    {
+        if (_window is null) return "";
+        try
+        {
+            var names = _window.FindAllDescendants()
+                .Where(c => { try { return c.IsAvailable && !c.IsOffscreen && c.ControlType.ToString().IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; } })
+                .Select(c =>
+                {
+                    var nm = SafeText(() => c.Name);
+                    string val = ""; try { if (c.Patterns.Value.IsSupported) val = c.Patterns.Value.Pattern.Value.Value ?? ""; } catch { }
+                    return (nm + " " + val).Trim();
+                })
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+            return string.Join(" ; ", names);
+        }
+        catch { return ""; }
+    }
+
+    /// <summary>Dump diagnostic des DataItem visibles de la grille Exercices (Name + rect + Toggle/Value) —
+    /// pour ajuster les sélecteurs si la case DCA / les n° ne sont pas trouvés.</summary>
+    private void DumpExercicesDataItemsUia()
+    {
+        if (_window is null) return;
+        Console.WriteLine("      [DUMP UIA DataItems] grille Exercices (visibles) :");
+        try
+        {
+            int n = 0;
+            foreach (var c in _window.FindAllDescendants())
+            {
+                bool di; try { di = c.IsAvailable && !c.IsOffscreen && c.ControlType.ToString().IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) >= 0; } catch { continue; }
+                if (!di) continue;
+                var r = c.BoundingRectangle;
+                string toggle = "-"; try { if (c.Patterns.Toggle.IsSupported) toggle = c.Patterns.Toggle.Pattern.ToggleState.Value.ToString(); } catch { }
+                string val = "-"; try { if (c.Patterns.Value.IsSupported) val = c.Patterns.Value.Pattern.Value.Value ?? ""; } catch { }
+                Console.WriteLine($"      [DUMP UIA DataItems]   Name='{SafeText(() => c.Name)}' Rect=({(int)r.X},{(int)r.Y} {(int)r.Width}×{(int)r.Height}) Toggle={toggle} Value='{val}'");
+                if (++n > 60) { Console.WriteLine("      [DUMP UIA DataItems]   … (tronqué à 60)"); break; }
+            }
+            if (n == 0) Console.WriteLine("      [DUMP UIA DataItems]   (aucun DataItem visible)");
+        }
+        catch (Exception ex) { Console.WriteLine($"      [DUMP UIA DataItems] scan jeté : {ex.GetType().Name}"); }
+    }
+
+    /// <summary>HWND de la grille "Exercices" (DataGridView WinForms) de l'écran "Configurer le dépôt".
+    /// Essaye AutomationId connus, sinon un Table/DataGrid descendant, sinon la fenêtre active. Le hwnd
+    /// sert à AccessibleObjectFromWindow (MSAA) car la grille est souvent aveugle à UIA.</summary>
+    private IntPtr FindExercicesGridHwnd()
+    {
+        AutomationElement? grid =
+               FindByAutomationId("dgvExercices")
+            ?? FindByAutomationId("dgvExercice")
+            ?? FindByAutomationId("ultraGridExercices")
+            ?? FindByAutomationId("gridExercices")
+            ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table))
+            ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid));
+
+        IntPtr hwnd = IntPtr.Zero;
+        if (grid is not null)
+        {
+            try { hwnd = grid.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+            if (hwnd == IntPtr.Zero)
+            {
+                try { var inner = grid.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)); if (inner != null) hwnd = inner.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+            }
+        }
+        if (hwnd == IntPtr.Zero) { try { hwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { } }
+        return hwnd;
+    }
+
+    /// <summary>true si l'écran actif est le "Tableau des éditions" DCADEMAT (envoi courriers/pièces RCS),
+    /// PAS "Configurer le dépôt". Détecté via UIA : présence des libellés "Tableau des éditions" /
+    /// "Détail de l'édition" / "Modèle du courriel" / "Corps du courriel". Sur cet écran, on ne clique
+    /// PAS Valider (garde NE PAS IMPRIMER : la colonne 🖨 est cochée → un envoi/impression partirait).</summary>
+    private bool IsTableauEditionsScreen()
+    {
+        if (_window is null) return false;
+        string[] markers = { "Tableau des éditions", "Détail de l'édition", "Modèle du courriel", "Corps du courriel" };
+        try
+        {
+            int hits = 0;
+            foreach (var c in _window.FindAllDescendants())
+            {
+                var n = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(n)) continue;
+                foreach (var m in markers)
+                    if (n.IndexOf(m, StringComparison.OrdinalIgnoreCase) >= 0) { hits++; break; }
+                if (hits >= 2) { Console.WriteLine("      → Écran détecté : 'Tableau des éditions' (DCADEMAT déjà qualifiée)."); return true; }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ IsTableauEditionsScreen scan jeté : {ex.GetType().Name}"); }
+        return false;
+    }
+
+    /// <summary>Lit via MSAA la 1re ligne "data" de la grille Exercices : retourne le centre écran de la
+    /// cellule la plus à GAUCHE (= case "DCA"), le texte agrégé de la ligne, et l'état coché (heuristique
+    /// sur accState CHECKED / accValue). Réutilise le pattern oleacc de CollectCellsMsaa.</summary>
+    private (int dcaCx, int dcaCy, string rowText, bool checkedState)? FindFirstExerciceRowMsaa(IntPtr hwnd)
+    {
+        var rows = CollectExerciceRowsMsaa(hwnd, max: 1);
+        return rows.Count > 0 ? rows[0] : ((int, int, string, bool)?)null;
+    }
+
+    /// <summary>Texte agrégé (toutes lignes data jointes) de la grille Exercices via MSAA — sert à
+    /// détecter les n° de dépôt/facture/demande après Valider.</summary>
+    private string ReadAllExerciceRowsTextMsaa(IntPtr hwnd)
+    {
+        var rows = CollectExerciceRowsMsaa(hwnd, max: 12);
+        return string.Join(" || ", rows.Select(r => r.rowText));
+    }
+
+    private const int STATE_SYSTEM_CHECKED = 0x10;
+
+    /// <summary>
+    /// Parcourt l'arbre MSAA du client de <paramref name="hwnd"/> (DataGridView Exercices) et collecte
+    /// jusqu'à <paramref name="max"/> LIGNES data : pour chaque ligne, le texte agrégé (accName+accValue
+    /// de la ligne et de ses cellules), le centre écran de la cellule la plus à gauche (case DCA), et un
+    /// état coché best-effort (STATE_SYSTEM_CHECKED sur la ligne/1re cellule, ou accValue "1"/"true"/"vrai"/"x"/"oui").
+    /// Lecture seule. Pattern identique à CollectCellsMsaa mais SANS le filtre ';' (la grille Exercices
+    /// n'a pas forcément le même format de ligne que la grille des demandes).
+    /// </summary>
+    private List<(int dcaCx, int dcaCy, string rowText, bool checkedState)> CollectExerciceRowsMsaa(IntPtr hwnd, int max)
+    {
+        var results = new List<(int, int, string, bool)>();
+        if (hwnd == IntPtr.Zero) return results;
+        const uint OBJID_CLIENT = 0xFFFFFFFC;
+        var iid = IID_IAccessible;
+        Accessibility.IAccessible? root = null;
+        try
+        {
+            if (AccessibleObjectFromWindow(hwnd, OBJID_CLIENT, ref iid, out var obj) != 0 || obj is not Accessibility.IAccessible a)
+            { Console.WriteLine("      ⓘ AccessibleObjectFromWindow (Exercices) : pas d'IAccessible."); return results; }
+            root = a;
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ AccessibleObjectFromWindow (Exercices) jeté : {ex.Message}"); return results; }
+
+        bool LooksChecked(Accessibility.IAccessible node, object childId, string value)
+        {
+            try
+            {
+                var st = node.get_accState(childId);
+                if (st is int si && (si & STATE_SYSTEM_CHECKED) != 0) return true;
+            }
+            catch { }
+            var v = (value ?? "").Trim().ToLowerInvariant();
+            return v == "1" || v == "true" || v == "vrai" || v == "x" || v == "oui" || v == "checked" || v == "coché" || v == "coche";
+        }
+
+        // Une "ligne" du DGV = un IAccessible de role ROW (0x1C) ; ses enfants = cellules.
+        // Mais selon le custom DGV, la ligne peut être un enfant simple avec accName concaténé.
+        const int ROLE_SYSTEM_ROW = 0x1C;
+        const int ROLE_SYSTEM_ROWHEADER = 0x20;
+        const int ROLE_SYSTEM_COLUMNHEADER = 0x19;
+
+        // La bande d'en-tête de colonnes du DGV custom passe parfois par MSAA comme une "ligne"
+        // dont le texte agrège les TITRES de colonnes (souvent doublés : "DCA DCA", "montant facturé
+        // montant facturé"). On l'écarte pour ne garder que les vraies lignes data (sinon on cliquerait
+        // sur l'en-tête au lieu d'une case DCA de ligne — cf. run 2026-06-01).
+        bool IsHeaderRowText(string txt)
+        {
+            if (string.IsNullOrWhiteSpace(txt)) return false;
+            string[] colTitles = { "comptes confidentiels", "présentation simplifiée", "montant facturé",
+                                    "dispense annexe", "dérogation clôture", "non approbation", "Date de clôture" };
+            int titleHits = colTitles.Count(t => txt.IndexOf(t, StringComparison.OrdinalIgnoreCase) >= 0);
+            return titleHits >= 2;
+        }
+
+        void Walk(Accessibility.IAccessible node, int depth)
+        {
+            if (results.Count >= max || depth > 8) return;
+            int count; try { count = node.accChildCount; } catch { return; }
+            if (count <= 0) return;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(node, 0, count, kids, out got) != 0) return; } catch { return; }
+
+            for (int i = 0; i < got && results.Count < max; i++)
+            {
+                var k = kids[i];
+                if (k is Accessibility.IAccessible childAcc)
+                {
+                    int role = 0; try { role = Convert.ToInt32(childAcc.get_accRole(0)); } catch { }
+                    if (role == ROLE_SYSTEM_COLUMNHEADER || role == ROLE_SYSTEM_ROWHEADER) continue; // skip headers
+
+                    if (role == ROLE_SYSTEM_ROW)
+                    {
+                        // Ligne data : agrège les cellules, prend la 1re cellule (gauche) comme case DCA.
+                        var (rowText, leftCx, leftCy, isChecked) = ReadRowCells(childAcc);
+                        if (IsHeaderRowText(rowText)) { Console.WriteLine("      → (ligne d'en-tête de colonnes ignorée)"); continue; }
+                        if (leftCx != int.MinValue)
+                            results.Add((leftCx, leftCy, rowText, isChecked));
+                        continue;
+                    }
+
+                    // Conteneur (table/client/groupe) → descendre.
+                    Walk(childAcc, depth + 1);
+                }
+                else if (k is int childId && childId != 0)
+                {
+                    // Cellule/élément simple porté par childId : si la ligne entière est exposée ici (accName
+                    // concaténé par ';'), on la traite comme une ligne ; sinon on l'ignore (cellule isolée).
+                    string text = (SafeAcc(() => node.get_accName(childId)) + " " + SafeAcc(() => node.get_accValue(childId))).Trim();
+                    if (text.IndexOf(';') >= 0 && !IsHeaderRowText(text))
+                    {
+                        try
+                        {
+                            node.accLocation(out int l, out int t, out int w, out int h, childId);
+                            // case DCA = extrême gauche de la ligne (la 1re colonne) ; on vise ~10px du bord gauche.
+                            int leftCx = l + Math.Min(12, w / 2);
+                            int leftCy = t + h / 2;
+                            bool isChecked = LooksChecked(node, childId, SafeAcc(() => node.get_accValue(childId)));
+                            results.Add((leftCx, leftCy, text, isChecked));
+                        }
+                        catch { }
+                    }
+                    else if (text.IndexOf(';') >= 0)
+                    {
+                        Console.WriteLine("      → (ligne d'en-tête de colonnes ignorée)");
+                    }
+                }
+            }
+        }
+
+        // Lit les cellules d'une LIGNE (IAccessible role ROW) : texte agrégé + centre de la 1re cellule.
+        (string rowText, int leftCx, int leftCy, bool isChecked) ReadRowCells(Accessibility.IAccessible row)
+        {
+            int leftCx = int.MinValue, leftCy = 0; bool isChecked = false; int minX = int.MaxValue;
+            var parts = new List<string>();
+            // accValue de la ligne elle-même (parfois concaténé)
+            var rowOwn = (SafeAcc(() => row.get_accName(0)) + " " + SafeAcc(() => row.get_accValue(0))).Trim();
+            if (!string.IsNullOrWhiteSpace(rowOwn)) parts.Add(rowOwn);
+
+            int cc; try { cc = row.accChildCount; } catch { cc = 0; }
+            if (cc > 0)
+            {
+                var cells = new object[cc]; int cgot;
+                try
+                {
+                    if (AccessibleChildren(row, 0, cc, cells, out cgot) == 0)
+                    {
+                        for (int j = 0; j < cgot; j++)
+                        {
+                            object cid = cells[j] is Accessibility.IAccessible ? (object)0 : (cells[j] is int ci ? ci : (j + 1));
+                            Accessibility.IAccessible cellNode = cells[j] as Accessibility.IAccessible ?? row;
+                            string cval = SafeAcc(() => cellNode.get_accValue(cid));
+                            string cname = SafeAcc(() => cellNode.get_accName(cid));
+                            string ctext = (cname + " " + cval).Trim();
+                            if (!string.IsNullOrWhiteSpace(ctext)) parts.Add(ctext);
+                            try
+                            {
+                                cellNode.accLocation(out int l, out int t, out int w, out int h, cid);
+                                if (l < minX && w > 0 && h > 0)
+                                {
+                                    minX = l; leftCx = l + Math.Min(12, w / 2); leftCy = t + h / 2;
+                                    isChecked = LooksChecked(cellNode, cid, cval);
+                                }
+                            }
+                            catch { }
+                        }
+                    }
+                }
+                catch { }
+            }
+            // Fallback localisation : si aucune cellule n'a donné de coords, utilise la ligne entière (bord gauche).
+            if (leftCx == int.MinValue)
+            {
+                try { row.accLocation(out int l, out int t, out int w, out int h, 0); leftCx = l + Math.Min(12, w / 2); leftCy = t + h / 2; isChecked = LooksChecked(row, 0, SafeAcc(() => row.get_accValue(0))); }
+                catch { }
+            }
+            return (string.Join(";", parts), leftCx, leftCy, isChecked);
+        }
+
+        try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      ⓘ Walk MSAA (Exercices) jeté : {ex.Message}"); }
+        return results;
+    }
+
+    /// <summary>Dump best-effort de l'arbre MSAA du client de la fenêtre active (rôles + noms + valeurs)
+    /// quand la grille Exercices n'est atteignable ni en UIA ni en MSAA — pour ajuster les sélecteurs.</summary>
+    private void DumpMsaaTree(string context)
+    {
+        Console.WriteLine($"      [DUMP MSAA] {context}");
+        IntPtr hwnd = IntPtr.Zero;
+        try { hwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      [DUMP MSAA] hwnd fenêtre nul — impossible."); return; }
+        const uint OBJID_CLIENT = 0xFFFFFFFC;
+        var iid = IID_IAccessible;
+        Accessibility.IAccessible? root = null;
+        try
+        {
+            if (AccessibleObjectFromWindow(hwnd, OBJID_CLIENT, ref iid, out var obj) != 0 || obj is not Accessibility.IAccessible a)
+            { Console.WriteLine("      [DUMP MSAA] pas d'IAccessible sur la fenêtre."); return; }
+            root = a;
+        }
+        catch (Exception ex) { Console.WriteLine($"      [DUMP MSAA] AccessibleObjectFromWindow jeté : {ex.Message}"); return; }
+
+        int printed = 0;
+        void Walk(Accessibility.IAccessible node, int depth)
+        {
+            if (printed > 120 || depth > 6) return;
+            int count; try { count = node.accChildCount; } catch { return; }
+            if (count <= 0) return;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(node, 0, count, kids, out got) != 0) return; } catch { return; }
+            for (int i = 0; i < got && printed <= 120; i++)
+            {
+                var k = kids[i];
+                if (k is Accessibility.IAccessible childAcc)
+                {
+                    int role = 0; try { role = Convert.ToInt32(childAcc.get_accRole(0)); } catch { }
+                    string nm = SafeAcc(() => childAcc.get_accName(0));
+                    string vl = SafeAcc(() => childAcc.get_accValue(0));
+                    if (!string.IsNullOrWhiteSpace(nm) || !string.IsNullOrWhiteSpace(vl))
+                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}role={role} name='{Trunc(nm)}' value='{Trunc(vl)}'"); printed++; }
+                    Walk(childAcc, depth + 1);
+                }
+                else if (k is int cid && cid != 0)
+                {
+                    string nm = SafeAcc(() => node.get_accName(cid));
+                    string vl = SafeAcc(() => node.get_accValue(cid));
+                    if (!string.IsNullOrWhiteSpace(nm) || !string.IsNullOrWhiteSpace(vl))
+                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}cid={cid} name='{Trunc(nm)}' value='{Trunc(vl)}'"); printed++; }
+                }
+            }
+        }
+        string Trunc(string s) => s.Length > 60 ? s.Substring(0, 60) + "…" : s;
+        try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      [DUMP MSAA] Walk jeté : {ex.Message}"); }
+        if (printed == 0) Console.WriteLine("      [DUMP MSAA] (aucun nœud nommé — fenêtre vide côté MSAA)");
+    }
+
     // ── MSAA par point (oleacc) : lire le ContextMenuStrip ouvert ───────────────
     [StructLayout(LayoutKind.Sequential)] private struct PT { public int X; public int Y; }
 

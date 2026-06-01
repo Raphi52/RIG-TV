@@ -117,4 +117,60 @@ public static class KbisTextChecks
     /// <summary>true si le K-bis va jusqu'au bout (non tronqué).</summary>
     public static bool IsComplete(string? text) =>
         !string.IsNullOrEmpty(text) && text.IndexOf("FIN DE L'EXTRAIT", StringComparison.OrdinalIgnoreCase) >= 0;
+
+    // ════════════════════════════════════════════════════════════════════════
+    // DCADEMAT "Configurer le dépôt" — preuve de succès après Valider
+    //
+    // Après avoir coché la case "DCA" et cliqué "Valider", la grille "Exercices"
+    // affiche 3 nouvelles colonnes (preuve que le dépôt a été créé) :
+    //   - n° de dépôt   : "DCA B2026/000052"  (préfixe "DCA " + lettre + année/séquence)
+    //   - n° de facture : "26-000389"         (AA-NNNNNN)
+    //   - n° de demande : "D2611200138"        (préfixe "D" + 10 chiffres)
+    //
+    // Le texte lu via MSAA (accName + accValue d'une LIGNE) concatène toutes les
+    // cellules ; ces helpers extraient chaque numéro du texte agrégé. Pur → testable.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Extrait le n° de demande DCADEMAT ("D" suivi de ≥8 chiffres, ex "D2611200138") du texte
+    /// d'une ligne de la grille Exercices. Borné par lookarounds anti-alphanum pour ne pas
+    /// attraper un fragment (le "D" doit être un vrai début de jeton). Null si absent.
+    /// </summary>
+    public static string? FindNumDemande(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        // Le "D" peut être collé à la fin d'un libellé ("n° de demandeD2611200138") quand MSAA/PdfPig
+        // concatène — on n'exclut que les chiffres et un "D" précédents (pour ne pas capturer un
+        // fragment ni couper un "DD…"), pas les autres lettres.
+        var m = Regex.Match(text, "(?<![Dd0-9])D\\d{8,}(?![0-9])");
+        return m.Success ? m.Value : null;
+    }
+
+    /// <summary>
+    /// Extrait le n° de dépôt DCADEMAT ("DCA " + lettre + "AAAA/NNNNNN", ex "DCA B2026/000052").
+    /// Tolère l'espace collé/absent par PdfPig/MSAA (DCAB2026/000052). Null si absent.
+    /// </summary>
+    public static string? FindNumDepot(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        var m = Regex.Match(text, "DCA\\s?[A-Z]\\d{4}/\\d{4,}", RegexOptions.IgnoreCase);
+        return m.Success ? Regex.Replace(m.Value, "\\s+", " ").Trim() : null;
+    }
+
+    /// <summary>
+    /// Extrait le n° de facture DCADEMAT ("AA-NNNNNN", ex "26-000389") du texte de la ligne.
+    /// Bornes anti-chiffres pour ne pas capturer une sous-séquence d'un nombre plus long. Null si absent.
+    /// </summary>
+    public static string? FindNumFacture(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return null;
+        var m = Regex.Match(text, "(?<!\\d)\\d{2}-\\d{5,}(?!\\d)");
+        return m.Success ? m.Value : null;
+    }
+
+    /// <summary>
+    /// Vrai si le texte d'une ligne "Exercices" contient au moins le n° de demande (préfixe "D"),
+    /// = critère de succès minimal après Valider (le dépôt DCADEMAT a bien été créé).
+    /// </summary>
+    public static bool HasDepotSuccess(string? rowText) => FindNumDemande(rowText) != null;
 }

@@ -522,6 +522,9 @@ internal static class Program
             kind.Contains("refus")       ? "refus" :
                                            "interrompue";
         string famille = isDca ? "DCADEMAT" : "formalité J00";
+        // Numéro de gestion utilisé pour la vérif (override RIG_LEGACY_NUM_GESTION, default 2024B00001).
+        var numGestion = Environment.GetEnvironmentVariable("RIG_LEGACY_NUM_GESTION");
+        if (string.IsNullOrWhiteSpace(numGestion)) numGestion = "2024B00001";
         return RunLegacyKbisScenario(
             scenarioId: $"dcademat-{kind}",
             banner: $"DCADEMAT : {kind} (réutilise OpenAlerteRcs / OpenFirstDemandeAndVerify)",
@@ -531,14 +534,21 @@ internal static class Program
                     () => driver.OpenAlerteRcs(alerte));
                 TryStep($"{tag} : Ouvrir demande ({famille}) → Configurer le dépôt",
                     () => driver.OpenFirstDemandeAndVerify(dcademat: isDca));
-                // TODO Étape 3 (avec supervision) — step "Action" métier selon l'état :
-                //   validation  : cocher la case 'DCA' (Configurer le dépôt) + Valider (Alt+V)
-                //                 + vérifier l'apparition de n° dépôt / n° facture / n° demande ;
+                // Étape 3 — step "Action" métier. Implémenté pour dca-validation :
+                //   cocher la case 'DCA' (grille Exercices) + Valider + vérifier l'apparition des
+                //   n° de dépôt / facture / demande (preuve que le dépôt a été créé).
+                //   ⚠ La validation ne déclenche PAS d'impression (elle crée un dépôt) — OK.
+                // Les autres kinds (reclamation/refus/interrompue/form-*) restent en v1
+                // "ouvrir alerte + demande" (Action à éprouver avec supervision).
+                if (kind == "dca-validation")
+                {
+                    TryStep($"{tag} : Action (validation) - case DCA + Valider + n° depot/facture/demande",
+                        () => driver.ConfigurerDepotDcaEtValider(numGestion));
+                }
+                // TODO Étape 3 (avec supervision) — autres kinds :
                 //   réclamation : motif INPMANQ + modifier le texte + Réclamer (Alt+R)
                 //                 + vérifier le courrier (⚠ aperçu avant impression → NE PAS IMPRIMER) ;
                 //   refus / interrompue : action correspondante.
-                // Driver "Configurer le dépôt" (case DCA / Alt+V / Alt+R / motif / colonnes n°) à créer
-                // en s'appuyant sur le pattern MSAA de FindDemandeCells (lecture DataGridView custom).
             });
     }
 

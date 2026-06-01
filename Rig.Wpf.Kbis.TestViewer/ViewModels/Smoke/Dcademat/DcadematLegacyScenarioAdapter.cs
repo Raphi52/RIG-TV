@@ -73,14 +73,19 @@ public sealed class DcadematLegacyScenarioAdapter : INotifyPropertyChanged, ISce
         get
         {
             var tag = _kind.ToUpperInvariant(); // ex "DCA-VALIDATION"
-            // v1 : terminal = "Ouvrir demande" (open alerte + open demande = vérifiable, réutilise
-            // OpenAlerteRcs/OpenFirstDemandeAndVerify). Le step "Action" métier (Valider/Réclamer/
-            // Refuser/Interrompre) viendra en Étape 3 (à éprouver contre RIG réel, avec supervision).
-            return new List<(string, string)>(Common)
+            var steps = new List<(string, string)>(Common)
             {
                 ($"{tag} : Ouvrir alerte",  "Alerte RCS + grille des demandes"),
                 ($"{tag} : Ouvrir demande", "Demande ouverte (Configurer le dépôt)"),
             };
+            // Étape 3 — dca-validation : step terminal "Action" (case DCA + Valider + n° dépôt/facture/
+            // demande). Le préfixe "{tag} : Action" matche la ligne émise par Program.cs
+            // ("DCA-VALIDATION : Action (validation) - …"). La tuile atteint Done sur cette Action.
+            // Les autres kinds (reclamation/refus/interrompue/form-*) restent en v1 : terminal =
+            // "Ouvrir demande" (l'Action métier sera ajoutée plus tard, avec supervision).
+            if (_kind == "dca-validation")
+                steps.Add(($"{tag} : Action", ActionLabel()));
+            return steps;
         }
     }
 
