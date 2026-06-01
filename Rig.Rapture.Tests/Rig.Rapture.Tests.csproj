@@ -37,37 +37,10 @@
     <Reference Include="System.Runtime.Serialization" />
   </ItemGroup>
 
-  <!-- Source code Rapture importé par lien (pas de copie : référence directe au fichier prod) -->
-  <ItemGroup>
-    <!-- Import side : DTO + Parser (standalone, juste System.Runtime.Serialization) -->
-    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportDto.cs">
-      <Link>Vendored\Import\RaptureImportDto.cs</Link>
-    </Compile>
-    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportParser.cs">
-      <Link>Vendored\Import\RaptureImportParser.cs</Link>
-    </Compile>
-    <!-- Sanitizer : static helper standalone (sans dépendance RIG.METIER), testable
-         côté xUnit. Linke le source de prod directement. -->
-    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureAudienceSanitizer.cs">
-      <Link>Vendored\Import\RaptureAudienceSanitizer.cs</Link>
-    </Compile>
-    <!-- Export side : DTOs Plumitif + Referentiels (standalone aussi). On exclut
-         volontairement PlumitifJsonExporter.cs / ReferentielsExporter.cs qui
-         dépendent de RIG.METIER.* (Juge, Mandataire, SqlRigConnection, …). -->
-    <Compile Include="..\..\RIG\DLL\Processus\PROC_PREAUD\PREAUD\PlumitifJsonDto.cs">
-      <Link>Vendored\Export\PlumitifJsonDto.cs</Link>
-    </Compile>
-    <Compile Include="..\..\RIG\DLL\Processus\PROC_PREAUD\PREAUD\ReferentielsDto.cs">
-      <Link>Vendored\Export\ReferentielsDto.cs</Link>
-    </Compile>
-  </ItemGroup>
-
-  <!-- Fixture JSON copiée dans le bin pour lecture via AppContext.BaseDirectory -->
-  <ItemGroup>
-    <None Update="Fixtures\*.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
-  </ItemGroup>
+  <!-- Découplage 2026-05-29 : retiré le link du code Rapture LEGACY (Source/RIG/.../RAPTURE_IMPORT
+       + PROC_PREAUD/PREAUD) + les fixtures RGPD. Ces tests (dossiers Import/ + Export/) testaient le
+       monolithe → ils y restent. RIG-TV ne garde que les tests DU HARNAIS (KbisTextChecks + RaptureUi
+       + MlLoop). -->
 
   <ItemGroup>
     <ProjectReference Include="..\Rig.Wpf.Kbis.SmokeRunner\Rig.Wpf.Kbis.SmokeRunner.csproj" />

@@ -40,24 +40,8 @@
     <PackageReference Include="PdfPig" Version="0.1.9" />
   </ItemGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\Rig.Wpf.Core\Rig.Wpf.Core.csproj" />
-    <ProjectReference Include="..\Rig.Wpf.Mvvm\Rig.Wpf.Mvvm.csproj" />
-    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
-    <ProjectReference Include="..\Rig.Wpf.RigMetier.Sql\Rig.Wpf.RigMetier.Sql.csproj" />
-    <ProjectReference Include="..\Rig.Wpf.RigMetier.Legacy\Rig.Wpf.RigMetier.Legacy.csproj" />
-    <ProjectReference Include="..\Rig.Wpf.Processus.KBIS\Rig.Wpf.Processus.KBIS.csproj" />
-    <!-- Référence au Shell uniquement pour charger ses ResourceDictionaries (Theme/Theme.xaml)
-         lors du rendering programmatique des Views. Pull also tout le DI bootstrap. -->
-    <ProjectReference Include="..\Rig.Wpf.Shell\Rig.Wpf.Shell.csproj" />
-  </ItemGroup>
-
-  <ItemGroup>
-    <Content Include="..\Rig.Wpf.Shell\bin\Release\net48\appsettings.json"
-             Condition="Exists('..\Rig.Wpf.Shell\bin\Release\net48\appsettings.json')">
-      <Link>appsettings.json</Link>
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </Content>
-  </ItemGroup>
+  <!-- Découplé du socle WPF-RIG (2026-05-29) : plus aucune ProjectReference. SmokeRunner pilote
+       des apps EXTERNES (RigClientAccueil legacy via FlaUI/MSAA), aucune dépendance compile vers
+       la réécriture (Shell/Core/RigMetier/Processus.*) — celle-ci vit dans le repo WPF-RIG. -->
 
 </Project>
