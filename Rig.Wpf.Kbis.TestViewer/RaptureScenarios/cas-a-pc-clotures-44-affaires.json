@@ -1,0 +1,2676 @@
+﻿{
+    "codeGreffe": "9995",
+    "dateAudience": "2026-05-18",
+    "heureAudience": "14:00",
+    "salleAudience": "",
+    "chambre": "PC : clôtures de LJ",
+    "section": null,
+    "typeAudience": "procédures collectives",
+    "composition": {
+        "president": "M. LESBROS Michel",
+        "juges": [
+        ],
+        "greffier": "Mme BOCCHIA Paola",
+        "parquetier": null
+    },
+    "affaires": [
+        {
+            "numeroAppel": "01_001",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2020RJ0257",
+            "numeroJ": null,
+            "numeroRole": "2026F00068",
+            "idInstance": 494130,
+            "idAffaire": 5445432,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS G7 TRACTIONS (anciennement G7 BRESSE)",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL MJ SYNERGIE représentée par Me DESPRAT",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS G7 TRACTIONS (anciennement G7 BRESSE)",
+                    "qualite": "défendeur",
+                    "siren": "412 011 850",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "G7 INVESTISSEMENT",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS G7 TRACTIONS (anciennement G7 BRESSE)",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL MJ SYNERGIE représentée par Me DESPRAT"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_001",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0522",
+            "numeroJ": null,
+            "numeroRole": "2026F00055",
+            "idInstance": 494116,
+            "idAffaire": 5445395,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL WANT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL WANT",
+                    "qualite": "défendeur",
+                    "siren": "424 641 173",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BANDET Jacques",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL WANT",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_002",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0526",
+            "numeroJ": null,
+            "numeroRole": "2026F00058",
+            "idInstance": 494119,
+            "idAffaire": 5445401,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL Optik'M",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL Optik'M",
+                    "qualite": "défendeur",
+                    "siren": "952 478 253",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme KRIPPES Marine Odette Alice",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL Optik'M",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_003",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0141",
+            "numeroJ": null,
+            "numeroRole": "2026F00059",
+            "idInstance": 494120,
+            "idAffaire": 5445403,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL A.BUISSON",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL A.BUISSON",
+                    "qualite": "défendeur",
+                    "siren": "534 783 196",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BUISSON André Charles Jean",
+                            "fonctionCode": "LIQ",
+                            "fonctionLibelle": "liquidateur"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL A.BUISSON",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_004",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2021RJ0213",
+            "numeroJ": null,
+            "numeroRole": "2026F00061",
+            "idInstance": 494122,
+            "idAffaire": 5445408,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL POISSONNERIE LACHENAL",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL POISSONNERIE LACHENAL",
+                    "qualite": "défendeur",
+                    "siren": "382 682 078",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LACHENAL Landry",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL POISSONNERIE LACHENAL",
+            "administrateursJudiciaires": [
+                "SELARL AJUP représentée par Mes Marc CHAPON et Vincent ROUSSEAU"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_005",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0531",
+            "numeroJ": null,
+            "numeroRole": "2026F00073",
+            "idInstance": 494140,
+            "idAffaire": 5445459,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS ALPAU",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS ALPAU",
+                    "qualite": "défendeur",
+                    "siren": "914 866 892",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. EYBERT-BERARD Paul Mickaël Fateh",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ALPAU",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_006",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0539",
+            "numeroJ": null,
+            "numeroRole": "2026F00078",
+            "idInstance": 494145,
+            "idAffaire": 5445572,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS DEBAX VAN",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS DEBAX VAN",
+                    "qualite": "défendeur",
+                    "siren": "903 797 256",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LAMY Alexandre Brice",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS DEBAX VAN",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_001",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2021RJ0024",
+            "numeroJ": null,
+            "numeroRole": "2025F02745",
+            "idInstance": 493626,
+            "idAffaire": 5437535,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS SATMA PPC",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS SATMA PPC",
+                    "qualite": "défendeur",
+                    "siren": "503 053 241",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BONINI Angelo",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS SATMA PPC",
+            "administrateursJudiciaires": [
+                "SELARL AJUP représentée par Mes Marc CHAPON et Vincent ROUSSEAU"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_002",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0506",
+            "numeroJ": null,
+            "numeroRole": "2026F00042",
+            "idInstance": 494097,
+            "idAffaire": 5445319,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS AU FOURNIL DE CORPS",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS AU FOURNIL DE CORPS",
+                    "qualite": "défendeur",
+                    "siren": "979 659 075",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. DAVIGNY Jérôme David",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS AU FOURNIL DE CORPS",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_003",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0299",
+            "numeroJ": null,
+            "numeroRole": "2026F00047",
+            "idInstance": 494108,
+            "idAffaire": 5445363,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL CDS HABITAT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL CDS HABITAT",
+                    "qualite": "défendeur",
+                    "siren": "981 832 447",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. DOS SANTOS Cédric",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL CDS HABITAT",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. NARDI Franck",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_004",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0322",
+            "numeroJ": null,
+            "numeroRole": "2026F00048",
+            "idInstance": 494109,
+            "idAffaire": 5445371,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL ComarPub Conseil",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL ComarPub Conseil",
+                    "qualite": "défendeur",
+                    "siren": "800 611 931",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. MITTELBERGER Sébastien David",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL ComarPub Conseil",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_005",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0351",
+            "numeroJ": null,
+            "numeroRole": "2026F00049",
+            "idInstance": 494110,
+            "idAffaire": 5445372,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS SASU BILEL",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS SASU BILEL",
+                    "qualite": "défendeur",
+                    "siren": "918 874 454",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. FNINA Ahmed",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS SASU BILEL",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_006",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0520",
+            "numeroJ": null,
+            "numeroRole": "2026F00053",
+            "idInstance": 494114,
+            "idAffaire": 5445383,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS Avangarde Home",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS Avangarde Home",
+                    "qualite": "défendeur",
+                    "siren": "841 128 317",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme LAHIEYTE Elodie",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS Avangarde Home",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_007",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0160",
+            "numeroJ": null,
+            "numeroRole": "2026F00062",
+            "idInstance": 494123,
+            "idAffaire": 5445411,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS Le Coeur du Guiers",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS Le Coeur du Guiers",
+                    "qualite": "défendeur",
+                    "siren": "979 826 468",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme BOUKLACHI Hanen",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS Le Coeur du Guiers",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_008",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0426",
+            "numeroJ": null,
+            "numeroRole": "2026F00069",
+            "idInstance": 494134,
+            "idAffaire": 5445452,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL EAUX CLAIRES DISTRIBUTION",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL EAUX CLAIRES DISTRIBUTION",
+                    "qualite": "défendeur",
+                    "siren": "503 881 054",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. MOULIN Jean-Marc Paul",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL EAUX CLAIRES DISTRIBUTION",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "03_009",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0540",
+            "numeroJ": null,
+            "numeroRole": "2026F00079",
+            "idInstance": 494146,
+            "idAffaire": 5445586,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL La liaison",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI",
+                    "qualite": "demandeur",
+                    "siren": "989 035 001",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL La liaison",
+                    "qualite": "défendeur",
+                    "siren": "492 432 596",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. MONTOTO Fernando",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL La liaison",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_001",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0496",
+            "numeroJ": null,
+            "numeroRole": "2026F00036",
+            "idInstance": 494082,
+            "idAffaire": 5445268,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS 2N ISOLATION",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS 2N ISOLATION",
+                    "qualite": "défendeur",
+                    "siren": "853 766 020",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. DABIR Nicolas Fabien",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        },
+                        {
+                            "nom": "M. NICOLAS Emmanuel Pierre Patrick",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS 2N ISOLATION",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_002",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0497",
+            "numeroJ": null,
+            "numeroRole": "2026F00037",
+            "idInstance": 494092,
+            "idAffaire": 5445281,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL RNG CARRELAGE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL RNG CARRELAGE",
+                    "qualite": "défendeur",
+                    "siren": "798 610 911",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. DABIR Nicolas Fabien",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL RNG CARRELAGE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_003",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0504",
+            "numeroJ": null,
+            "numeroRole": "2026F00041",
+            "idInstance": 494096,
+            "idAffaire": 5445318,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL META META",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL META META",
+                    "qualite": "défendeur",
+                    "siren": "813 393 857",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. NOEL Stéphane Nicolas",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL META META",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_004",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0507",
+            "numeroJ": null,
+            "numeroRole": "2026F00043",
+            "idInstance": 494098,
+            "idAffaire": 5445327,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL M13DESIGN",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL M13DESIGN",
+                    "qualite": "défendeur",
+                    "siren": "790 864 136",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. SIONG Patrick",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL M13DESIGN",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_005",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0521",
+            "numeroJ": null,
+            "numeroRole": "2026F00054",
+            "idInstance": 494115,
+            "idAffaire": 5445392,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS REKKO",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS REKKO",
+                    "qualite": "défendeur",
+                    "siren": "888 754 629",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. CINOTTI Antoine Christian Baptiste",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS REKKO",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_006",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0525",
+            "numeroJ": null,
+            "numeroRole": "2026F00057",
+            "idInstance": 494118,
+            "idAffaire": 5445398,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS BRASSERIE ARTISANALE DES ALPES",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS BRASSERIE ARTISANALE DES ALPES",
+                    "qualite": "défendeur",
+                    "siren": "878 993 930",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. ALBERELLI Frédéric Louis",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS BRASSERIE ARTISANALE DES ALPES",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_007",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2007RJ0420",
+            "numeroJ": null,
+            "numeroRole": "2026F00060",
+            "idInstance": 494121,
+            "idAffaire": 5445405,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "Madame ROZAND Povi Nanaja Lucie née LAWSON HELOU",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "Mme ROZAND Povi Nanaja Lucie née LAWSON HELOU",
+                    "qualite": "défendeur",
+                    "siren": "378 240 089",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme ROZAND Povi",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Madame ROZAND Povi Nanaja Lucie née LAWSON HELOU",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "M. MAMMAR Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_008",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0529",
+            "numeroJ": null,
+            "numeroRole": "2026F00071",
+            "idInstance": 494137,
+            "idAffaire": 5445454,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS S.A.S MC Maçon",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS S.A.S MC Maçon",
+                    "qualite": "défendeur",
+                    "siren": "920 693 314",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. AKOUDAD Karim",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS S.A.S MC Maçon",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. NARDI Franck",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_009",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0530",
+            "numeroJ": null,
+            "numeroRole": "2026F00072",
+            "idInstance": 494139,
+            "idAffaire": 5445456,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "Monsieur HAMDOUCHE ABDELDJALIL",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. HAMDOUCHE ABDELDJALIL",
+                    "qualite": "défendeur",
+                    "siren": "521 584 649",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. HAMDOUCHE ABDELDJALIL",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Monsieur HAMDOUCHE ABDELDJALIL",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_010",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0538",
+            "numeroJ": null,
+            "numeroRole": "2026F00076",
+            "idInstance": 494143,
+            "idAffaire": 5445571,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL CRUOUCUIT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL CRUOUCUIT",
+                    "qualite": "défendeur",
+                    "siren": "887 763 738",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme CHAUMONT Audrey Antoinette Ginette",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        },
+                        {
+                            "nom": "M. CHAUMONT Frédérik Olivier Jean-Marie",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL CRUOUCUIT",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_011",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0542",
+            "numeroJ": null,
+            "numeroRole": "2026F00080",
+            "idInstance": 494147,
+            "idAffaire": 5445587,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "Monsieur KHATCHADOURIAN Laurent Sacco",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. KHATCHADOURIAN Laurent Sacco",
+                    "qualite": "défendeur",
+                    "siren": "953 436 151",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. KHATCHADOURIAN Laurent Sacco",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Monsieur KHATCHADOURIAN Laurent Sacco",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "04_012",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2024RJ0226",
+            "numeroJ": null,
+            "numeroRole": "2026F00084",
+            "idInstance": 494151,
+            "idAffaire": 5445593,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS STALINGRAD R",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Me SERRANO",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS STALINGRAD R",
+                    "qualite": "défendeur",
+                    "siren": "507 544 914",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. RIBET Benjamin Pierre",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS STALINGRAD R",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_001",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0109",
+            "numeroJ": null,
+            "numeroRole": "2025F02744",
+            "idInstance": 493625,
+            "idAffaire": 5437531,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS Grüezi Services France",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS Grüezi Services France",
+                    "qualite": "défendeur",
+                    "siren": "947 766 028",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Grüezi-Services SA",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS Grüezi Services France",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_002",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0499",
+            "numeroJ": null,
+            "numeroRole": "2026F00038",
+            "idInstance": 494093,
+            "idAffaire": 5445313,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL E.U.R.L. NEW PRINT SERVICES",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL E.U.R.L. NEW PRINT SERVICES",
+                    "qualite": "défendeur",
+                    "siren": "493 384 960",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LAMESTA Paolo",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL E.U.R.L. NEW PRINT SERVICES",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_003",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0502",
+            "numeroJ": null,
+            "numeroRole": "2026F00040",
+            "idInstance": 494095,
+            "idAffaire": 5445315,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS SASU H.B.M PEINTURE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS SASU H.B.M PEINTURE",
+                    "qualite": "défendeur",
+                    "siren": "852 817 527",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BEN MOHAMED Hassen",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS SASU H.B.M PEINTURE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_004",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2023RJ0123",
+            "numeroJ": null,
+            "numeroRole": "2026F00044",
+            "idInstance": 494105,
+            "idAffaire": 5445350,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS L'IMMO NEUF BY JEROME NICOL",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS L'IMMO NEUF BY JEROME NICOL",
+                    "qualite": "défendeur",
+                    "siren": "819 060 526",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. NICOL Jérôme Jacques",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS L'IMMO NEUF BY JEROME NICOL",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_005",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2023RJ0132",
+            "numeroJ": null,
+            "numeroRole": "2026F00045",
+            "idInstance": 494106,
+            "idAffaire": 5445356,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS JCTCMP",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS JCTCMP",
+                    "qualite": "défendeur",
+                    "siren": "878 642 685",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. COLIMBA PASTILLO Juan Carlos",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS JCTCMP",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_006",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0263",
+            "numeroJ": null,
+            "numeroRole": "2026F00046",
+            "idInstance": 494107,
+            "idAffaire": 5445359,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "Monsieur EL BOUFERI Imad",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. EL BOUFERI Imad",
+                    "qualite": "défendeur",
+                    "siren": "885 275 594",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. EL BOUFERI  Imad",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Monsieur EL BOUFERI Imad",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_007",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0512",
+            "numeroJ": null,
+            "numeroRole": "2026F00050",
+            "idInstance": 494111,
+            "idAffaire": 5445377,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS LE PALMIER",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS LE PALMIER",
+                    "qualite": "défendeur",
+                    "siren": "844 849 901",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. GHANOUS Mohamed",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS LE PALMIER",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_008",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0519",
+            "numeroJ": null,
+            "numeroRole": "2026F00051",
+            "idInstance": 494112,
+            "idAffaire": 5445378,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS S.T.I",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS S.T.I",
+                    "qualite": "défendeur",
+                    "siren": "832 837 371",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "la SARL FINANCE & STRATEGIE (M.Marcel FERES)",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS S.T.I",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_009",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0523",
+            "numeroJ": null,
+            "numeroRole": "2026F00056",
+            "idInstance": 494117,
+            "idAffaire": 5445396,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "Monsieur CAPOGNA  Serge",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. CAPOGNA  Serge",
+                    "qualite": "défendeur",
+                    "siren": "794 349 613",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. CAPOGNA  Serge",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Monsieur CAPOGNA  Serge",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_010",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2023RJ0140",
+            "numeroJ": null,
+            "numeroRole": "2026F00063",
+            "idInstance": 494124,
+            "idAffaire": 5445417,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SA TELEPHERIQUES DES GLACIERS DE LA MEIJE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SA TELEPHERIQUES DES GLACIERS DE LA MEIJE",
+                    "qualite": "défendeur",
+                    "siren": "341 897 338",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. CREISSEILS Denis",
+                            "fonctionCode": "LIQ",
+                            "fonctionLibelle": "liquidateur"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SA TELEPHERIQUES DES GLACIERS DE LA MEIJE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_011",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2023RJ0149",
+            "numeroJ": null,
+            "numeroRole": "2026F00064",
+            "idInstance": 494125,
+            "idAffaire": 5445421,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS MG EXPRESS",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS MG EXPRESS",
+                    "qualite": "défendeur",
+                    "siren": "840 107 304",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme GALLO Chantal",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        },
+                        {
+                            "nom": "M. GOURBIER Michaël David Serge Léonard",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS MG EXPRESS",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_012",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2023RJ0150",
+            "numeroJ": null,
+            "numeroRole": "2026F00066",
+            "idInstance": 494128,
+            "idAffaire": 5445427,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS MJR",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS MJR",
+                    "qualite": "défendeur",
+                    "siren": "803 135 441",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme HOSTACHY DUFOUR Maryline Christiane",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS MJR",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme SIVERA Brigitte",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_013",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0528",
+            "numeroJ": null,
+            "numeroRole": "2026F00070",
+            "idInstance": 494136,
+            "idAffaire": 5445453,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL ESPACE FORMATION GRENOBLE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL ESPACE FORMATION GRENOBLE",
+                    "qualite": "défendeur",
+                    "siren": "379 358 781",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. COULAS Gerald Etienne Alphonse",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL ESPACE FORMATION GRENOBLE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_014",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2025RJ0535",
+            "numeroJ": null,
+            "numeroRole": "2026F00074",
+            "idInstance": 494141,
+            "idAffaire": 5445464,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SARL CONTROLE TECHNIQUE IMMOBILIER",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SARL CONTROLE TECHNIQUE IMMOBILIER",
+                    "qualite": "défendeur",
+                    "siren": "504 575 119",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BUENERD Christophe Valère Alain",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL CONTROLE TECHNIQUE IMMOBILIER",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_015",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2022RJ0065",
+            "numeroJ": null,
+            "numeroRole": "2026F00081",
+            "idInstance": 494148,
+            "idAffaire": 5445590,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS ACMES MECANIQUE CHAUDRONNERIE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS ACMES MECANIQUE CHAUDRONNERIE",
+                    "qualite": "défendeur",
+                    "siren": "443 157 292",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. MARTINEZ David Jean-Marc",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ACMES MECANIQUE CHAUDRONNERIE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme SIVERA Brigitte",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "05_016",
+            "numeroOrdre": 1,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": "2022RJ0075",
+            "numeroJ": null,
+            "numeroRole": "2026F00083",
+            "idInstance": 494150,
+            "idAffaire": 5445592,
+            "natureAffaire": "demande de clôture pour insuffisance actif (après le 01\/01\/06)",
+            "typeAffaire": "CL IA LSE",
+            "nomAffaire": "La SAS ANTESITE & NOIROT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "SELARL BERTHELOT prise en la personne de Me MASSELON",
+                    "qualite": "demandeur",
+                    "siren": "830 000 451",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS ANTESITE & NOIROT",
+                    "qualite": "défendeur",
+                    "siren": "377 716 170",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LEVEQUE François Pierre",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ANTESITE & NOIROT",
+            "administrateursJudiciaires": [
+                "La SELARL ANASTA, prise en la personne de Maître Marc CHAPON"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        }
+    ]
+}

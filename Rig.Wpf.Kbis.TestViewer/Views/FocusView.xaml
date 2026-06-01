@@ -1,0 +1,178 @@
+<UserControl x:Class="Rig.Wpf.Kbis.TestViewer.Views.FocusView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
+             xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
+             Background="#FFFDF3">
+    <UserControl.Resources>
+        <cv:NullToBoolInvertedConverter x:Key="NullToBoolInvertedConverter"/>
+        <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>
+        <cv:BoolToVisibilityInvertedConverter x:Key="BoolToVisInv"/>
+        <cv:VerdictToBannerBrushConverter x:Key="VerdictBrush"/>
+        <cv:VerdictToBannerVisibilityConverter x:Key="VerdictVis"/>
+        <cv:LogsTailToFailReasonConverter x:Key="FailReason"/>
+        <!-- BoolToVis built-in WPF — affiche quand TRUE. Utilisé pour l'overlay
+             plein écran (action bar YouTube-like sur le PNG). -->
+        <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+    </UserControl.Resources>
+    <!-- Margin 10 en mode normal, 0 en plein écran (le PNG colle aux bords window). -->
+    <DockPanel Margin="{Binding IsFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='10,10,10,10'}">
+        <!-- Header : scenarioId + meta (Phase, pid). Masqué en mode plein écran pour
+             que le PNG occupe vraiment toute la largeur.
+             Bindings refactor Phase 3 : DataContext = IFocusContext (RaptureFocusContext
+             ou autre adapter selon module). SelectedItem.* replace BatchState.SelectedScenario.*. -->
+        <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="0,0,0,6"
+                    Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVisInv}}">
+            <TextBlock AutomationProperties.AutomationId="LblRaptureFocusScenarioId"
+                       Text="{Binding SelectedItem.Id, FallbackValue='🎯 Sélectionne un scénario'}"
+                       FontSize="12" FontWeight="Bold" Foreground="#C80"/>
+            <TextBlock Text="{Binding SelectedItem.Phase, StringFormat=' • {0}'}"
+                       FontSize="10" Foreground="#888" Margin="6,2,0,0"/>
+            <TextBlock Text="{Binding SelectedItem.WorkerPid, StringFormat=' • pid {0}'}"
+                       FontSize="10" Foreground="#888" Margin="6,2,0,0"/>
+        </StackPanel>
+
+        <!-- Live observation toolbar (LIVE badge, refresh, Pause, RunStamp, Snaps root, ✕ Close HDESK).
+             Masquée en plein écran (consigne user 2026-05-27 : "que les boutons rétrécir et HDESK"). -->
+        <Border DockPanel.Dock="Top" Background="#2D2D30" Padding="8,4" CornerRadius="3" Margin="0,0,0,6"
+                Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVisInv}}">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="🔴 LIVE" Foreground="#E74C3C" FontWeight="Bold" VerticalAlignment="Center" FontSize="10"/>
+                <TextBlock Text=" • Refresh : " Foreground="#888" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="10"/>
+                <Slider Width="100" Minimum="100" Maximum="2000"
+                        IsSnapToTickEnabled="True" TickFrequency="50"
+                        Value="{Binding SnapRefreshIntervalMs, Mode=TwoWay}"
+                        AutomationProperties.AutomationId="SldRaptureSnapRefresh"
+                        VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding SnapRefreshIntervalMs, StringFormat=' {0} ms'}" Width="50"
+                           Foreground="#CCC" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
+                <ToggleButton IsChecked="{Binding IsRenderingPaused, Mode=TwoWay}"
+                              Margin="8,0,0,0" Padding="8,1"
+                              AutomationProperties.AutomationId="BtnRaptureLivePause">
+                    <ToggleButton.Style>
+                        <Style TargetType="ToggleButton">
+                            <Setter Property="Content" Value="⏸ Pause"/>
+                            <Setter Property="Background" Value="#3F3F46"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Style.Triggers>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter Property="Content" Value="▶ Reprendre"/>
+                                    <Setter Property="Background" Value="#E67E22"/>
+                                </Trigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ToggleButton.Style>
+                </ToggleButton>
+                <TextBlock Text=" • Run : " Foreground="#888" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="10"/>
+                <TextBlock Text="{Binding CurrentRunStamp, FallbackValue='(none)'}"
+                           AutomationProperties.AutomationId="TxtRaptureRunStamp"
+                           Foreground="#CCC" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
+                <Button Margin="12,0,0,0" Padding="8,1"
+                        Background="#3F3F46" Foreground="White" BorderThickness="0"
+                        Command="{Binding OpenSnapsRootCommand}"
+                        AutomationProperties.AutomationId="BtnRaptureSnapsRoot"
+                        FontSize="10">
+                    📁 Snaps root
+                </Button>
+                <Button Margin="12,0,0,0" Padding="6,0"
+                        Background="Transparent" Foreground="#E74C3C" BorderThickness="0"
+                        FontSize="14" FontWeight="Bold" Cursor="Hand"
+                        Command="{Binding CloseHdeskCommand}"
+                        AutomationProperties.AutomationId="BtnRaptureCloseHdesk"
+                        ToolTip="Fermer le HDESK isolé (kill worker hung — utile après FAIL)">
+                    ✕
+                </Button>
+            </StackPanel>
+        </Border>
+
+        <!-- Action bar bottom — MODE NORMAL UNIQUEMENT (4 boutons sous le PNG).
+             En plein écran, cette bande est entièrement masquée et les 2 boutons
+             essentiels (Ouvrir HDESK + Réduire) repassent en OVERLAY z-stack sur
+             le PNG (cf. plus bas dans le Border image, "YouTube-like overlay"). -->
+        <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" Margin="0,6,0,0"
+                    Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVisInv}}">
+            <Button Content="↗ Ouvrir HDESK" Margin="0,0,6,0" Padding="10,4"
+                    AutomationProperties.AutomationId="BtnRaptureFocusOpenHdesk"
+                    Command="{Binding OpenHdeskCommand}"
+                    IsEnabled="{Binding SelectedItem.DesktopName, Converter={StaticResource NullToBoolInvertedConverter}, FallbackValue=False}"/>
+            <Button AutomationProperties.AutomationId="BtnRaptureFocusFullscreen"
+                    Content="⛶ Plein écran"
+                    Command="{Binding ToggleFullscreenCommand}"
+                    Padding="10,4"/>
+            <!-- Boutons "📁 Snaps folder" + "📋 Copier logs" retirés 2026-05-28 (consigne user).
+                 Commandes toujours dispo via IFocusContext.OpenSnapsFolderCommand / CopyLogsCommand
+                 si on veut les remettre plus tard. -->
+        </StackPanel>
+
+        <!-- PNG focus fill 16:9 préservé via Viewbox Uniform.
+             Verdict banner overlay :
+               - Visible quand Verdict in (Pass/Fail/Flaky)  (VerdictToBannerVisibility)
+               - Background dynamique selon Verdict (VerdictToBannerBrush)
+               - Texte = "✓ PASS / ✗ FAIL en Xs — <FailReason>" — FailReason extrait du LogsTail
+                 (dernière "Exception: ..." du worker). Pour PASS, FailReason est vide → just "✓ PASS en Xs".
+               - Z-order au-dessus du PNG mais sous le toolbar (overlay propre). -->
+        <Border Background="#222" CornerRadius="4">
+            <Grid>
+                <Viewbox Stretch="Uniform">
+                    <Image AutomationProperties.AutomationId="ImgRaptureFocusPng"
+                           Source="{Binding SelectedItem.LastSnapPath, Converter={StaticResource PathToBmp}}"
+                           RenderOptions.BitmapScalingMode="HighQuality"/>
+                </Viewbox>
+                <Border VerticalAlignment="Top" HorizontalAlignment="Stretch"
+                        Padding="14,8"
+                        Background="{Binding SelectedItem.Verdict, Converter={StaticResource VerdictBrush}}"
+                        Visibility="{Binding SelectedItem.Verdict, Converter={StaticResource VerdictVis}}"
+                        AutomationProperties.AutomationId="BannerVerdict">
+                    <StackPanel Orientation="Vertical">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Foreground="White" FontWeight="Bold" FontSize="14">
+                                <TextBlock.Text>
+                                    <MultiBinding StringFormat="{}{0}  ·  {1}">
+                                        <Binding Path="SelectedItem.Verdict"/>
+                                        <Binding Path="SelectedItem.DurationFormatted"/>
+                                    </MultiBinding>
+                                </TextBlock.Text>
+                            </TextBlock>
+                            <TextBlock Foreground="White" FontSize="11" Margin="12,2,0,0" VerticalAlignment="Center"
+                                       Text="{Binding SelectedItem.Id, StringFormat='— {0}'}"/>
+                        </StackPanel>
+                        <TextBlock Foreground="White" FontSize="11" Margin="0,4,0,0"
+                                   TextWrapping="Wrap" MaxHeight="60"
+                                   Text="{Binding SelectedItem.LogsTail, Converter={StaticResource FailReason}}"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- ════════════════════════════════════════════════════════════════
+                     Plein écran : overlay action bar YouTube-like.
+                     Position : bottom-center, pilule sombre semi-transparente, 2 boutons
+                     essentiels (↗ Ouvrir HDESK + ⛶ Réduire). N'apparaît qu'en fullscreen ;
+                     en mode normal, ces actions sont dans la bande Dock=Bottom plus haut.
+                     AutomationId distincts du mode normal pour que UIA cible le bon.
+                     ════════════════════════════════════════════════════════════════ -->
+                <Border VerticalAlignment="Bottom" HorizontalAlignment="Center"
+                        Margin="0,0,0,28" Padding="12,8"
+                        Background="#B0000000"
+                        CornerRadius="22"
+                        Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVis}}">
+                    <Border.Effect>
+                        <DropShadowEffect Color="Black" ShadowDepth="0" BlurRadius="12" Opacity="0.6"/>
+                    </Border.Effect>
+                    <StackPanel Orientation="Horizontal">
+                        <Button Content="↗ Ouvrir HDESK" Margin="0,0,8,0" Padding="14,6"
+                                AutomationProperties.AutomationId="BtnRaptureFocusOpenHdeskOverlay"
+                                Command="{Binding OpenHdeskCommand}"
+                                Background="#3F3F46" Foreground="White" BorderThickness="0"
+                                FontSize="12"
+                                IsEnabled="{Binding SelectedItem.DesktopName, Converter={StaticResource NullToBoolInvertedConverter}, FallbackValue=False}"/>
+                        <Button Content="⛶ Réduire" Padding="14,6"
+                                AutomationProperties.AutomationId="BtnRaptureFocusFullscreenOverlay"
+                                Command="{Binding ToggleFullscreenCommand}"
+                                Background="#E67E22" Foreground="White" BorderThickness="0"
+                                FontWeight="Bold" FontSize="12"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+    </DockPanel>
+</UserControl>

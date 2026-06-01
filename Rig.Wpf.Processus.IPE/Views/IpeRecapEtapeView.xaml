@@ -1,0 +1,41 @@
+<UserControl x:Class="Rig.Wpf.Processus.Ipe.Views.IpeRecapEtapeView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:etapes="clr-namespace:Rig.Wpf.Processus.Ipe.Etapes"
+             d:DataContext="{d:DesignInstance etapes:IpeRecapEtapeViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <Grid Margin="16">
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="160" />
+            <ColumnDefinition Width="*" />
+        </Grid.ColumnDefinitions>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock Grid.ColumnSpan="2" Text="{Binding Libelle}"
+                   FontSize="16" FontWeight="SemiBold" Margin="0,0,0,16" />
+
+        <TextBlock Grid.Row="1" Grid.Column="0" Text="Type d'IP" Margin="0,4" />
+        <TextBlock Grid.Row="1" Grid.Column="1" Text="{Binding TypeIpLibelle}"
+                   FontWeight="SemiBold" Margin="0,4" />
+
+        <TextBlock Grid.Row="2" Grid.Column="0" Text="Date saisine greffe" Margin="0,4" />
+        <TextBlock Grid.Row="2" Grid.Column="1" Text="{Binding DateSaisineLibelle}"
+                   FontWeight="SemiBold" Margin="0,4" />
+
+        <TextBlock Grid.Row="3" Grid.Column="0" Text="Montant" Margin="0,4" />
+        <TextBlock Grid.Row="3" Grid.Column="1" Text="{Binding MontantLibelle}"
+                   FontWeight="SemiBold" Margin="0,4" />
+
+        <TextBlock Grid.Row="4" Grid.Column="0" Text="Préfixe facturation" Margin="0,4" />
+        <TextBlock Grid.Row="4" Grid.Column="1" Text="{Binding PrefixFacturation}"
+                   FontWeight="SemiBold" Foreground="#1F3B66" Margin="0,4" />
+    </Grid>
+</UserControl>

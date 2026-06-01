@@ -1,0 +1,24 @@
+<UserControl x:Class="Rig.Wpf.Kbis.TestViewer.Views.FooterView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!--
+        FooterView — disk usage des self-snap PNG + hyperlink "Tout effacer".
+        Phase 7 extraction. DataContext = MainWindowViewModel (bindings directs
+        SnapDiskUsageHuman + CleanupAllSnapsCommand) ; refactor IFooter à plus tard.
+    -->
+    <Border Background="#F8F8F8" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,4">
+        <StackPanel Orientation="Horizontal">
+            <TextBlock Text="📁 Snaps : " FontSize="10" Foreground="#666"/>
+            <TextBlock AutomationProperties.AutomationId="TxtSnapsUsage"
+                       Text="{Binding SnapDiskUsageHuman, FallbackValue='(calcul...)'}"
+                       FontSize="10" Foreground="#666" FontWeight="Bold"/>
+            <TextBlock Text=" • garde 10 derniers (auto) • " FontSize="10" Foreground="#666"/>
+            <TextBlock FontSize="10">
+                <Hyperlink Command="{Binding CleanupAllSnapsCommand}"
+                           AutomationProperties.AutomationId="LnkSnapsCleanupAll">
+                    🗑 Tout effacer
+                </Hyperlink>
+            </TextBlock>
+        </StackPanel>
+    </Border>
+</UserControl>

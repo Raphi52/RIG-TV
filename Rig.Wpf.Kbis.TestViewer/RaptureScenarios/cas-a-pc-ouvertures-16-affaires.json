@@ -1,0 +1,853 @@
+﻿{
+    "codeGreffe": "9995",
+    "dateAudience": "2026-03-11",
+    "heureAudience": "09:00",
+    "salleAudience": "",
+    "chambre": "PC : Examen périodes d'observation",
+    "section": null,
+    "typeAudience": "procédures collectives",
+    "composition": {
+        "president": null,
+        "juges": [
+        ],
+        "greffier": "Me POURADIER DUTEIL Guillaume",
+        "parquetier": "M. GEORGES Guillaume"
+    },
+    "affaires": [
+        {
+            "numeroAppel": "01_001",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0056",
+            "numeroJ": null,
+            "numeroRole": "2026F00098",
+            "idInstance": 494318,
+            "idAffaire": 5448150,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SARL LIVIMAS",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SARL LIVIMAS",
+                    "qualite": "demandeur",
+                    "siren": "477 672 109",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "M. BENHAMOU Avi Stéphane",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BENHAMOU Avi Stéphane",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL LIVIMAS",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "Mme SIVERA Brigitte",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_002",
+            "numeroOrdre": 2,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0192",
+            "numeroJ": null,
+            "numeroRole": "2025F01780",
+            "idInstance": 487683,
+            "idAffaire": 5354825,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SARL MENZAH INVESTISSEMENT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SARL MENZAH INVESTISSEMENT",
+                    "qualite": "demandeur",
+                    "siren": "517 801 353",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Hassan KAIS Avocat",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. OUERGHI Mohamed",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL MENZAH INVESTISSEMENT",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_003",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0688",
+            "numeroJ": null,
+            "numeroRole": "2025F02330",
+            "idInstance": 491388,
+            "idAffaire": 5403393,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "Monsieur SARAFIAN Alexandre Raymond",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "M. SARAFIAN Alexandre",
+                    "qualite": "demandeur",
+                    "siren": "807 710 405",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. SARAFIAN Alexandre Raymond",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Monsieur SARAFIAN Alexandre Raymond",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_004",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0034",
+            "numeroJ": null,
+            "numeroRole": "2026F00091",
+            "idInstance": 494291,
+            "idAffaire": 5447508,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS SOPHIE MILLAUD IMMOBILIER",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS SOPHIE MILLAUD IMMOBILIER",
+                    "qualite": "demandeur",
+                    "siren": "838 300 812",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme MILLAUD Sophie Muriel Aimée Alice",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS SOPHIE MILLAUD IMMOBILIER",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_005",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0044",
+            "numeroJ": null,
+            "numeroRole": "2026F00093",
+            "idInstance": 494310,
+            "idAffaire": 5447807,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SARL ANVICA",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SARL ANVICA",
+                    "qualite": "demandeur",
+                    "siren": "901 089 128",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Régis JEGLOT Avocat",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. BERTHO Antoine Chritophe",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL ANVICA",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_006",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0047",
+            "numeroJ": null,
+            "numeroRole": "2026F00095",
+            "idInstance": 494312,
+            "idAffaire": 5447867,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SARL NF CONTROLE SASSENAGE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SARL NF CONTROLE SASSENAGE",
+                    "qualite": "demandeur",
+                    "siren": "519 042 196",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LYAUDET ALIBERT Nicolas Eric",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        },
+                        {
+                            "nom": "M. ALIBERT Fabrice",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL NF CONTROLE SASSENAGE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. BAZES François",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_007",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0049",
+            "numeroJ": null,
+            "numeroRole": "2026F00096",
+            "idInstance": 494314,
+            "idAffaire": 5447995,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS GROUPEMENT D ENTREPRISES DE MECANIQUE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS GROUPEMENT D ENTREPRISES DE MECANIQUE",
+                    "qualite": "demandeur",
+                    "siren": "349 567 628",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Vanessa MAURIN",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. JSAN Jean-Pierre",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS GROUPEMENT D ENTREPRISES DE MECANIQUE",
+            "administrateursJudiciaires": [
+                "SELAS STÀR représentée par Maître David-Emmanuel MEYNET et Maître Magali CHATELAIN"
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "Mme SIVERA Brigitte",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_008",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0053",
+            "numeroJ": null,
+            "numeroRole": "2026F00097",
+            "idInstance": 494315,
+            "idAffaire": 5448050,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS ZESHOES ET ZESSAP",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS ZESHOES ET ZESSAP",
+                    "qualite": "demandeur",
+                    "siren": "809 888 951",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme BEHAR Danièle",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ZESHOES ET ZESSAP",
+            "administrateursJudiciaires": [
+                "SELAS AJ UP, prise en la personne de Me Guillaume JOUET"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme ROZAND Catherine",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_009",
+            "numeroOrdre": 1,
+            "heureAppel": "09:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0046",
+            "numeroJ": null,
+            "numeroRole": "2026F00094",
+            "idInstance": 494311,
+            "idAffaire": 5447834,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SARL SYNOP6",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SARL SYNOP6",
+                    "qualite": "demandeur",
+                    "siren": "537 765 810",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. MANIN Julien Jean Louis",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SARL SYNOP6",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_010",
+            "numeroOrdre": 1,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0076",
+            "numeroJ": null,
+            "numeroRole": "2026F00215",
+            "idInstance": 495145,
+            "idAffaire": 5460156,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS ETUDES INDUSTRIELLES TOLERIE A REALISATIONS COURTES E.I.T.A.R.C.",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS ETUDES INDUSTRIELLES TOLERIE A REALISATIONS COURTES E.I.T.A.R.C.",
+                    "qualite": "demandeur",
+                    "siren": "338 216 260",
+                    "avocatPlaidant": "Me Augustin CROZE",
+                    "avocatPostulant": "Me MOLINA Christophe",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "B.B.R.",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        },
+                        {
+                            "nom": "Mme DOVINA Nathalie",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ETUDES INDUSTRIELLES TOLERIE A REALISATIONS COURTES E.I.T.A.R.C.",
+            "administrateursJudiciaires": [
+                "SELAS AJ UP prise en la personne de Me Eric ETIENNE-MARTIN"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                "SELAS AJ UP, prise en la personne de Me Guillaume JOUET"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_011",
+            "numeroOrdre": 1,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0077",
+            "numeroJ": null,
+            "numeroRole": "2026F00216",
+            "idInstance": 495146,
+            "idAffaire": 5460221,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SCI EITIMM",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SCI EITIMM",
+                    "qualite": "demandeur",
+                    "siren": "918 777 806",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me MOLINA Christophe",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme DOVINA Nathalie",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        },
+                        {
+                            "nom": "Mme DOVINA Nathalie",
+                            "fonctionCode": "ASSO",
+                            "fonctionLibelle": "Associé"
+                        },
+                        {
+                            "nom": "ETUDES INDUSTRIELLES TOLERIE A REALISATIONS COURTES E.I.T.A.R.C.",
+                            "fonctionCode": "ASSO",
+                            "fonctionLibelle": "Associé"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SCI EITIMM",
+            "administrateursJudiciaires": [
+                "SELAS AJ UP prise en la personne de Me Eric ETIENNE-MARTIN"
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON",
+                "SELAS AJ UP, prise en la personne de Me Guillaume JOUET"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_012",
+            "numeroOrdre": 1,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0076",
+            "numeroJ": null,
+            "numeroRole": "2026F00153",
+            "idInstance": 494713,
+            "idAffaire": 5453766,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS SMARTBROTHERS SAS",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS SMARTBROTHERS SAS",
+                    "qualite": "demandeur",
+                    "siren": "828 416 867",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "KARE CONCEPT",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "KARE CONCEPT",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS SMARTBROTHERS SAS",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "M. JEANNEL Philippe",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_013",
+            "numeroOrdre": 1,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0079",
+            "numeroJ": null,
+            "numeroRole": "2026F00166",
+            "idInstance": 494727,
+            "idAffaire": 5453835,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SASU LA GOULETTE",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SASU LA GOULETTE",
+                    "qualite": "demandeur",
+                    "siren": "933 756 124",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "M. TIS Mohamed",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SASU LA GOULETTE",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "Me SERRANO Philippe"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_014",
+            "numeroOrdre": 1,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2026RJ0078",
+            "numeroJ": null,
+            "numeroRole": "2026F00162",
+            "idInstance": 494722,
+            "idAffaire": 5453819,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "Madame Cindy DITKO",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "Mme Cindy DITKO",
+                    "qualite": "demandeur",
+                    "siren": "907 793 434",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": null,
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "Mme DITKO Cindy",
+                            "fonctionCode": null,
+                            "fonctionLibelle": null
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "Madame Cindy DITKO",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL ROUMEZI ET ASSOCIES, prise en la personne de Me Maud ROUMEZI"
+            ],
+            "jugesCommissaires": [
+                "M. LECROQ Pascal",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_015",
+            "numeroOrdre": 2,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0159",
+            "numeroJ": null,
+            "numeroRole": "2025F01735",
+            "idInstance": 487439,
+            "idAffaire": 5350709,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS ROOSTER",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS ROOSTER",
+                    "qualite": "demandeur",
+                    "siren": "849 593 892",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "M. ANDRIOT Luc Jean Michel",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. VOISIN Jérôme",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        },
+                        {
+                            "nom": "M. ANDRIOT Luc Jean Michel",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        },
+                        {
+                            "nom": "M. DORIGNY Eddy",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS ROOSTER",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me BERTHELOT"
+            ],
+            "jugesCommissaires": [
+                "M. GONON Bernard",
+                "Mme DEGASPERI Raphaëlle"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_016",
+            "numeroOrdre": 2,
+            "heureAppel": "10:00",
+            "numeroF": null,
+            "numeroRJ": "2025RJ0400",
+            "numeroJ": null,
+            "numeroRole": "2025F02681",
+            "idInstance": 493414,
+            "idAffaire": 5432561,
+            "natureAffaire": "fin période observation",
+            "typeAffaire": "FINPO",
+            "nomAffaire": "La SAS MEUBLES DISCOUNT",
+            "isProcedureCollective": true,
+            "demandeurs": [
+                {
+                    "nom": "La SAS MEUBLES DISCOUNT",
+                    "qualite": "demandeur",
+                    "siren": "893 300 731",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "M. LOUNIS Mohamed",
+                    "present": true,
+                    "dirigeants": [
+                        {
+                            "nom": "M. LOUNIS Mohamed",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": "La SAS MEUBLES DISCOUNT",
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+                "SELARL BERTHELOT & Associés - Mandataires judiciaires prise en la personne de Me MASSELON"
+            ],
+            "jugesCommissaires": [
+                "Mme DEGASPERI Raphaëlle",
+                "M. GONON Bernard"
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        }
+    ]
+}

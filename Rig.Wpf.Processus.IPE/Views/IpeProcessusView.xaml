@@ -1,0 +1,56 @@
+<UserControl x:Class="Rig.Wpf.Processus.Ipe.Views.IpeProcessusView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Rig.Wpf.Processus.Ipe"
+             xmlns:etapes="clr-namespace:Rig.Wpf.Processus.Ipe.Etapes"
+             xmlns:views="clr-namespace:Rig.Wpf.Processus.Ipe.Views"
+             d:DataContext="{d:DesignInstance vm:IpeProcessusViewModel}"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d">
+    <UserControl.Resources>
+        <DataTemplate DataType="{x:Type etapes:IpeDemandeEtapeViewModel}">
+            <views:IpeDemandeEtapeView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type etapes:IpeFactureEtapeViewModel}">
+            <views:IpeFactureEtapeView />
+        </DataTemplate>
+        <DataTemplate DataType="{x:Type etapes:IpeRecapEtapeViewModel}">
+            <views:IpeRecapEtapeView />
+        </DataTemplate>
+    </UserControl.Resources>
+
+    <DockPanel>
+        <Border DockPanel.Dock="Top" Background="#F5F5F5" Padding="16,8">
+            <StackPanel Orientation="Horizontal">
+                <TextBlock Text="{Binding Libelle}" FontSize="18" FontWeight="Bold" />
+                <TextBlock Text="{Binding CurrentEtape.Libelle, StringFormat=' › {0}'}"
+                           FontSize="14" Foreground="#666"
+                           VerticalAlignment="Center" Margin="8,0,0,0" />
+            </StackPanel>
+        </Border>
+
+        <Border DockPanel.Dock="Bottom" Background="#EEEEEE" Padding="16,8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <Button Grid.Column="0" Content="◄ Précédent" Padding="12,4" Margin="0,0,8,0"
+                        Command="{Binding GoPreviousCommand}" />
+                <TextBlock Grid.Column="1" VerticalAlignment="Center"
+                           Text="{Binding HasBeenSaved, StringFormat=Sauvegardé: {0}}"
+                           Foreground="#666" />
+                <Button Grid.Column="2" Content="Suivant ►" Padding="12,4" Margin="0,0,8,0"
+                        Command="{Binding GoNextCommand}" />
+                <Button Grid.Column="3" Content="Enregistrer" Padding="12,4"
+                        x:Name="SaveButton"
+                        Command="{Binding SaveCommand}" />
+            </Grid>
+        </Border>
+
+        <ContentControl Content="{Binding CurrentEtape}" />
+    </DockPanel>
+</UserControl>

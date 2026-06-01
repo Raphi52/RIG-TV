@@ -1,0 +1,731 @@
+﻿{
+    "codeGreffe":  "9995",
+    "dateAudience":  "2026-05-15",
+    "heureAudience":  "09:00",
+    "salleAudience":  "",
+    "chambre":  "Mise en etat",
+    "section":  "",
+    "typeAudience":  "contentieux general",
+    "composition":  {
+                        "president":  "Mme LOMBARD Florence",
+                        "juges":  [
+                                      "M. LESBROS Michel",
+                                      "M. RUBAT Gilles"
+                                  ],
+                        "greffier":  "Mme ROCHE Marjorie",
+                        "parquetier":  null,
+                        "composition_libelle":  "",
+                        "president_id":  null,
+                        "juges_ids":  [
+
+                                      ],
+                        "greffier_id":  28
+                    },
+    "delibere":  "",
+    "audience_date_libre":  "AUDIENCE DU 15 mai 2026 a 09H00",
+    "schema_version":  "1.0",
+    "exported_by":  "Smoke-E2E-Generator",
+    "exported_at":  "2026-05-20T09:10:08",
+    "affaires":  [
+                     {
+                         "numeroAppel":  "01_001",
+                         "numeroOrdre":  "1",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  417443,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "02_001",
+                         "numeroOrdre":  "2",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  435394,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "03_001",
+                         "numeroOrdre":  "3",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  448863,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "04_001",
+                         "numeroOrdre":  "4",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  450245,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "05_001",
+                         "numeroOrdre":  "5",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  458397,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "06_001",
+                         "numeroOrdre":  "6",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  461414,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "07_001",
+                         "numeroOrdre":  "7",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  464192,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "08_001",
+                         "numeroOrdre":  "8",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  464339,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "09_001",
+                         "numeroOrdre":  "9",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  464814,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     },
+                     {
+                         "numeroAppel":  "10_001",
+                         "numeroOrdre":  "10",
+                         "heureAppel":  "14:30",
+                         "numeroF":  null,
+                         "numeroRJ":  null,
+                         "numeroJ":  null,
+                         "numeroRole":  "2025J00037",
+                         "idInstance":  465252,
+                         "idAffaire":  5194343,
+                         "natureAffaire":  "exÃ©cution ou DI autre contrat",
+                         "typeAffaire":  "CO DIAC",
+                         "nomAffaire":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "isProcedureCollective":  false,
+                         "demandeurs":  [
+
+                                        ],
+                         "defendeurs":  [
+
+                                        ],
+                         "intervenants":  [
+
+                                          ],
+                         "societeDebitrice":  null,
+                         "administrateursJudiciaires":  [
+
+                                                        ],
+                         "mandatairesJudiciaires":  [
+
+                                                    ],
+                         "jugesCommissaires":  [
+
+                                               ],
+                         "representantsPersonnel":  [
+
+                                                    ],
+                         "chefDemande":  null,
+                         "noteAudience":  null,
+                         "type_decision":  "renvoi",
+                         "type_audience_libre":  "Affaire en cours",
+                         "numero_rapture":  "2025J00037",
+                         "affaire_rapture":  "ALDO INTERNATIONAL GROUPE GMBH c/ SPARTOO",
+                         "note_audience_rapture":  {
+                                                       "valeur":  "\u003cp\u003eNote smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)\u003c/p\u003e",
+                                                       "valeur_texte":  "Note smoke E2E - 2026-05-20 09:10 (verif SafeIntCol -\u003e NOTE_PROCEDURE RAPTURE_NOTE_AUDIENCE)",
+                                                       "type":  ""
+                                                   },
+                         "decision":  {
+                                          "valeur":  "D",
+                                          "valeur_texte":  "delibere",
+                                          "label":  "Smoke",
+                                          "valeur_brute":  "D"
+                                      },
+                         "avis_mp":  {
+                                         "valeur":  "",
+                                         "valeur_texte":  "",
+                                         "type":  ""
+                                     },
+                         "autres":  {
+                                        "valeur":  "",
+                                        "valeur_texte":  "",
+                                        "type":  ""
+                                    },
+                         "ministere_public":  "",
+                         "contenu_decision":  {
+                                                  "valeur":  "",
+                                                  "valeur_texte":  "",
+                                                  "type":  ""
+                                              }
+                     }
+                 ]
+}

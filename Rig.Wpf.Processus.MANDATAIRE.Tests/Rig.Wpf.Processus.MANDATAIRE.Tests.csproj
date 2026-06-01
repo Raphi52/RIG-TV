@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.Processus.Mandataire.Tests</RootNamespace>
+    <AssemblyName>Rig.Wpf.Processus.MANDATAIRE.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Processus.MANDATAIRE\Rig.Wpf.Processus.MANDATAIRE.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
+  </ItemGroup>
+
+</Project>

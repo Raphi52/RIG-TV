@@ -1,0 +1,63 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>Rig.Wpf.Kbis.SmokeRunner</RootNamespace>
+    <AssemblyName>Rig.Wpf.Kbis.SmokeRunner</AssemblyName>
+    <!-- WPF requis pour résoudre les types ObservableCollection/INotifyPropertyChanged
+         utilisés par les ViewModels, mais l'app reste un Console exe (pas d'UI). -->
+    <UseWPF>true</UseWPF>
+    <!-- Pas de tests dans ce projet — il sert d'outillage interne. -->
+    <IsPackable>false</IsPackable>
+    <!-- FlaUI n'est pas strong-named ; on désactive le signing pour le runner. -->
+    <SignAssembly>false</SignAssembly>
+    <!-- Et les warnings as errors (CS8002 sur référence non-signée). -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- System.Management (WMI) : lire la ligne de commande du process viewer PDF (Acrobat/Edge…)
+         pour récupérer le chemin du K-bis ouvert (RIG le passe en argument au viewer, pas via temp). -->
+    <Reference Include="System.Management" />
+    <!-- Accessibility (MSAA/oleacc) : lire les cellules du DataGridView des demandes (PROC_DEMANDE)
+         quand UIA est aveugle (DemandeRigDataGridView custom n'expose ni Grid ni Table pattern). -->
+    <Reference Include="Accessibility" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Configuration" Version="8.0.0" />
+    <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <!-- FlaUI : UI Automation pour valider le flux click utilisateur sur le Shell.exe -->
+    <PackageReference Include="FlaUI.Core" Version="5.0.0" />
+    <PackageReference Include="FlaUI.UIA3" Version="5.0.0" />
+    <!-- PDFtoImage : rendu PDF → bitmap via PDFium natif. Wrappe netstandard2.0
+         donc OK sur net48. ~10 Mo de binaires natifs (pdfium.dll x86/x64). -->
+    <PackageReference Include="PDFtoImage" Version="4.1.1" />
+    <!-- PdfPig : extraction de la COUCHE TEXTE des PDF (managé pur, netstandard2.0 → OK net48,
+         licence MIT = safe à distribuer). Sert à vérifier que le K-bis généré contient bien les
+         bonnes données (dénomination, SIREN…) SANS analyse d'image. -->
+    <PackageReference Include="PdfPig" Version="0.1.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Core\Rig.Wpf.Core.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.Mvvm\Rig.Wpf.Mvvm.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier.Sql\Rig.Wpf.RigMetier.Sql.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier.Legacy\Rig.Wpf.RigMetier.Legacy.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.Processus.KBIS\Rig.Wpf.Processus.KBIS.csproj" />
+    <!-- Référence au Shell uniquement pour charger ses ResourceDictionaries (Theme/Theme.xaml)
+         lors du rendering programmatique des Views. Pull also tout le DI bootstrap. -->
+    <ProjectReference Include="..\Rig.Wpf.Shell\Rig.Wpf.Shell.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\Rig.Wpf.Shell\bin\Release\net48\appsettings.json"
+             Condition="Exists('..\Rig.Wpf.Shell\bin\Release\net48\appsettings.json')">
+      <Link>appsettings.json</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+</Project>

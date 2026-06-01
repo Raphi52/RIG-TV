@@ -1,0 +1,21 @@
+﻿{
+    "codeGreffe":  "9995",
+    "dateAudience":  "2026-05-22",
+    "heureAudience":  "14:30",
+    "salleAudience":  "",
+    "chambre":  "Audience interactive",
+    "section":  "audience interactive",
+    "typeAudience":  "contentieux général",
+    "composition":  {
+                        "president":  "Mme LOMBARD Florence",
+                        "juges":  [
+                                      "M. LESBROS Michel",
+                                      "M. RUBAT Gilles"
+                                  ],
+                        "greffier":  "Mme ROCHE Marjorie",
+                        "parquetier":  null
+                    },
+    "affaires":  [
+
+                 ]
+}

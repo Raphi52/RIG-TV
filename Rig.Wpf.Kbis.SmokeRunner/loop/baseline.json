@@ -1,0 +1,18 @@
+{
+  "$schema": "baseline du triage rig-loop — lu par la skill /rig-loop, pas par le CLI",
+  "version": 1,
+  "knownFlakes": [
+    {
+      "id": "cas-diff-replacement-note",
+      "rate": "~20%",
+      "cause": "OpenFileDialog absent après 10s — timing FlaUI, clic Importer Rapture parfois perdu"
+    }
+  ],
+  "dataDriftScenarios": [
+    { "id": "cas-a-contentieux-10",   "cause": "audience 28590 (22/05) hors fenêtre RETAUD active" },
+    { "id": "cas-err-affaires-vide",  "cause": "audience 28590 hors fenêtre RETAUD → fallback Cas C" },
+    { "id": "cas-diff-sans-changement","cause": "audience 28590 hors fenêtre RETAUD → fallback Cas C" },
+    { "id": "cas-valid-plumitif-resolu","cause": "10 warnings d'origine non élucidée — diag à faire" }
+  ],
+  "preservedBugs": []
+}

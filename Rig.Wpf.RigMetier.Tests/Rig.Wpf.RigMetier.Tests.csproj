@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.RigMetier.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
+  </ItemGroup>
+
+</Project>

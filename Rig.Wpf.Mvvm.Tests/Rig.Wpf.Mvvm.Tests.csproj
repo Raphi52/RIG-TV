@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.Mvvm.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Mvvm\Rig.Wpf.Mvvm.csproj" />
+  </ItemGroup>
+
+</Project>

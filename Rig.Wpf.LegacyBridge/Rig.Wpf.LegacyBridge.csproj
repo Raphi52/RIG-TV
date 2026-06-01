@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.LegacyBridge</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Avertissements en cas d'incompatibilité de noms forts (RigAutomate.dll signé legacy) -->
+    <NoWarn>$(NoWarn);MSB3277</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Core\Rig.Wpf.Core.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.Mvvm\Rig.Wpf.Mvvm.csproj" />
+  </ItemGroup>
+
+  <!--
+    Référence DIRECTE vers la DLL legacy (au lieu de compiler RigAutomate.csproj).
+    Le projet ne build que sur un poste où C:\rig\Bin Dot Net Gac\ est peuplé.
+  -->
+  <ItemGroup>
+    <Reference Include="RigAutomate">
+      <HintPath>C:\rig\Bin Dot Net Gac\RigAutomate.dll</HintPath>
+      <Private>False</Private>
+      <SpecificVersion>False</SpecificVersion>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="8.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+</Project>

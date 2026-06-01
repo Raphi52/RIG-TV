@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.Processus.Kbis.Tests</RootNamespace>
+    <AssemblyName>Rig.Wpf.Processus.KBIS.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Processus.KBIS\Rig.Wpf.Processus.KBIS.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
+  </ItemGroup>
+
+</Project>

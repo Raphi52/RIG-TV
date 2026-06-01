@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.IntegrationTests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Core\Rig.Wpf.Core.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.LegacyHost\Rig.Wpf.LegacyHost.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier\Rig.Wpf.RigMetier.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier.Legacy\Rig.Wpf.RigMetier.Legacy.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.RigMetier.Sql\Rig.Wpf.RigMetier.Sql.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.TestHelpers\Rig.Wpf.TestHelpers.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System.Data" />
+    <Reference Include="System.Transactions" />
+  </ItemGroup>
+
+</Project>

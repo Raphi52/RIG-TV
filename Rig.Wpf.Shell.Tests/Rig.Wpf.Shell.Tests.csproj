@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.Shell.Tests</RootNamespace>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Shell\Rig.Wpf.Shell.csproj" />
+    <ProjectReference Include="..\Rig.Wpf.TestHelpers\Rig.Wpf.TestHelpers.csproj" />
+  </ItemGroup>
+
+</Project>

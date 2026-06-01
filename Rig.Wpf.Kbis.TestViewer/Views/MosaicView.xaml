@@ -1,0 +1,175 @@
+<UserControl x:Class="Rig.Wpf.Kbis.TestViewer.Views.MosaicView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
+             xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
+             Width="480" Background="#F5FBFF">
+    <UserControl.Resources>
+        <cv:PhaseToStringConverter x:Key="PhaseToString"/>
+        <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>
+        <cv:VerdictToColorConverter x:Key="VerdictBrush"/>
+    </UserControl.Resources>
+    <!-- Grid au lieu de DockPanel (consigne user 2026-05-28) : DockPanel LastChildFill
+         combiné à MaxHeight sur le dernier enfant produisait un Vertical Center
+         imprévu malgré VerticalAlignment="Top" — la ListBox se retrouvait avec ~85 px
+         de blanc au-dessus de la 1ʳᵉ tile. Grid avec Row 0=Auto / Row 1=* garantit
+         que la ListBox démarre EXACTEMENT sous le header MOSAÏQUE. MaxHeight viré ;
+         le ScrollViewer interne de la ListBox suffit pour scroller au-delà de la col. -->
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>   <!-- header MOSAÏQUE -->
+            <RowDefinition Height="*"/>       <!-- ListBox des tiles, scrollable -->
+        </Grid.RowDefinitions>
+        <TextBlock Grid.Row="0" Margin="8,6,8,4"
+                   Text="▶ MOSAÏQUE"
+                   FontSize="9" FontWeight="Bold" Foreground="#06F"/>
+        <!-- ListBox (au lieu d'ItemsControl) car SelectedItem TwoWay + ItemContainerStyle.IsSelected
+             nous donnent click→focus + highlight automatiques, sans les 3 patterns toxiques qui ont
+             crashé la 1ère version (DataTrigger Value=Binding, MouseBinding RelativeSource, AutomationId
+             StringFormat dans attribut).
+             ItemsSource = ScenariosView (vue triée Queued à la fin).
+             Tile : label + status + PNG 130px → ~165px par tile, 2 cols UniformGrid. -->
+        <!-- Phase 4 refactor : DataContext = IScenarioCatalog (RaptureScenarioCatalog ou autre adapter).
+             ScenariosView est dans l'interface, SelectedScenario remplace BatchState.SelectedScenario.
+             Les Play/StopScenarioCommand via RelativeSource AncestorType=ListBox récupèrent
+             la même DataContext (le catalog), qui expose ces commands. -->
+        <ListBox Grid.Row="1"
+                 ItemsSource="{Binding ScenariosView}"
+                 SelectedItem="{Binding SelectedScenario, Mode=TwoWay}"
+                 AutomationProperties.AutomationId="ListRaptureMosaicTiles"
+                 BorderThickness="0" Background="Transparent"
+                 Padding="0"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                 ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 HorizontalContentAlignment="Stretch">
+            <ListBox.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <UniformGrid Columns="2"/>
+                </ItemsPanelTemplate>
+            </ListBox.ItemsPanel>
+            <ListBox.ItemContainerStyle>
+                <Style TargetType="ListBoxItem">
+                    <!-- AutomationId par tile : forme `MosaicTile_<scenarioId>` pour drive scripts.
+                         Utilise l'élément <Binding> explicite (pas attribut "{Binding ...}") pour éviter
+                         tout reparse markup extension du {0}. -->
+                    <Setter Property="AutomationProperties.AutomationId">
+                        <Setter.Value>
+                            <Binding Path="Id" StringFormat="MosaicTile_{0}"/>
+                        </Setter.Value>
+                    </Setter>
+                    <Setter Property="Margin" Value="2"/>
+                    <Setter Property="Padding" Value="0"/>
+                    <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    <!-- VerticalAlignment Top + Height Auto : la tile prend sa taille NATURELLE
+                         (label + phase + image 130px ≈ 170px) plutôt que d'occuper toute la
+                         hauteur de la ListBox (bug 2026-05-28 : avec 2 scenarios KBIS, chaque
+                         tile prenait tout l'espace vertical disponible, énorme zone verte vide). -->
+                    <Setter Property="VerticalAlignment" Value="Top"/>
+                    <Setter Property="VerticalContentAlignment" Value="Top"/>
+                    <!-- ControlTemplate complet : on remplace toute la chrome ListBoxItem par notre Border
+                         pour avoir IsSelected trigger sans le mouseover bleu standard. -->
+                    <Setter Property="Template">
+                        <Setter.Value>
+                            <ControlTemplate TargetType="ListBoxItem">
+                                <!-- Tile chrome :
+                                       - Pending (Queued ou Running)  → border gris #CCC (default)
+                                       - Pass                          → border vert #28A745
+                                       - Fail                          → border rouge #DC3545
+                                       - Flaky                         → border orange #FF9900
+                                     Pour donner d'un coup d'œil le statut sur un batch parallèle 16
+                                     scénarios. BorderThickness 2 (vs 1 avant) pour visibilité accrue. -->
+                                <Border x:Name="TileBorder" Padding="3" CornerRadius="3"
+                                        Background="White"
+                                        BorderBrush="{Binding Verdict, Converter={StaticResource VerdictBrush}}"
+                                        BorderThickness="2">
+                                    <ContentPresenter HorizontalAlignment="Stretch"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <Trigger Property="IsSelected" Value="True">
+                                        <!-- Selection : remplace la border verdict par bleu épais.
+                                             Le user voit clairement quelle tile est focused.
+                                             Quand la sélection disparaît, la border verdict revient. -->
+                                        <Setter TargetName="TileBorder" Property="BorderBrush" Value="#06F"/>
+                                        <Setter TargetName="TileBorder" Property="BorderThickness" Value="3"/>
+                                        <Setter TargetName="TileBorder" Property="Background" Value="#EEF"/>
+                                    </Trigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="TileBorder" Property="BorderBrush" Value="#9CF"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Setter.Value>
+                    </Setter>
+                </Style>
+            </ListBox.ItemContainerStyle>
+            <ListBox.ItemTemplate>
+                <DataTemplate DataType="{x:Type vm:ScenarioRunState}">
+                    <!-- Ordre inversé (consigne user 2026-05-28) :
+                           1. Label scenarioId en HAUT (aligné visuellement avec le header
+                              FocusView "cas-x • Queued • pid")
+                           2. Phase + boutons Play/Stop juste sous le label
+                           3. Image PNG (130px) en BAS — peut être vide en Queued sans
+                              créer une grande zone blanche au-dessus du label
+                         Avant : image en haut → empty PNG = ~130px de blanc avant de voir
+                         le titre → tiles "alourdies" et désalignées du FocusView. -->
+                    <StackPanel>
+                        <TextBlock Text="{Binding Id}" FontWeight="Bold" FontSize="10"
+                                   TextTrimming="CharacterEllipsis" Margin="0,0,0,2"/>
+                        <DockPanel Margin="0,0,0,3">
+                            <!-- Boutons Play/Stop par scénario (right-docked).
+                                 Play visible si CanPlay (Queued / Done / Fail). Stop visible si CanStop (worker actif).
+                                 Style 2026-05-27 : icône remplie sans background (consigne user). Background=Transparent
+                                 + Foreground=vert/rouge donne juste l'icône colorée sans pastille. FontSize 14 (vs 10
+                                 avant) car l'icône devient l'emphasis visuel à elle seule. Template override pour kill
+                                 le hover effect par défaut du Button qui rend une pastille grise au mouseover. -->
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                <StackPanel.Resources>
+                                    <Style x:Key="IconOnlyButton" TargetType="Button">
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Setter Property="BorderThickness" Value="0"/>
+                                        <Setter Property="Padding" Value="2,0"/>
+                                        <Setter Property="Margin" Value="2,0,0,0"/>
+                                        <Setter Property="FontSize" Value="14"/>
+                                        <Setter Property="Cursor" Value="Hand"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="Button">
+                                                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                                    </Border>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </StackPanel.Resources>
+                                <Button Content="▶" Foreground="#28A745" Style="{StaticResource IconOnlyButton}"
+                                        ToolTip="Lancer ce scénario"
+                                        Visibility="{Binding CanPlay, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                                        AutomationProperties.AutomationId="{Binding Id, StringFormat='BtnMosaicPlay_{0}'}"
+                                        Command="{Binding DataContext.PlayScenarioCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        CommandParameter="{Binding}"/>
+                                <Button Content="⏹" Foreground="#DC3545" Style="{StaticResource IconOnlyButton}"
+                                        ToolTip="Stopper ce worker (taskkill /T /F)"
+                                        Visibility="{Binding CanStop, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                                        AutomationProperties.AutomationId="{Binding Id, StringFormat='BtnMosaicStop_{0}'}"
+                                        Command="{Binding DataContext.StopScenarioCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
+                                        CommandParameter="{Binding}"/>
+                            </StackPanel>
+                            <TextBlock FontSize="9" Foreground="#666"
+                                       VerticalAlignment="Center"
+                                       Text="{Binding Phase, Converter={StaticResource PhaseToString}}"/>
+                        </DockPanel>
+                        <!-- PNG via PathToCachedBitmapConverter : load mémoire complet + Freeze →
+                             assignment Source atomique = zéro flicker (vs IsAsync=True qui rend null pendant decode).
+                             Stretch="Uniform" : montre TOUTE la fenêtre RIG sans crop (vs UniformToFill
+                             qui croppait le bas en remplissant la tuile). Peut laisser des bandes blanches
+                             en haut/bas si aspect ratio source ≠ ratio tuile. -->
+                        <Image Source="{Binding LastSnapPath, Converter={StaticResource PathToBmp}}"
+                               Height="130" Stretch="Uniform"
+                               RenderOptions.BitmapScalingMode="LowQuality"/>
+                    </StackPanel>
+                </DataTemplate>
+            </ListBox.ItemTemplate>
+        </ListBox>
+    </Grid>
+</UserControl>

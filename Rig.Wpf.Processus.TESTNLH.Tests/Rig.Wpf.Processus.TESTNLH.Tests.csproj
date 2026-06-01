@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Wpf.Processus.Testnlh.Tests</RootNamespace>
+    <AssemblyName>Rig.Wpf.Processus.TESTNLH.Tests</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Processus.TESTNLH\Rig.Wpf.Processus.TESTNLH.csproj" />
+  </ItemGroup>
+
+</Project>

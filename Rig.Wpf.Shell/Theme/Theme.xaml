@@ -1,0 +1,14 @@
+<ResourceDictionary
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ResourceDictionary.MergedDictionaries>
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Palette.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Typography.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Buttons.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Inputs.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/DataGridStyle.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Cards.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Icons.xaml" />
+        <ResourceDictionary Source="pack://application:,,,/Rig.Wpf.Shell;component/Theme/Scrollbars.xaml" />
+    </ResourceDictionary.MergedDictionaries>
+</ResourceDictionary>

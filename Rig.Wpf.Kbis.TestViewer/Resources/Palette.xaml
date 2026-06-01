@@ -1,0 +1,47 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <!-- B2 tokens -->
+    <SolidColorBrush x:Key="RailBg"          Color="#152C4E"/>
+    <SolidColorBrush x:Key="RailBgActive"    Color="#1E3E6E"/>
+    <SolidColorBrush x:Key="RailText"        Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Gold"            Color="#E8B53D"/>
+    <SolidColorBrush x:Key="Canvas"          Color="#F7F9FC"/>
+    <SolidColorBrush x:Key="Surface"         Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="Ink"             Color="#152C4E"/>
+    <SolidColorBrush x:Key="ConsoleBg"       Color="#0B1120"/>
+    <SolidColorBrush x:Key="ConsoleHeaderBg" Color="#152C4E"/>
+    <SolidColorBrush x:Key="ConsoleText"     Color="#E2E8F0"/>
+    <SolidColorBrush x:Key="ConsoleAccentOk" Color="#34D399"/>
+    <SolidColorBrush x:Key="ConsoleAccentRun" Color="#60A5FA"/>
+    <SolidColorBrush x:Key="ConsoleMuted"    Color="#475569"/>
+    <!-- Legacy keys remapped to B2 -->
+    <SolidColorBrush x:Key="BgWindow"      Color="#F7F9FC"/>
+    <SolidColorBrush x:Key="BgTopBar"      Color="#152C4E"/>
+    <SolidColorBrush x:Key="BgPanel"       Color="#FFFFFF"/>
+    <SolidColorBrush x:Key="BgPanelAlt"    Color="#F1F5F9"/>
+    <SolidColorBrush x:Key="BgHover"       Color="#F7F9FC"/>
+    <SolidColorBrush x:Key="BorderSubtle"  Color="#E6EBF2"/>
+    <SolidColorBrush x:Key="BorderStrong"  Color="#D8E0EA"/>
+    <SolidColorBrush x:Key="TextPrimary"   Color="#152C4E"/>
+    <SolidColorBrush x:Key="TextSecondary" Color="#475569"/>
+    <SolidColorBrush x:Key="TextMuted"     Color="#64748B"/>
+    <SolidColorBrush x:Key="TextFaint"     Color="#94A3B8"/>
+    <SolidColorBrush x:Key="Accent"        Color="#152C4E"/>
+    <SolidColorBrush x:Key="AccentHover"   Color="#0F2038"/>
+    <SolidColorBrush x:Key="AccentSubtle"  Color="#E7ECF3"/>
+    <SolidColorBrush x:Key="OkColor"       Color="#157347"/>
+    <SolidColorBrush x:Key="OkSubtle"      Color="#EAF6EF"/>
+    <SolidColorBrush x:Key="FailColor"     Color="#B02A37"/>
+    <SolidColorBrush x:Key="FailSubtle"    Color="#FBEAEC"/>
+    <SolidColorBrush x:Key="SkipColor"     Color="#9A6700"/>
+    <SolidColorBrush x:Key="SkipSubtle"    Color="#FBF2DF"/>
+    <SolidColorBrush x:Key="UnknownColor"  Color="#CBD5E1"/>
+    <SolidColorBrush x:Key="BadgeLegacyBg" Color="#FBF2DF"/>
+    <SolidColorBrush x:Key="BadgeLegacyFg" Color="#9A6700"/>
+    <SolidColorBrush x:Key="BadgeNativeBg" Color="#EAF6EF"/>
+    <SolidColorBrush x:Key="BadgeNativeFg" Color="#157347"/>
+    <SolidColorBrush x:Key="BadgeNeutralBg" Color="#F4F6F9"/>
+    <SolidColorBrush x:Key="BadgeNeutralFg" Color="#94A3B8"/>
+    <DropShadowEffect x:Key="CardShadow" BlurRadius="14" ShadowDepth="2"
+                      Direction="270" Color="#152C4E" Opacity="0.05"/>
+</ResourceDictionary>

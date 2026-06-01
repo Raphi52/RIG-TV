@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- WinExe = pas de console à côté de la fenêtre WPF -->
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>Rig.Wpf.Kbis.TestViewer</RootNamespace>
+    <AssemblyName>Rig.Wpf.Kbis.TestViewer</AssemblyName>
+    <UseWPF>true</UseWPF>
+    <!-- Tool de dev interne, pas de tests. -->
+    <IsPackable>false</IsPackable>
+    <!-- Tools utility : on autorise les warnings car on intègre WebView2/CommunityToolkit. -->
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <!-- Le launcher est lui aussi unsigned vis-à-vis du strict global :
+         on ne charge pas le manifeste fort. -->
+    <SignAssembly>false</SignAssembly>
+    <ApplicationIcon>icon.ico</ApplicationIcon>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.0" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.2592.51" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Référence projet vers SmokeRunner pour partager le catalogue scenarios
+         et garantir qu'un build du TestViewer build aussi le runner cible.
+         (On ne fait pas tourner SmokeRunner in-process — on shell-out.) -->
+    <ProjectReference Include="..\Rig.Wpf.Kbis.SmokeRunner\Rig.Wpf.Kbis.SmokeRunner.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Dossier RaptureScenarios/ embarqué : copié dans bin\Release\net48\RaptureScenarios\
+         à chaque build. Le manifest.json + les JSONs sont alors dispos pour le combo
+         Smoke Import sans dépendre de Desktop\JsonRapture\. Suit le zip. -->
+    <None Include="RaptureScenarios\**\*.*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>RaptureScenarios\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </None>
+  </ItemGroup>
+
+</Project>

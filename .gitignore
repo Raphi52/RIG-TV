@@ -1,0 +1,15 @@
+# Build output
+[Bb]in/
+[Oo]bj/
+.vs/
+*.user
+*.suo
+packages/
+
+# IDE / OS
+*.DotSettings.user
+Thumbs.db
+.DS_Store
+
+# Logs / temp locaux
+*.log

@@ -1,0 +1,1725 @@
+<Window x:Class="Rig.Wpf.Kbis.TestViewer.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
+        xmlns:views="clr-namespace:Rig.Wpf.Kbis.TestViewer.Views"
+        xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Rig Testing — Pilot WPF"
+        Height="980" Width="1640"
+        WindowStartupLocation="Manual"
+        Background="{StaticResource BgWindow}"
+        FontFamily="Segoe UI" FontSize="13"
+        TextOptions.TextFormattingMode="Display"
+        UseLayoutRounding="True">
+
+    <DockPanel LastChildFill="True" Background="{StaticResource Canvas}">
+
+        <!-- ════════════════ Left rail ════════════════ -->
+        <!-- Visibility bindée à FocusIsFullscreen : en mode plein écran (consigne user 2026-05-27),
+             le rail disparaît pour libérer toute la largeur au PNG. -->
+        <Border DockPanel.Dock="Left" Width="96" Background="{StaticResource RailBg}"
+                Visibility="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
+            <DockPanel LastChildFill="False">
+                <!-- Brand mark -->
+                <TextBlock DockPanel.Dock="Top" Text="RIG" Foreground="{StaticResource Gold}"
+                           FontWeight="Bold" FontSize="14" HorizontalAlignment="Center"
+                           Margin="0,16,0,18"/>
+                <!-- Module nav (vertical rail) -->
+                <ItemsControl DockPanel.Dock="Top" ItemsSource="{Binding Modules}">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate><StackPanel Orientation="Vertical"/></ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate DataType="{x:Type vm:ModuleNavItem}">
+                            <ToggleButton Style="{StaticResource RailItem}"
+                                          IsChecked="{Binding IsActive, Mode=OneWay}"
+                                          IsEnabled="{Binding IsAvailable}"
+                                          Command="{Binding DataContext.SelectModuleCommand,
+                                                    RelativeSource={RelativeSource AncestorType=Window}}"
+                                          CommandParameter="{Binding}">
+                                <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+                                    <TextBlock Text="{Binding Icon}" FontSize="16" HorizontalAlignment="Center"/>
+                                    <TextBlock Text="{Binding Name}" FontSize="10" HorizontalAlignment="Center" Margin="0,3,0,0"/>
+                                </StackPanel>
+                            </ToggleButton>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- Bouton Settings globaux (en bas du rail).
+                     Premier setting livré : Parallelism (1-32). À enrichir avec
+                     d'autres settings transverses (ScreenshotsLoop, etc.). -->
+                <Button DockPanel.Dock="Bottom"
+                        Command="{Binding OpenGlobalSettingsCommand}"
+                        AutomationProperties.AutomationId="BtnGlobalSettings"
+                        ToolTip="Paramètres globaux (parallelism RIG, screenshots-loop, etc.)"
+                        Background="Transparent" BorderThickness="0" Cursor="Hand"
+                        Foreground="White" Margin="0,0,0,8" Padding="0,10"
+                        HorizontalContentAlignment="Center">
+                    <StackPanel Orientation="Vertical" HorizontalAlignment="Center">
+                        <TextBlock Text="⚙" FontSize="20" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource Gold}"/>
+                        <TextBlock Text="{Binding GlobalSettingsSummary}"
+                                   FontSize="9" HorizontalAlignment="Center"
+                                   TextWrapping="Wrap" TextAlignment="Center"
+                                   Foreground="White" Margin="0,3,0,0"/>
+                    </StackPanel>
+                </Button>
+            </DockPanel>
+        </Border>
+
+        <!-- ════════════════ Main area (header + content) ════════════════ -->
+        <DockPanel LastChildFill="True">
+
+            <!-- Header band -->
+            <!-- Hide en plein écran (consigne user 2026-05-27 : "que les boutons rétrécir et HDESK"). -->
+            <Border DockPanel.Dock="Top" Background="{StaticResource Canvas}" Padding="22,16,22,0"
+                    Visibility="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
+                <Grid>
+                    <StackPanel>
+                        <TextBlock Style="{StaticResource Eyebrow}" Text="MODULE"/>
+                        <TextBlock Style="{StaticResource H1}" Text="{Binding SelectedModule.Name}"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center">
+                        <!-- Relocated global action buttons from old top bar -->
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="OpenLog_Click" Margin="0,0,8,0"
+                                ToolTip="Ouvrir le fichier de log du TestViewer">
+                            <TextBlock Text="📋  Logs"/>
+                        </Button>
+                        <!-- ML Loop : lit Audit\last-batch-result.json, écrit prompt master,
+                             update LOOP_STATE.md. Phase 3 du design ML_LOOP.md. -->
+                        <Button Style="{StaticResource SecondaryButton}"
+                                Click="RunMlLoop_Click" Margin="0,0,8,0"
+                                AutomationProperties.AutomationId="BtnMlLoop"
+                                ToolTip="Lance l'orchestrateur ML loop : lit le dernier batch, écrit le prompt master pour Claude, met à jour LOOP_STATE.md">
+                            <TextBlock Text="🤖  ML Loop"/>
+                        </Button>
+                        <Button Style="{StaticResource PrimaryButton}"
+                                Command="{Binding RunAllCommand}" Margin="0,0,8,0">
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="▶  Run all" />
+                            </StackPanel>
+                        </Button>
+                        <Border Style="{StaticResource StatusPillOk}" Margin="0,0,8,0">
+                            <TextBlock Foreground="{StaticResource OkColor}" FontWeight="SemiBold"
+                                       Text="{Binding SmokeSummary, Mode=OneWay, FallbackValue='✓ —'}"/>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- ════════════════ Container : TabControl conditionnel par module ═══════════ -->
+        <!-- KBIS module = ses 3 tabs (Smoke WPF / xUnit / Scénarios).
+             MANDATAIRE / IPE = à venir (greyed dans la nav).
+             Global module = tests cross-fonctionnels (boot RIG legacy, login DB 9995, …).
+             Plus tard : à l'intérieur de chaque module métier, filter-chips Legacy/WPF
+             pour basculer entre les deux stacks. -->
+        <!-- Margin removed en mode plein écran pour que la FocusView prenne réellement
+             toute la fenêtre (sans les 22px de gutter latéral / 12+22 vertical). Converter
+             BoolToMarginConverter avec parameter "22,12,22,22" comme valeur par défaut (false). -->
+        <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='22,12,22,22'}">
+        <!-- Module KBIS : 3 tabs (Smoke / xUnit / Scénarios).
+             Le filtre Legacy/WPF n'est plus global : il est contextuel,
+             intégré aux chips de la section REGRESSION (api/transition/legacy/wpf). -->
+        <DockPanel Visibility="{Binding IsKbisModule, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+        <TabControl SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+
+            <!-- Plein écran live viewer (consigne 2026-05-29) : la FocusView doit prendre VRAIMENT
+                 tout l'écran. Template minimal DockPanel : la BARRE D'ONGLETS (TabPanel) se collapse
+                 quand un focus est en plein écran → le ContentPresenter (SelectedContent) remplit
+                 100% (pas de rangée de strip résiduelle). Hors plein écran, le strip s'affiche
+                 normalement (en-têtes via le style TabItem implicite). -->
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <DockPanel Background="{TemplateBinding Background}">
+                        <TabPanel DockPanel.Dock="Top" IsItemsHost="True" Margin="2,2,2,0"
+                                  Visibility="{Binding DataContext.AnyFocusFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}"/>
+                        <!-- x:Name="PART_SelectedContentHost" OBLIGATOIRE : c'est la part que
+                             TabControl.OnApplyTemplate câble pour héberger le contenu sélectionné
+                             ET l'exposer à l'arbre UIA. Sans ce nom, le contenu s'affiche mais
+                             devient invisible aux outils d'automation → casse les drivers. -->
+                        <ContentPresenter x:Name="PART_SelectedContentHost"
+                                          ContentSource="SelectedContent"/>
+                    </DockPanel>
+                </ControlTemplate>
+            </TabControl.Template>
+
+            <!-- ─────────────── SMOKE LEGACY (KBIS) — 1ʳᵉ position (2026-05-28) ───────────────
+                 Utilise le template SmokePage (3-col Mosaic + Focus + DataGrid) partagé avec RAPTURE.
+                 Données : KbisLegacyScenarios filtrés "kbis" (suite smoke RIG WinForms).
+                 Bouton "▶ Run smoke RIG" → RunLegacyCommand (sanity + login + KBIS).
+
+                 Le wiring est strictement le même qu'en RAPTURE Smoke Import — diff = juste
+                 le DataContext (KbisFocus / KbisCatalog au lieu de RaptureFocus / RaptureCatalog).
+                 Pour le futur KBIS smoke parallel infra (RunAllKbisScenariosAsync etc.), il suffira
+                 de substantialiser KbisScenarioCatalog (cf. doc SMOKE_PAGE_REFACTOR.md). -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke Legacy"/>
+                        <!-- Badge = nombre de scénarios KBIS (depuis KbisLegacyView.Count). -->
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding KbisLegacyView.Count, Mode=OneWay, FallbackValue=0}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+
+                <!-- Marge top 12px supprimée en plein écran (dernier liseré de fond au-dessus de
+                     la FocusView ; le reste = barre de titre native, inamovible). -->
+                <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
+                    <Grid.Resources>
+                        <!-- Resource au niveau OUTER Grid pour être accessible depuis le footer
+                             (Row 2) ET le 3-col Grid interne (Row 1). Si en inner uniquement,
+                             le footer crash : ResourceNotFoundException → BAML load fail. -->
+                        <cv:BoolToVisibilityInvertedConverter x:Key="KbisBoolToVisInv"/>
+                    </Grid.Resources>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>   <!-- card header KBIS -->
+                        <RowDefinition Height="*"/>      <!-- 3 cols : mosaic | focus | list -->
+                        <RowDefinition Height="Auto"/>   <!-- footer -->
+                    </Grid.RowDefinitions>
+
+                    <!-- Card header KBIS : bouton RunLegacyCommand + status.
+                         Collapse en plein écran → le PNG occupe aussi la hauteur du header. -->
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
+                            Visibility="{Binding KbisFocus.IsFullscreen, Converter={StaticResource KbisBoolToVisInv}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunLegacyCommand}"
+                                    AutomationProperties.AutomationId="BtnKbisRunSmokeLegacy"
+                                    Padding="16,6" VerticalContentAlignment="Center">
+                                <TextBlock Text="▶  Run smoke RIG"/>
+                            </Button>
+
+                            <!-- Sélecteur de mode de visibilité (miroir de CmbRaptureMode côté Rapture).
+                                 A = RIG sur ton écran (prend la souris) → vérif K-bis à l'œil + capture ;
+                                 B = HDESK self-snap, 0 vol focus (défaut). -->
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <TextBlock Text="Mode" Margin="0,0,6,0" VerticalAlignment="Center"
+                                           Style="{StaticResource MutedText}"/>
+                                <ComboBox Width="210"
+                                          AutomationProperties.AutomationId="CmbKbisMode"
+                                          ItemsSource="{Binding KbisModeOptions}"
+                                          SelectedValuePath="Mode"
+                                          SelectedValue="{Binding SelectedKbisMode, Mode=TwoWay}"
+                                          DisplayMemberPath="Label"
+                                          ToolTip="Mode de visibilité des tuiles K-bis. A = RIG sur ton écran (prend la souris) : la page PDF se rend et est capturée. B = HDESK isolé, 0 vol focus (défaut)."/>
+                            </StackPanel>
+
+                            <!-- Stress : lancer X fois le MÊME scénario (la tuile sélectionnée) en
+                                 parallèle. Toggle "boucler jusqu'au 1er échec" = chasse au flake. -->
+                            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="Stresser sélection ×" VerticalAlignment="Center"
+                                               Style="{StaticResource MutedText}"/>
+                                    <TextBox AutomationProperties.AutomationId="NumKbisStressRepeat"
+                                             Width="36" Margin="4,0" Padding="4,2" VerticalContentAlignment="Center"
+                                             Text="{Binding KbisStressRepeat, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Nombre de copies parallèles du scénario sélectionné (1-8)."/>
+                                    <Button AutomationProperties.AutomationId="BtnKbisRunStress"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Command="{Binding StressSelectedScenarioCommand}"
+                                            Padding="12,6" Margin="4,0,0,0" VerticalContentAlignment="Center"
+                                            ToolTip="Lance X copies du scénario sélectionné en parallèle (chasse au flake).">
+                                        <TextBlock><Run Text="▶ Stress ×"/><Run Text="{Binding KbisStressRepeat}"/></TextBlock>
+                                    </Button>
+                                    <Button AutomationProperties.AutomationId="BtnKbisStopStress"
+                                            Command="{Binding StopKbisStressCommand}"
+                                            Padding="10,6" Margin="6,0,0,0" VerticalContentAlignment="Center"
+                                            Content="⏹ Stop"
+                                            ToolTip="Stoppe la boucle de stress après la vague en cours."/>
+                                </StackPanel>
+                                <CheckBox AutomationProperties.AutomationId="ChkKbisStressLoop"
+                                          Margin="0,6,0,0" HorizontalAlignment="Right"
+                                          IsChecked="{Binding KbisStressLoopUntilFail}"
+                                          Content="Boucler jusqu'au 1er échec"
+                                          ToolTip="Relance des vagues de X jusqu'à ce qu'une copie rate, puis stop + highlight de la tuile rouge."/>
+                                <TextBlock Text="{Binding KbisStressStatus}" Style="{StaticResource MutedText}"
+                                           Margin="0,4,0,0" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="420"/>
+                            </StackPanel>
+
+                            <StackPanel>
+                                <TextBlock Text="Smoke Legacy — KBIS" Style="{StaticResource H2}"/>
+                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="Suite smoke RIG legacy filtrée 'kbis' — affichée via le template SmokePage (mosaic + focus + grid). Click 'Run smoke RIG' déclenche RunLegacyCommand (sanity + login + KBIS) ; les statuts par scénario montent au fur et à mesure."/>
+                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+                                <!-- Summary KBIS-spécifique (counter VK+XEX seul, pas le batch entier).
+                                     KbisSummary updaté à chaque LinesChanged dans UpdateLegacySummary. -->
+                                <TextBlock Text="{Binding KbisSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Row 1 : 3 colonnes (template SmokePage). Marge top 12px supprimée en plein
+                         écran (sinon liseré de fond Canvas au-dessus de la FocusView). -->
+                    <Grid Grid.Row="1" Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition>
+                                <ColumnDefinition.Style>
+                                    <Style TargetType="ColumnDefinition">
+                                        <Setter Property="Width" Value="500"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding KbisFocus.IsFullscreen}" Value="True">
+                                                <Setter Property="Width" Value="0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ColumnDefinition.Style>
+                            </ColumnDefinition>
+                        </Grid.ColumnDefinitions>
+
+                        <views:MosaicView Grid.Column="0" DataContext="{Binding KbisCatalog}"
+                                          Visibility="{Binding DataContext.KbisFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource KbisBoolToVisInv}}"/>
+                        <views:FocusView Grid.Column="1" DataContext="{Binding KbisFocus}"/>
+                        <views:ScenarioListView Grid.Column="2" DataContext="{Binding KbisCatalog}" Margin="6,0,0,0">
+                            <views:ScenarioListView.Style>
+                                <Style TargetType="views:ScenarioListView">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DataContext.KbisFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:ScenarioListView.Style>
+                        </views:ScenarioListView>
+                    </Grid>
+
+                    <!-- Row 2 : Footer KBIS — câblé (2026-05-28) : utilise FooterView identique
+                         au Rapture, bind direct au MainWindowViewModel (SnapDiskUsageHuman +
+                         CleanupAllSnapsCommand). Les self-snaps du smoke legacy s'accumulent
+                         dans %LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\<runStamp>\kbis-legacy\
+                         et SnapDiskUsage scan tous les runs (cumul cross-module). -->
+                    <views:FooterView Grid.Row="2"
+                                      Visibility="{Binding KbisFocus.IsFullscreen, Converter={StaticResource KbisBoolToVisInv}, FallbackValue=Visible}"/>
+                </Grid>
+            </TabItem>
+
+            <!-- ─────────────── SMOKE WPF ─────────────── -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke WPF"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding SmokeScenarios.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Toolbar -->
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunSmokeCommand}">
+                                <TextBlock>
+                                    <Run Text="▶  Run smoke"/>
+                                </TextBlock>
+                            </Button>
+                            <CheckBox DockPanel.Dock="Right" Margin="0,0,16,0" VerticalAlignment="Center"
+                                      IsChecked="{Binding EnableUiFlow}"
+                                      IsEnabled="{Binding IsSmokeRunning, Converter={x:Static vm:InverseBoolConverter.Instance}}"
+                                      Foreground="{StaticResource TextSecondary}">
+                                Inclure UI flow (Shell.exe + FlaUI, +50s)
+                            </CheckBox>
+                            <TextBlock Text="{Binding SmokeExeStatus}" Style="{StaticResource MonoMuted}"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <!-- Split : scenarios | detail tabs -->
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="460"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Scenarios -->
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" Padding="16,12" Background="{StaticResource BgPanelAlt}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="SCÉNARIOS"/>
+                                        <TextBlock Text="Catalogue du SmokeRunner" Style="{StaticResource H2}"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border DockPanel.Dock="Top" Padding="12,8,12,0">
+                                    <ItemsControl ItemsSource="{Binding SmokeFilterTags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:TagChipViewModel}">
+                                                <ToggleButton Style="{StaticResource FilterChip}"
+                                                              IsChecked="{Binding IsActive}"
+                                                              Content="{Binding DisplayText, Mode=OneWay}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <ListBox ItemsSource="{Binding SmokeView}"
+                                         Style="{StaticResource FlatList}"
+                                         ItemContainerStyle="{StaticResource FlatListItem}"
+                                         Padding="8">
+                                    <ListBox.GroupStyle>
+                                        <GroupStyle>
+                                            <GroupStyle.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="10,8,10,4" Margin="0,6,0,2">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name, Mode=OneWay}"
+                                                                       FontWeight="SemiBold" FontSize="11"
+                                                                       Foreground="{StaticResource TextMuted}"/>
+                                                            <TextBlock Text="·" Margin="6,0"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                            <TextBlock Text="{Binding ItemCount, Mode=OneWay}"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </GroupStyle.HeaderTemplate>
+                                        </GroupStyle>
+                                    </ListBox.GroupStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:ScenarioViewModel}">
+                                            <Border Padding="12,8" ToolTip="{Binding Description}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="32"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding StatusIcon}"
+                                                               FontSize="16" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Foreground="{Binding StatusBrushKey,
+                                                                    Converter={x:Static vm:BrushKeyToBrushConverter.Instance}}"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource TextPrimary}"
+                                                                   TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding ResultMessage}"
+                                                                   Style="{StaticResource MonoMuted}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+
+                        <GridSplitter Grid.Column="1" Background="Transparent" HorizontalAlignment="Center" Width="6"/>
+
+                        <!-- Detail -->
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <TabControl Margin="6,4" SelectedIndex="{Binding SmokeDetailTabIndex, Mode=TwoWay}">
+                                <TabItem Header="Renders">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="6">
+                                        <ItemsControl ItemsSource="{Binding Renders}">
+                                            <ItemsControl.ItemsPanel>
+                                                <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                            </ItemsControl.ItemsPanel>
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate DataType="{x:Type vm:RenderArtifactViewModel}">
+                                                    <Border Style="{StaticResource CardFlat}" Margin="6" Padding="10" Width="440">
+                                                        <StackPanel>
+                                                            <Image Source="{Binding Image}" MaxHeight="320" Stretch="Uniform"/>
+                                                            <Grid Margin="0,8,0,0">
+                                                                <Grid.ColumnDefinitions>
+                                                                    <ColumnDefinition Width="*"/>
+                                                                    <ColumnDefinition Width="Auto"/>
+                                                                </Grid.ColumnDefinitions>
+                                                                <TextBlock Grid.Column="0" Text="{Binding FileName}"
+                                                                           FontFamily="Consolas" FontWeight="SemiBold"
+                                                                           Foreground="{StaticResource TextPrimary}"
+                                                                           TextTrimming="CharacterEllipsis"/>
+                                                                <TextBlock Grid.Column="1" Text="{Binding SubLabel}"
+                                                                           Style="{StaticResource MonoMuted}"/>
+                                                            </Grid>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </ScrollViewer>
+                                </TabItem>
+
+                                <TabItem Header="PDF (live)">
+                                    <Grid>
+                                        <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                   Text="Aucun PDF généré dans ce run. Lance le smoke d'abord.">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MutedText}">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding PdfPreviewPath}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                        <wv2:WebView2 x:Name="PdfWebView">
+                                            <wv2:WebView2.Style>
+                                                <Style TargetType="wv2:WebView2">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding PdfPreviewPath}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </wv2:WebView2.Style>
+                                        </wv2:WebView2>
+                                    </Grid>
+                                </TabItem>
+
+                                <TabItem Header="Logs">
+                                    <Border Style="{StaticResource ConsolePanel}">
+                                        <DockPanel LastChildFill="True">
+                                            <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                                <TextBlock Text="LOGS — SMOKE WPF" Foreground="{StaticResource ConsoleText}"
+                                                           FontSize="10" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBox Text="{Binding SmokeLastFullStdout, Mode=OneWay}"
+                                                     x:Name="SmokeStdoutBox"
+                                                     TextChanged="OnSmokeStdoutChanged"
+                                                     Style="{StaticResource ConsoleTextBox}"
+                                                     AcceptsReturn="True" TextWrapping="NoWrap"/>
+                                        </DockPanel>
+                                    </Border>
+                                </TabItem>
+                            </TabControl>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ─────────────── xUnit ─────────────── -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="xUnit (regression)"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding RegressionTests.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunRegressionCommand}">
+                                <TextBlock Text="▶  Run xUnit"/>
+                            </Button>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}" Margin="0,0,8,0"
+                                    Command="{Binding RefreshRegressionCommand}">
+                                <TextBlock Text="↻  Refresh catalog"/>
+                            </Button>
+                            <TextBlock Text="{Binding RegressionProjectStatus}" Style="{StaticResource MonoMuted}"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="500"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- xUnit tests list -->
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" Padding="16,12" Background="{StaticResource BgPanelAlt}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="REGRESSION TESTS"/>
+                                        <TextBlock Style="{StaticResource H2}"
+                                                   Text="Characterization xUnit + Verify (legacy ↔ native)"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border DockPanel.Dock="Top" Padding="12,8,12,0">
+                                    <ItemsControl ItemsSource="{Binding RegressionFilterTags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:TagChipViewModel}">
+                                                <ToggleButton Style="{StaticResource FilterChip}"
+                                                              IsChecked="{Binding IsActive}"
+                                                              Content="{Binding DisplayText, Mode=OneWay}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <ListBox ItemsSource="{Binding RegressionView}"
+                                         Style="{StaticResource FlatList}"
+                                         ItemContainerStyle="{StaticResource FlatListItem}"
+                                         Padding="8">
+                                    <ListBox.GroupStyle>
+                                        <GroupStyle>
+                                            <GroupStyle.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="10,8,10,4" Margin="0,6,0,2">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name, Mode=OneWay}"
+                                                                       FontWeight="SemiBold" FontSize="11"
+                                                                       Foreground="{StaticResource TextMuted}"/>
+                                                            <TextBlock Text="·" Margin="6,0"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                            <TextBlock Text="{Binding ItemCount, Mode=OneWay}"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </GroupStyle.HeaderTemplate>
+                                        </GroupStyle>
+                                    </ListBox.GroupStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:RegressionItemViewModel}">
+                                            <Border Padding="12,8" ToolTip="{Binding Description}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="28"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding StatusIcon}"
+                                                               FontSize="14" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Foreground="{Binding StatusBrushKey,
+                                                                    Converter={x:Static vm:BrushKeyToBrushConverter.Instance}}"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding MethodName}" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource TextPrimary}"
+                                                                   FontFamily="Consolas"/>
+                                                        <TextBlock Text="{Binding ClassName}"
+                                                                   Style="{StaticResource MonoMuted}" FontSize="11"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="2"
+                                                            Background="{Binding Backend,
+                                                                Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                                ConverterParameter=bg}"
+                                                            Margin="8,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border" BasedOn="{StaticResource StatusPill}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Backend}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding Backend}"
+                                                                   FontWeight="SemiBold" FontSize="11"
+                                                                   Foreground="{Binding Backend,
+                                                                        Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                                        ConverterParameter=fg}"/>
+                                                    </Border>
+                                                    <TextBlock Grid.Column="3" Text="{Binding DurationLabel}"
+                                                               Style="{StaticResource MonoMuted}" Margin="6,0"
+                                                               VerticalAlignment="Center"/>
+                                                    <StackPanel Grid.Column="4" Orientation="Horizontal">
+                                                        <Button Style="{StaticResource MiniButton}"
+                                                                Command="{Binding JumpToScenarioCommand}"
+                                                                Content="🔗"
+                                                                ToolTip="Voir le scénario .verified.json correspondant"
+                                                                Margin="0,0,4,0"/>
+                                                        <Button Style="{StaticResource MiniButton}"
+                                                                Command="{Binding RunSingleCommand}"
+                                                                Content="▶"
+                                                                ToolTip="Rejouer ce test"
+                                                                IsEnabled="{Binding DataContext.IsRegressionRunning,
+                                                                    RelativeSource={RelativeSource AncestorType=Window},
+                                                                    Converter={x:Static vm:InverseBoolConverter.Instance}}"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+
+                        <GridSplitter Grid.Column="1" Background="Transparent" HorizontalAlignment="Center" Width="6"/>
+
+                        <!-- xUnit logs -->
+                        <Border Grid.Column="2" Style="{StaticResource ConsolePanel}">
+                            <DockPanel LastChildFill="True">
+                                <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                    <TextBlock Text="LOGS — DOTNET TEST" Foreground="{StaticResource ConsoleText}"
+                                               FontSize="10" FontWeight="SemiBold"/>
+                                </Border>
+                                <TextBox Text="{Binding RegressionLastStdout, Mode=OneWay}"
+                                         Style="{StaticResource ConsoleTextBox}"
+                                         AcceptsReturn="True" TextWrapping="NoWrap"/>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ─────────────── SCÉNARIOS (snapshots .verified.json) ─────────────── -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Scénarios"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding ScenarioFiles.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding RefreshScenarioFilesCommand}">
+                                <TextBlock Text="↻  Refresh"/>
+                            </Button>
+                            <TextBlock Text="{Binding ScenarioFilesDirStatus}" Style="{StaticResource MonoMuted}"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="420"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" Padding="16,12" Background="{StaticResource BgPanelAlt}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="SCÉNARIOS"/>
+                                        <TextBlock Style="{StaticResource H2}" Text="Snapshots .verified.json (réponse attendue par scénario)"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border DockPanel.Dock="Top" Padding="12,8,12,0">
+                                    <ItemsControl ItemsSource="{Binding ScenarioFilterTags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:TagChipViewModel}">
+                                                <ToggleButton Style="{StaticResource FilterChip}"
+                                                              IsChecked="{Binding IsActive}"
+                                                              Content="{Binding DisplayText, Mode=OneWay}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <ListBox ItemsSource="{Binding ScenarioFilesView}"
+                                         SelectedItem="{Binding SelectedScenarioFile}"
+                                         Style="{StaticResource FlatList}"
+                                         ItemContainerStyle="{StaticResource FlatListItem}"
+                                         Padding="8">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:ScenarioFileViewModel}">
+                                            <Border Padding="12,8">
+                                                <DockPanel>
+                                                    <TextBlock DockPanel.Dock="Right" Text="{Binding SizeLabel}"
+                                                               Style="{StaticResource MonoMuted}"
+                                                               VerticalAlignment="Center"/>
+                                                    <TextBlock Text="{Binding PrettyName}"
+                                                               FontFamily="Consolas" FontWeight="SemiBold"
+                                                               Foreground="{StaticResource TextPrimary}"
+                                                               TextWrapping="Wrap" FontSize="12"/>
+                                                </DockPanel>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+
+                        <GridSplitter Grid.Column="1" Background="Transparent" HorizontalAlignment="Center" Width="6"/>
+
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <DockPanel DataContext="{Binding ScenarioDetail}">
+                                <!-- Empty state -->
+                                <Grid DockPanel.Dock="Top" Margin="20">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoaded}" Value="False">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <TextBlock Style="{StaticResource MutedText}"
+                                               Text="Sélectionne un scénario à gauche pour voir son contexte, sa requête HTTP et l'éditer."
+                                               TextWrapping="Wrap"/>
+                                </Grid>
+
+                                <!-- Loaded state -->
+                                <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                    <ScrollViewer.Style>
+                                        <Style TargetType="ScrollViewer">
+                                            <Setter Property="Visibility" Value="Visible"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsLoaded}" Value="False">
+                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ScrollViewer.Style>
+
+                                    <StackPanel Margin="16">
+
+                                        <!-- ════════ 1. POURQUOI ════════ -->
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="POURQUOI CE SCÉNARIO"/>
+                                        <TextBlock Style="{StaticResource MutedText}" TextWrapping="Wrap"
+                                                   Margin="0,4,0,2"
+                                                   Text="Identifie le test xUnit qui a produit ce snapshot, donne son intention métier (extraite du commentaire /// summary) et affiche le code C# qui l'implémente. Sert à comprendre pourquoi ce fichier existe et ce qu'il garantit pour la migration."/>
+                                        <StackPanel Orientation="Horizontal" Margin="0,8,0,4">
+                                            <TextBlock Style="{StaticResource H2}" Text="{Binding MethodName}"/>
+                                            <Border Background="{Binding Backend,
+                                                        Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                        ConverterParameter=bg}"
+                                                    Margin="10,4,0,0">
+                                                <Border.Style>
+                                                    <Style TargetType="Border" BasedOn="{StaticResource StatusPill}">
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding Backend}" Value="{x:Null}">
+                                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="{Binding Backend}"
+                                                           FontSize="11" FontWeight="SemiBold"
+                                                           Foreground="{Binding Backend,
+                                                               Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                               ConverterParameter=fg}"/>
+                                            </Border>
+                                        </StackPanel>
+
+                                        <TextBlock Style="{StaticResource MonoMuted}" Margin="0,0,0,2">
+                                            <Run Text="Class : "/><Run Text="{Binding ClassName, Mode=OneWay}" FontWeight="SemiBold"/>
+                                        </TextBlock>
+                                        <TextBlock Text="{Binding OtherParamsLabel, StringFormat='Params : {0}'}">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock" BasedOn="{StaticResource MonoMuted}">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding OtherParamsLabel}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+
+                                        <!-- Summary -->
+                                        <Border Background="{StaticResource AccentSubtle}" CornerRadius="6"
+                                                Padding="12" Margin="0,10,0,0">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Summary}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <StackPanel Orientation="Horizontal">
+                                                <TextBlock Text="📝" FontSize="14" Margin="0,0,8,0"/>
+                                                <TextBlock Text="{Binding Summary}"
+                                                           TextWrapping="Wrap"
+                                                           Foreground="{StaticResource TextSecondary}"
+                                                           VerticalAlignment="Center"/>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- Source link + bridges -->
+                                        <DockPanel Margin="0,10,0,4">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource MiniButton}"
+                                                    Command="{Binding OpenInExplorerCommand}"
+                                                    Content="📂 Open"
+                                                    Margin="8,0,0,0"/>
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource MiniButton}"
+                                                    Command="{Binding JumpToXUnitCommand}"
+                                                    Content="🔗 Voir le test xUnit"
+                                                    ToolTip="Saute à l'onglet xUnit et sélectionne le test qui a produit ce snapshot"
+                                                    Margin="0,0,0,0"/>
+                                            <TextBlock Style="{StaticResource MonoMuted}"
+                                                       VerticalAlignment="Center"
+                                                       TextTrimming="CharacterEllipsis"
+                                                       Margin="0,0,8,0">
+                                                <Run Text="🔗 "/><Run Text="{Binding SourceFilePath, Mode=OneWay}"/><Run Text=":"/><Run Text="{Binding SourceLineNumber, Mode=OneWay}"/>
+                                            </TextBlock>
+                                        </DockPanel>
+
+                                        <!-- Source snippet -->
+                                        <Border Background="#0F172A" CornerRadius="6" Padding="10" Margin="0,4,0,16">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding SourceBody}" Value="{x:Null}">
+                                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBox Text="{Binding SourceBody, Mode=OneWay}"
+                                                     FontFamily="Consolas" FontSize="12"
+                                                     Background="Transparent" Foreground="#E2E8F0"
+                                                     BorderThickness="0" IsReadOnly="True"
+                                                     AcceptsReturn="True" TextWrapping="NoWrap"
+                                                     MaxHeight="220"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     HorizontalScrollBarVisibility="Auto"/>
+                                        </Border>
+
+                                        <!-- ════════ 2. REQUÊTE (déduite) ════════ -->
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="REQUÊTE HTTP (déduite du test)"/>
+                                        <Border Background="{StaticResource BgPanelAlt}" CornerRadius="6"
+                                                Padding="12" Margin="0,4,0,16">
+                                            <StackPanel>
+                                                <TextBlock FontFamily="Consolas" FontSize="13" FontWeight="SemiBold"
+                                                           Foreground="{StaticResource TextPrimary}"
+                                                           Text="{Binding RequestMethodAndPath}"/>
+                                                <TextBlock FontFamily="Consolas" FontSize="12"
+                                                           Foreground="{StaticResource TextMuted}"
+                                                           Text="{Binding RequestAuth}" Margin="0,4,0,0">
+                                                    <TextBlock.Style>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="Visibility" Value="Visible"/>
+                                                            <Style.Triggers>
+                                                                <DataTrigger Binding="{Binding RequestAuth}" Value="{x:Null}">
+                                                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                                                </DataTrigger>
+                                                            </Style.Triggers>
+                                                        </Style>
+                                                    </TextBlock.Style>
+                                                </TextBlock>
+                                            </StackPanel>
+                                        </Border>
+
+                                        <!-- ════════ 3. RÉPONSE ATTENDUE (éditable) ════════ -->
+                                        <DockPanel Margin="0,0,0,4">
+                                            <TextBlock DockPanel.Dock="Left" Style="{StaticResource Eyebrow}" Text="RÉPONSE ATTENDUE"/>
+                                            <Border DockPanel.Dock="Right" Background="{StaticResource SkipSubtle}"
+                                                    CornerRadius="4" Padding="6,2" Margin="0,0,0,0">
+                                                <Border.Style>
+                                                    <Style TargetType="Border">
+                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                        <Style.Triggers>
+                                                            <DataTrigger Binding="{Binding IsDirty}" Value="True">
+                                                                <Setter Property="Visibility" Value="Visible"/>
+                                                            </DataTrigger>
+                                                        </Style.Triggers>
+                                                    </Style>
+                                                </Border.Style>
+                                                <TextBlock Text="● modifié" Foreground="{StaticResource SkipColor}"
+                                                           FontSize="11" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBlock/>
+                                        </DockPanel>
+
+                                        <!-- Status code -->
+                                        <DockPanel Margin="0,6,0,10">
+                                            <TextBlock DockPanel.Dock="Left" Text="Status code"
+                                                       Width="120"
+                                                       Foreground="{StaticResource TextSecondary}"
+                                                       VerticalAlignment="Center"/>
+                                            <ComboBox SelectedItem="{Binding StatusCode}"
+                                                      ItemsSource="{Binding AvailableStatusCodes}"
+                                                      IsEditable="True"
+                                                      Width="120"
+                                                      HorizontalAlignment="Left"
+                                                      FontFamily="Consolas"
+                                                      FontWeight="SemiBold"/>
+                                        </DockPanel>
+
+                                        <!-- Headers -->
+                                        <TextBlock Text="Headers" Foreground="{StaticResource TextSecondary}" Margin="0,4,0,4"/>
+                                        <Border BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1"
+                                                CornerRadius="6" Padding="0" Background="White">
+                                            <DataGrid ItemsSource="{Binding Headers}"
+                                                      AutoGenerateColumns="False"
+                                                      CanUserAddRows="True"
+                                                      CanUserDeleteRows="True"
+                                                      HeadersVisibility="Column"
+                                                      GridLinesVisibility="Horizontal"
+                                                      BorderThickness="0"
+                                                      RowBackground="White"
+                                                      AlternatingRowBackground="{StaticResource BgPanelAlt}"
+                                                      Background="Transparent">
+                                                <DataGrid.Columns>
+                                                    <DataGridTextColumn Header="Nom" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}"
+                                                                        Width="200" FontFamily="Consolas"/>
+                                                    <DataGridTextColumn Header="Valeur" Binding="{Binding Value, UpdateSourceTrigger=PropertyChanged}"
+                                                                        Width="*" FontFamily="Consolas"/>
+                                                </DataGrid.Columns>
+                                            </DataGrid>
+                                        </Border>
+
+                                        <!-- Body -->
+                                        <DockPanel Margin="0,16,0,4">
+                                            <CheckBox DockPanel.Dock="Right" IsChecked="{Binding HasBody}" Content="Body présent"
+                                                      VerticalAlignment="Center"
+                                                      Foreground="{StaticResource TextSecondary}"/>
+                                            <TextBlock Text="Body (JSON pretty-printed, éditable)"
+                                                       Foreground="{StaticResource TextSecondary}"
+                                                       VerticalAlignment="Center"/>
+                                        </DockPanel>
+                                        <Border Background="#0F172A" CornerRadius="6" Padding="2" MinHeight="200">
+                                            <Border.Style>
+                                                <Style TargetType="Border">
+                                                    <Setter Property="Opacity" Value="1"/>
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding HasBody}" Value="False">
+                                                            <Setter Property="Opacity" Value="0.4"/>
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Border.Style>
+                                            <TextBox Text="{Binding BodyPretty, UpdateSourceTrigger=PropertyChanged}"
+                                                     IsEnabled="{Binding HasBody}"
+                                                     FontFamily="Consolas" FontSize="12"
+                                                     Background="Transparent" Foreground="#E2E8F0"
+                                                     CaretBrush="#E2E8F0"
+                                                     BorderThickness="0"
+                                                     Padding="14"
+                                                     AcceptsReturn="True" AcceptsTab="True"
+                                                     TextWrapping="NoWrap"
+                                                     VerticalScrollBarVisibility="Auto"
+                                                     HorizontalScrollBarVisibility="Auto"
+                                                     MaxHeight="500"/>
+                                        </Border>
+
+                                        <!-- Actions -->
+                                        <DockPanel Margin="0,16,0,8">
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                                    Command="{Binding SaveCommand}" Content="💾 Save"/>
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                                    Margin="0,0,8,0"
+                                                    Command="{Binding RevertCommand}" Content="↻ Revert"/>
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                                    Margin="0,0,8,0"
+                                                    Command="{Binding RerunCommand}" Content="▶ Re-run xUnit"/>
+                                            <TextBlock Text="{Binding StatusMessage}"
+                                                       Style="{StaticResource MutedText}"
+                                                       VerticalAlignment="Center"/>
+                                        </DockPanel>
+                                    </StackPanel>
+                                </ScrollViewer>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+        </TabControl>
+        </DockPanel>
+
+        <!-- ══════ Module ALERTES RCS (reprise interrompue / réclamation) ══════
+             Miroir du module KBIS : 1 onglet "Smoke Alertes" via le template SmokePage
+             (Mosaic + Focus + grid), DataContext = AlertesCatalog / AlertesFocus. -->
+        <DockPanel Visibility="{Binding IsAlertesModule, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+        <TabControl SelectedIndex="{Binding SelectedTabIndex, Mode=TwoWay}">
+            <TabControl.Template>
+                <ControlTemplate TargetType="TabControl">
+                    <DockPanel Background="{TemplateBinding Background}">
+                        <TabPanel DockPanel.Dock="Top" IsItemsHost="True" Margin="2,2,2,0"
+                                  Visibility="{Binding DataContext.AnyFocusFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}"/>
+                        <ContentPresenter x:Name="PART_SelectedContentHost" ContentSource="SelectedContent"/>
+                    </DockPanel>
+                </ControlTemplate>
+            </TabControl.Template>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke Alertes"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding AlertesLegacyView.Count, Mode=OneWay, FallbackValue=0}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+
+                <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
+                    <Grid.Resources>
+                        <cv:BoolToVisibilityInvertedConverter x:Key="AlertesBoolToVisInv"/>
+                    </Grid.Resources>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
+                            Visibility="{Binding AlertesFocus.IsFullscreen, Converter={StaticResource AlertesBoolToVisInv}}">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunAlertesCommand}"
+                                    AutomationProperties.AutomationId="BtnAlertesRunSmokeLegacy"
+                                    Padding="16,6" VerticalContentAlignment="Center">
+                                <TextBlock Text="▶  Run smoke RIG"/>
+                            </Button>
+
+                            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0">
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                                    <TextBlock Text="Stresser sélection ×" VerticalAlignment="Center"
+                                               Style="{StaticResource MutedText}"/>
+                                    <TextBox AutomationProperties.AutomationId="NumAlertesStressRepeat"
+                                             Width="36" Margin="4,0" Padding="4,2" VerticalContentAlignment="Center"
+                                             Text="{Binding AlertesStressRepeat, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                             ToolTip="Nombre de copies parallèles du scénario sélectionné (1-8)."/>
+                                    <Button AutomationProperties.AutomationId="BtnAlertesRunStress"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Command="{Binding StressAlertesScenarioCommand}"
+                                            Padding="12,6" Margin="4,0,0,0" VerticalContentAlignment="Center"
+                                            ToolTip="Lance X copies du scénario sélectionné en parallèle (chasse au flake).">
+                                        <TextBlock><Run Text="▶ Stress ×"/><Run Text="{Binding AlertesStressRepeat}"/></TextBlock>
+                                    </Button>
+                                    <Button AutomationProperties.AutomationId="BtnAlertesStopStress"
+                                            Command="{Binding StopAlertesStressCommand}"
+                                            Padding="10,6" Margin="6,0,0,0" VerticalContentAlignment="Center"
+                                            Content="⏹ Stop"
+                                            ToolTip="Stoppe la boucle de stress après la vague en cours."/>
+                                </StackPanel>
+                                <CheckBox AutomationProperties.AutomationId="ChkAlertesStressLoop"
+                                          Margin="0,6,0,0" HorizontalAlignment="Right"
+                                          IsChecked="{Binding AlertesStressLoopUntilFail}"
+                                          Content="Boucler jusqu'au 1er échec"
+                                          ToolTip="Relance des vagues de X jusqu'à ce qu'une copie rate, puis stop + highlight de la tuile rouge."/>
+                                <TextBlock Text="{Binding AlertesStressStatus}" Style="{StaticResource MutedText}"
+                                           Margin="0,4,0,0" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="420"/>
+                            </StackPanel>
+
+                            <StackPanel>
+                                <TextBlock Text="Smoke Alertes — RCS (reprise interrompue / réclamation)" Style="{StaticResource H2}"/>
+                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="4 scénarios : reprise d'une mise en interrompue / en réclamation, sur demande de formalités (J00…) et DCADEMAT. Click 'Run smoke RIG' → ouvre les alertes RCS, ouvre la 1ère demande, vérifie ouverture + DocDemat."/>
+                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+                                <TextBlock Text="{Binding AlertesSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+
+                    <Grid Grid.Row="1" Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition>
+                                <ColumnDefinition.Style>
+                                    <Style TargetType="ColumnDefinition">
+                                        <Setter Property="Width" Value="500"/>
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding AlertesFocus.IsFullscreen}" Value="True">
+                                                <Setter Property="Width" Value="0"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </ColumnDefinition.Style>
+                            </ColumnDefinition>
+                        </Grid.ColumnDefinitions>
+
+                        <views:MosaicView Grid.Column="0" DataContext="{Binding AlertesCatalog}"
+                                          Visibility="{Binding DataContext.AlertesFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource AlertesBoolToVisInv}}"/>
+                        <views:FocusView Grid.Column="1" DataContext="{Binding AlertesFocus}"/>
+                        <views:ScenarioListView Grid.Column="2" DataContext="{Binding AlertesCatalog}" Margin="6,0,0,0">
+                            <views:ScenarioListView.Style>
+                                <Style TargetType="views:ScenarioListView">
+                                    <Setter Property="Visibility" Value="Visible"/>
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding DataContext.AlertesFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </views:ScenarioListView.Style>
+                        </views:ScenarioListView>
+                    </Grid>
+
+                    <views:FooterView Grid.Row="2"
+                                      Visibility="{Binding AlertesFocus.IsFullscreen, Converter={StaticResource AlertesBoolToVisInv}, FallbackValue=Visible}"/>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        </DockPanel>
+
+        <!-- ══════ Module DCADEMAT (2026-05-29) : même compo que KBIS/Alertes (header Card + Run +
+             3-col Mosaic/Focus/List + FooterView), DataContext = DcadematCatalog / DcadematFocus.
+             Composants réutilisés du template SmokePage. (Stress + plein écran : ajout futur.) ══════ -->
+        <DockPanel Visibility="{Binding IsDcadematModule, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+            <!-- DCADEMAT consomme le template partagé SmokePageView : corps (3-col + footer) défini
+                 UNE fois dans SmokePageView.xaml ; on n'injecte ici que le Catalog/Focus + le header. -->
+            <views:SmokePageView Catalog="{Binding DcadematCatalog}" FocusContext="{Binding DcadematFocus}">
+                <views:SmokePageView.HeaderContent>
+                    <Border Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunDcadematCommand}"
+                                    AutomationProperties.AutomationId="BtnDcadematRunSmokeLegacy"
+                                    Padding="16,6" VerticalContentAlignment="Center">
+                                <TextBlock Text="▶  Run smoke DCADEMAT"/>
+                            </Button>
+                            <StackPanel>
+                                <TextBlock Text="Smoke DCADEMAT — comptes annuels dématérialisés (DCA) + formalités Demat" Style="{StaticResource H2}"/>
+                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                           Text="8 scénarios : DCA + Formalité Demat × validation / réclamation / refus / interrompue. v1 = ouvre l'alerte RCS + la 1ère demande (Configurer le dépôt). Le step métier 'Action' (Valider Alt+V / Réclamer Alt+R / Refuser / Interrompre) = Étape 3 (avec supervision ; réclamation = aperçu avant impression → NE PAS IMPRIMER)."/>
+                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
+                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                </views:SmokePageView.HeaderContent>
+            </views:SmokePageView>
+        </DockPanel>
+
+        <!-- ══════ TabControl pour le module Global (tests cross-fonctionnels) ══════ -->
+        <TabControl Visibility="{Binding IsGlobalModule, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke RIG legacy"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding LegacyView.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunLegacyCommand}">
+                                <TextBlock Text="▶  Run smoke RIG"/>
+                            </Button>
+                            <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
+                                       VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="460"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" Padding="16,12" Background="{StaticResource BgPanelAlt}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="SCÉNARIOS LEGACY"/>
+                                        <TextBlock Text="RigClientAccueil.exe — WinForms x86 + COM" Style="{StaticResource H2}"/>
+                                        <TextBlock Text="{Binding LegacySummary}" Style="{StaticResource MutedText}" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                                <ListBox ItemsSource="{Binding LegacyView}"
+                                         Style="{StaticResource FlatList}"
+                                         ItemContainerStyle="{StaticResource FlatListItem}"
+                                         Padding="8">
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:ScenarioViewModel}">
+                                            <Border Padding="12,8" ToolTip="{Binding Description}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="32"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding StatusIcon}"
+                                                               FontSize="16" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Foreground="{Binding StatusBrushKey,
+                                                                    Converter={x:Static vm:BrushKeyToBrushConverter.Instance}}"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding Title}" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource TextPrimary}"
+                                                                   TextWrapping="Wrap"/>
+                                                        <TextBlock Text="{Binding ResultMessage}"
+                                                                   Style="{StaticResource MonoMuted}"
+                                                                   TextTrimming="CharacterEllipsis"
+                                                                   Margin="0,2,0,0"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+                        <GridSplitter Grid.Column="1" Background="Transparent" HorizontalAlignment="Center" Width="6"/>
+                        <Border Grid.Column="2" Style="{StaticResource Card}">
+                            <TabControl Margin="6,4" SelectedIndex="{Binding LegacyDetailTabIndex, Mode=TwoWay}">
+                                <TabItem Header="Logs">
+                                    <Border Style="{StaticResource ConsolePanel}">
+                                        <DockPanel LastChildFill="True">
+                                            <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                                <TextBlock Text="LOGS — RIG LEGACY" Foreground="{StaticResource ConsoleText}"
+                                                           FontSize="10" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBox Text="{Binding LegacyLastFullStdout, Mode=OneWay}"
+                                                     TextChanged="OnLegacyStdoutChanged"
+                                                     Style="{StaticResource ConsoleTextBox}"
+                                                     AcceptsReturn="True" TextWrapping="NoWrap"/>
+                                        </DockPanel>
+                                    </Border>
+                                </TabItem>
+                                <TabItem Header="stderr">
+                                    <Border Style="{StaticResource ConsolePanel}">
+                                        <DockPanel LastChildFill="True">
+                                            <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                                <TextBlock Text="STDERR — RIG LEGACY" Foreground="{StaticResource ConsoleText}"
+                                                           FontSize="10" FontWeight="SemiBold"/>
+                                            </Border>
+                                            <TextBox Text="{Binding LegacyLastStderr, Mode=OneWay}"
+                                                     Style="{StaticResource ConsoleTextBox}"
+                                                     AcceptsReturn="True" TextWrapping="NoWrap"/>
+                                        </DockPanel>
+                                    </Border>
+                                </TabItem>
+                            </TabControl>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+
+        <!-- ══════ TabControl pour le module RAPTURE (xUnit tests JSON import/export) ══════ -->
+        <!-- En plein écran, le TabPanel interne (header strip "Smoke Import / Smoke Export /
+             xUnit Rapture") est masqué pour libérer toute la fenêtre au PNG. On NE peut PAS
+             cacher les TabItem individuels (Visibility=Collapsed sur TabItem casse aussi le
+             SelectedContent). Style sur TabPanel = cible le panel interne du template sans
+             toucher au contenu. -->
+        <TabControl Visibility="{Binding IsRaptureModule, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+            <TabControl.Resources>
+                <Style TargetType="TabPanel">
+                    <Style.Triggers>
+                        <DataTrigger Binding="{Binding DataContext.FocusIsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                            <Setter Property="Visibility" Value="Collapsed"/>
+                            <Setter Property="Height" Value="0"/>
+                        </DataTrigger>
+                    </Style.Triggers>
+                </Style>
+            </TabControl.Resources>
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke Import"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding RaptureScenarios.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"
+                                       ToolTip="Nombre de scénarios chargés depuis manifest.json (dossier RaptureScenarios/)."/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/> <!-- top card (header smoke import) -->
+                        <RowDefinition Height="*"/>    <!-- main grid : 3 cols (mosaïque | focus | scenarios+logs) + footer -->
+                    </Grid.RowDefinitions>
+                    <!-- Card header masquée en plein écran (consigne user 2026-05-27).
+                         Phase 6 refactor : contenu déporté dans BatchControlsView.xaml.
+                         DataContext hérité = MainWindowViewModel (bindings Rapture* directs). -->
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
+                            Visibility="{Binding FocusIsFullscreen, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
+                        <views:BatchControlsView/>
+                    </Border>
+                    <!-- 2026-05-27 : zone main restructurée en 3 COLONNES (au lieu de rows empilées).
+                         Col 0 = MosaicView (sidebar 480, scroll vertical pour parallelism > 4).
+                         Col 1 = FocusView (PNG 16:9 dominant + Live observation toolbar repatriée
+                                 dedans + action buttons). La toolbar live (LIVE badge, refresh
+                                 slider, Pause, RunStamp, Snaps root) vit maintenant DANS FocusView,
+                                 plus comme bar horizontale au-dessus.
+                         Col 2 = ScenarioListView (DataGrid F1 en haut) + Logs panel du scénario
+                                 sélectionné (en bas). Largeur fixée pour ne pas dominer.
+                         Footer disk = bottom row de l'inner Grid, span toutes les colonnes.
+                         Plein écran : FocusIsFullscreen masque mosaïque + col 2 + footer ; col 1
+                         (FocusView) prend tout l'espace. -->
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.Resources>
+                            <cv:BoolToVisibilityInvertedConverter x:Key="BoolToVisInv"/>
+                        </Grid.Resources>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="*"/>     <!-- 3 cols : mosaïque | focus | scenarios+logs -->
+                            <RowDefinition Height="Auto"/>  <!-- footer disk -->
+                        </Grid.RowDefinitions>
+
+                        <!-- Row 0 : 3 colonnes -->
+                        <Grid Grid.Row="0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>  <!-- mosaïque (Width=480 dans MosaicView) -->
+                                <ColumnDefinition Width="*"/>      <!-- focus dominant flex -->
+                                <!-- Col 2 : 500px en normal, COLLAPSE à 0 en plein écran.
+                                     Bug : Visibility="Collapsed" sur ScenarioListView seule
+                                     ne suffit pas — la colonne réserve 500px de blanc à droite
+                                     du PNG. Fix : DataTrigger sur Width pour vraiment libérer
+                                     l'espace en fullscreen (consigne user 2026-05-27). -->
+                                <ColumnDefinition>
+                                    <ColumnDefinition.Style>
+                                        <Style TargetType="ColumnDefinition">
+                                            <Setter Property="Width" Value="500"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding FocusIsFullscreen}" Value="True">
+                                                    <Setter Property="Width" Value="0"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </ColumnDefinition.Style>
+                                </ColumnDefinition>
+                            </Grid.ColumnDefinitions>
+
+                            <!-- Col 0 : Mosaïque
+                                 DataContext = IScenarioCatalog (RaptureCatalog adapter Phase 4).
+                                 ListBox + tiles bindent contre ScenariosView / SelectedScenario / Play/StopScenarioCommand.
+                                 Visibility utilise RelativeSource Window pour récupérer FocusIsFullscreen
+                                 du MainWindowViewModel (le DataContext local est RaptureCatalog qui n'a pas cette prop). -->
+                            <views:MosaicView Grid.Column="0" DataContext="{Binding RaptureCatalog}"
+                                              Visibility="{Binding DataContext.FocusIsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisInv}}"/>
+
+                            <!-- Col 1 : Focus
+                                 DataContext = IFocusContext (RaptureFocus adapter Phase 3).
+                                 FocusView.xaml bind contre IFocusContext (SelectedItem.*, IsFullscreen,
+                                 OpenHdeskCommand, etc.) — plus contre BatchState.SelectedScenario.* /
+                                 FocusIsFullscreen comme avant. -->
+                            <views:FocusView Grid.Column="1" DataContext="{Binding RaptureFocus}"/>
+
+                            <!-- Col 2 : ScenarioListView (full height). Click ligne → RowDetailsTemplate
+                                 déploie inline : logs scrollables + FAIL screenshot path. Plus de panel
+                                 logs dédié séparé (était un doublon du RowDetailsTemplate).
+                                 Visibility : masquée en plein écran ET masquée quand le drawer Historique
+                                 est ouvert (overlap empêchait de lire les 2 simultanément — fix 2026-05-27
+                                 priorité HAUTE UX audit). -->
+                            <!-- Col 2 : DataGrid scénarios. DataContext = IScenarioCatalog (même
+                                 que MosaicView). RaptureCatalog adapter Phase 5. -->
+                            <views:ScenarioListView Grid.Column="2" DataContext="{Binding RaptureCatalog}" Margin="6,0,0,0">
+                                <views:ScenarioListView.Style>
+                                    <Style TargetType="views:ScenarioListView">
+                                        <Setter Property="Visibility" Value="Visible"/>
+                                        <Style.Triggers>
+                                            <!-- Phase 5 refactor : DataContext local = RaptureCatalog (pas MainWindowViewModel),
+                                                 donc bindings via RelativeSource Window pour retrouver FocusIsFullscreen et
+                                                 RunHistoryDrawerOpen sur le MainWindowViewModel root. -->
+                                            <DataTrigger Binding="{Binding DataContext.FocusIsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding DataContext.RunHistoryDrawerOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
+                                                <Setter Property="Visibility" Value="Collapsed"/>
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </views:ScenarioListView.Style>
+                            </views:ScenarioListView>
+                        </Grid>
+
+                        <!-- Row 1 : Footer disk usage (P3) — span toutes les colonnes
+                             Phase 7 refactor : contenu déporté dans FooterView.xaml.
+                             Visibility binding restée sur le wrapper extern. -->
+                        <ContentControl Grid.Row="1"
+                                Visibility="{Binding FocusIsFullscreen, Converter={StaticResource BoolToVisInv}}">
+                            <views:FooterView/>
+                        </ContentControl>
+
+                        <!-- Phase 5 : Drawer Historique overlay slide-in depuis la droite.
+                             Span sur les 2 rangées (3 cols main + footer) pour couvrir toute
+                             la hauteur du tab. Visibility bound au toggle. -->
+                        <Border Grid.Row="0" Grid.RowSpan="2"
+                                Width="320" HorizontalAlignment="Right"
+                                Background="White" BorderBrush="#DDD" BorderThickness="1,0,0,0"
+                                Visibility="{Binding RunHistoryDrawerOpen, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                                Panel.ZIndex="100">
+                            <Border.Effect>
+                                <DropShadowEffect Color="#888" Direction="180" ShadowDepth="2" BlurRadius="8" Opacity="0.4"/>
+                            </Border.Effect>
+                            <views:RunHistoryDrawer DataContext="{Binding}"/>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+
+            <!-- ══════ Tab Smoke Export (1 bouton Start E2E, symétrique Smoke Import) ══════ -->
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="Smoke Export"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding RaptureExportFileCount, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"
+                                       ToolTip="Nombre de fichiers smoke-plumitif-*.json déjà produits dans Desktop\JsonRapture (= runs Export E2E historiques)."/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal"
+                                        VerticalAlignment="Top" Margin="12,0,0,0">
+                                <StackPanel.Resources>
+                                    <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                                        <Setter Property="Height" Value="32"/>
+                                        <Setter Property="MinWidth" Value="64"/>
+                                        <Setter Property="Padding" Value="12,0"/>
+                                        <Setter Property="Margin" Value="6,0,0,0"/>
+                                        <Setter Property="VerticalContentAlignment" Value="Center"/>
+                                    </Style>
+                                </StackPanel.Resources>
+                                <Button Command="{Binding TogglePauseRaptureExportCommand}"
+                                        AutomationProperties.AutomationId="BtnRaptureExportPause"
+                                        ToolTip="PAUSE / REPRENDRE : gèle l'arbre de process Export.">
+                                    <TextBlock Text="{Binding RaptureExportPauseLabel}"/>
+                                </Button>
+                                <Button Command="{Binding StopRaptureExportCommand}"
+                                        AutomationProperties.AutomationId="BtnRaptureExportStop"
+                                        ToolTip="STOP : tue le run Export en cours.">
+                                    <TextBlock Text="⏹  Stop" Foreground="#B02A37"/>
+                                </Button>
+                                <Button Style="{StaticResource PrimaryButton}"
+                                        Height="32" MinWidth="64" Padding="14,0" Margin="6,0,0,0"
+                                        VerticalContentAlignment="Center"
+                                        Command="{Binding RunRaptureExportE2ECommand}"
+                                        AutomationProperties.AutomationId="BtnRaptureExportE2E"
+                                        ToolTip="START E2E (Export) : lance RIG legacy via FlaUI → Login → PROC_PREAUD → audience → click 'Export JSON Plumitif' → écrit le JSON Plumitif dans Desktop\JsonRapture\smoke-plumitif-{timestamp}.json. Prouve le flux d'export bout-en-bout via l'UI legacy.">
+                                    <TextBlock Text="▶  Start E2E"/>
+                                </Button>
+                            </StackPanel>
+                            <StackPanel>
+                                <TextBlock Text="Export JSON Plumitif depuis RIG legacy (PROC_PREAUD)" Style="{StaticResource H2}"/>
+                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0"
+                                           Text="Le smoke lance RigClientAccueil, login, ouvre PROC_PREAUD, sélectionne 1 audience et clique 'Export JSON Plumitif'. Le fichier est écrit dans Desktop\JsonRapture\smoke-plumitif-{timestamp}.json — réutilisable ensuite comme input pour Smoke Import."/>
+                                <TextBlock Text="{Binding RaptureExportExeStatus}" Style="{StaticResource MonoMuted}"
+                                           Margin="0,10,0,0" TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Text="{Binding RaptureExportSummary}" Style="{StaticResource MutedText}" Margin="0,4,0,0"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Border Grid.Row="1" Style="{StaticResource ConsolePanel}" Margin="0,12,0,0">
+                        <DockPanel LastChildFill="True">
+                            <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                <TextBlock Text="LOGS — SMOKE EXPORT" Foreground="{StaticResource ConsoleText}"
+                                           FontSize="10" FontWeight="SemiBold"/>
+                            </Border>
+                            <TextBox Text="{Binding RaptureExportLastStdout, Mode=OneWay}"
+                                     Style="{StaticResource ConsoleTextBox}"
+                                     AcceptsReturn="True" TextWrapping="NoWrap"/>
+                        </DockPanel>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem>
+                <TabItem.Header>
+                    <StackPanel Orientation="Horizontal">
+                        <TextBlock Text="xUnit Rapture"/>
+                        <Border Background="{StaticResource BadgeNeutralBg}" CornerRadius="8" Padding="6,1" Margin="8,0,0,0">
+                            <TextBlock Text="{Binding RaptureRegressionTests.Count, Mode=OneWay}"
+                                       Foreground="{StaticResource BadgeNeutralFg}" FontSize="11" FontWeight="SemiBold"/>
+                        </Border>
+                    </StackPanel>
+                </TabItem.Header>
+                <Grid Margin="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
+                                    Command="{Binding RunRaptureRegressionCommand}">
+                                <TextBlock Text="▶  Run xUnit Rapture"/>
+                            </Button>
+                            <Button DockPanel.Dock="Right" Style="{StaticResource SecondaryButton}"
+                                    Command="{Binding RefreshRaptureRegressionCommand}" Margin="0,0,8,0">
+                                <TextBlock Text="↻  Refresh"/>
+                            </Button>
+                            <StackPanel>
+                                <TextBlock Text="{Binding RaptureRegressionProjectStatus}"
+                                           Style="{StaticResource MonoMuted}"
+                                           TextTrimming="CharacterEllipsis"/>
+                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0"
+                                           Text="Tests parser/mapper/validator du pipeline d'import/export JSON Rapture (Source/Wpf/Rig.Rapture.Tests)"/>
+                            </StackPanel>
+                        </DockPanel>
+                    </Border>
+                    <Grid Grid.Row="1" Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="500"/>
+                            <ColumnDefinition Width="8"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Style="{StaticResource Card}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Top" Padding="16,12" Background="{StaticResource BgPanelAlt}">
+                                    <StackPanel>
+                                        <TextBlock Style="{StaticResource Eyebrow}" Text="REGRESSION TESTS"/>
+                                        <TextBlock Style="{StaticResource H2}"
+                                                   Text="Characterization xUnit (import + export JSON Rapture)"/>
+                                        <TextBlock Text="{Binding RaptureRegressionSummary}" Style="{StaticResource MutedText}" Margin="0,4,0,0"/>
+                                    </StackPanel>
+                                </Border>
+                                <Border DockPanel.Dock="Top" Padding="12,8,12,0">
+                                    <ItemsControl ItemsSource="{Binding RaptureRegressionFilterTags}">
+                                        <ItemsControl.ItemsPanel>
+                                            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+                                        </ItemsControl.ItemsPanel>
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type vm:TagChipViewModel}">
+                                                <ToggleButton Style="{StaticResource FilterChip}"
+                                                              IsChecked="{Binding IsActive}"
+                                                              Content="{Binding DisplayText, Mode=OneWay}"/>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </Border>
+                                <ListBox ItemsSource="{Binding RaptureRegressionView}"
+                                         Style="{StaticResource FlatList}"
+                                         ItemContainerStyle="{StaticResource FlatListItem}"
+                                         Padding="8">
+                                    <ListBox.GroupStyle>
+                                        <GroupStyle>
+                                            <GroupStyle.HeaderTemplate>
+                                                <DataTemplate>
+                                                    <Border Padding="10,8,10,4" Margin="0,6,0,2">
+                                                        <StackPanel Orientation="Horizontal">
+                                                            <TextBlock Text="{Binding Name, Mode=OneWay}"
+                                                                       FontWeight="SemiBold" FontSize="11"
+                                                                       Foreground="{StaticResource TextMuted}"/>
+                                                            <TextBlock Text="·" Margin="6,0"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                            <TextBlock Text="{Binding ItemCount, Mode=OneWay}"
+                                                                       FontSize="11"
+                                                                       Foreground="{StaticResource TextFaint}"/>
+                                                        </StackPanel>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </GroupStyle.HeaderTemplate>
+                                        </GroupStyle>
+                                    </ListBox.GroupStyle>
+                                    <ListBox.ItemTemplate>
+                                        <DataTemplate DataType="{x:Type vm:RegressionItemViewModel}">
+                                            <Border Padding="12,8" ToolTip="{Binding Description}">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions>
+                                                        <ColumnDefinition Width="28"/>
+                                                        <ColumnDefinition Width="*"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                        <ColumnDefinition Width="Auto"/>
+                                                    </Grid.ColumnDefinitions>
+                                                    <TextBlock Grid.Column="0" Text="{Binding StatusIcon}"
+                                                               FontSize="14" FontWeight="Bold"
+                                                               HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                               Foreground="{Binding StatusBrushKey,
+                                                                    Converter={x:Static vm:BrushKeyToBrushConverter.Instance}}"/>
+                                                    <StackPanel Grid.Column="1">
+                                                        <TextBlock Text="{Binding MethodName}" FontWeight="SemiBold"
+                                                                   Foreground="{StaticResource TextPrimary}"
+                                                                   FontFamily="Consolas"/>
+                                                        <TextBlock Text="{Binding ClassName}"
+                                                                   Style="{StaticResource MonoMuted}" FontSize="11"/>
+                                                    </StackPanel>
+                                                    <Border Grid.Column="2"
+                                                            Background="{Binding Backend,
+                                                                Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                                ConverterParameter=bg}"
+                                                            Margin="8,0">
+                                                        <Border.Style>
+                                                            <Style TargetType="Border" BasedOn="{StaticResource StatusPill}">
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding Backend}" Value="{x:Null}">
+                                                                        <Setter Property="Visibility" Value="Collapsed"/>
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </Border.Style>
+                                                        <TextBlock Text="{Binding Backend}"
+                                                                   FontWeight="SemiBold" FontSize="11"
+                                                                   Foreground="{Binding Backend,
+                                                                        Converter={x:Static vm:BackendToBrushConverter.Instance},
+                                                                        ConverterParameter=fg}"/>
+                                                    </Border>
+                                                    <TextBlock Grid.Column="3" Text="{Binding DurationLabel}"
+                                                               Style="{StaticResource MonoMuted}" Margin="6,0"
+                                                               VerticalAlignment="Center"/>
+                                                    <StackPanel Grid.Column="4" Orientation="Horizontal">
+                                                        <Button Style="{StaticResource MiniButton}"
+                                                                Command="{Binding JumpToScenarioCommand}"
+                                                                Content="🔗"
+                                                                ToolTip="Voir le scénario .verified.json correspondant"
+                                                                Margin="0,0,4,0"/>
+                                                        <Button Style="{StaticResource MiniButton}"
+                                                                Command="{Binding RunSingleCommand}"
+                                                                Content="▶"
+                                                                ToolTip="Rejouer ce test"
+                                                                IsEnabled="{Binding DataContext.IsRaptureRegressionRunning,
+                                                                    RelativeSource={RelativeSource AncestorType=Window},
+                                                                    Converter={x:Static vm:InverseBoolConverter.Instance}}"/>
+                                                    </StackPanel>
+                                                </Grid>
+                                            </Border>
+                                        </DataTemplate>
+                                    </ListBox.ItemTemplate>
+                                </ListBox>
+                            </DockPanel>
+                        </Border>
+                        <GridSplitter Grid.Column="1" Background="Transparent" HorizontalAlignment="Center" Width="6"/>
+                        <Border Grid.Column="2" Style="{StaticResource ConsolePanel}">
+                            <DockPanel LastChildFill="True">
+                                <Border DockPanel.Dock="Top" Style="{StaticResource ConsoleHeader}">
+                                    <TextBlock Text="LOGS — DOTNET TEST (RAPTURE)" Foreground="{StaticResource ConsoleText}"
+                                               FontSize="10" FontWeight="SemiBold"/>
+                                </Border>
+                                <TextBox Text="{Binding RaptureRegressionLastStdout, Mode=OneWay}"
+                                         Style="{StaticResource ConsoleTextBox}"
+                                         AcceptsReturn="True" TextWrapping="NoWrap"/>
+                            </DockPanel>
+                        </Border>
+                    </Grid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+        </Grid>
+        </DockPanel>
+    </DockPanel>
+</Window>

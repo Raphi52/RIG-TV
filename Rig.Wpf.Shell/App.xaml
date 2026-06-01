@@ -1,0 +1,81 @@
+<Application x:Class="Rig.Wpf.Shell.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Rig.Wpf.Shell.ViewModels"
+             xmlns:views="clr-namespace:Rig.Wpf.Shell.Views"
+             xmlns:testnlh="clr-namespace:Rig.Wpf.Processus.Testnlh;assembly=Rig.Wpf.Processus.TESTNLH"
+             xmlns:testnlhviews="clr-namespace:Rig.Wpf.Processus.Testnlh.Views;assembly=Rig.Wpf.Processus.TESTNLH"
+             xmlns:mand="clr-namespace:Rig.Wpf.Processus.Mandataire;assembly=Rig.Wpf.Processus.MANDATAIRE"
+             xmlns:mandviews="clr-namespace:Rig.Wpf.Processus.Mandataire.Views;assembly=Rig.Wpf.Processus.MANDATAIRE"
+             xmlns:ipe="clr-namespace:Rig.Wpf.Processus.Ipe;assembly=Rig.Wpf.Processus.IPE"
+             xmlns:ipeviews="clr-namespace:Rig.Wpf.Processus.Ipe.Views;assembly=Rig.Wpf.Processus.IPE"
+             xmlns:kbis="clr-namespace:Rig.Wpf.Processus.Kbis;assembly=Rig.Wpf.Processus.KBIS"
+             xmlns:kbisviews="clr-namespace:Rig.Wpf.Processus.Kbis.Views;assembly=Rig.Wpf.Processus.KBIS"
+             xmlns:demo="clr-namespace:Rig.Wpf.Shell.Demo"
+             xmlns:demoviews="clr-namespace:Rig.Wpf.Shell.Demo.Views"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Theme/Theme.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <DataTemplate DataType="{x:Type vm:LoginViewModel}">
+                <views:LoginView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type vm:DashboardViewModel}">
+                <views:DashboardView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type vm:LegacyPluginTabViewModel}">
+                <views:LegacyPluginHostControl />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type vm:NativeTabViewModel}">
+                <views:NativeTabHostView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type testnlh:TestnlhProcessusViewModel}">
+                <testnlhviews:TestnlhProcessusView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type mand:MandataireProcessusViewModel}">
+                <mandviews:MandataireProcessusView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type ipe:IpeProcessusViewModel}">
+                <ipeviews:IpeProcessusView />
+            </DataTemplate>
+
+            <DataTemplate DataType="{x:Type kbis:KbisProcessusViewModel}">
+                <kbisviews:KbisProcessusView />
+            </DataTemplate>
+
+            <!-- Tous les Processus de démo partagent la même vue générique
+                 (DemoProcessusViewModel est abstrait, donc on enregistre un
+                 template par sous-type concret). -->
+            <DataTemplate DataType="{x:Type demo:DemoJudInstanceVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoJudAudienceVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoJudDecisionVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoJudPartiesVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoRcsSocieteVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoRcsDirigeantVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoRcsActeVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoRcsKbisVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoInsPrivilegeVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoInsNantissementVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoComptaClientVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoComptaFactureVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoComptaEncaissementVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoEdiEntrantVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoEdiSortantVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoEdiBodaccVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoPcDossierVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoPcCreancierVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoAdminUserVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoAdminGreffeVm}"><demoviews:DemoProcessusView /></DataTemplate>
+            <DataTemplate DataType="{x:Type demo:DemoAdminParamVm}"><demoviews:DemoProcessusView /></DataTemplate>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

@@ -1,0 +1,78 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Tests Rapture (import + export JSON). Le code prod vit dans
+    Source/RIG/DLL/Processus/PROC_PREAUD/ (export) et PROC_RETAUD/RAPTURE_IMPORT/
+    (import) — projets classic csproj (.NET FW), pas SDK-style.
+
+    Stratégie : on LINK les fichiers source standalone (DTO + Parser) qui
+    n'ont pas de dépendance RIG, juste System.Runtime.Serialization. Pour les
+    couches dépendantes (Mapper/Validator/Apply qui touchent Juge/Instance/etc.),
+    on ajoutera plus tard soit du link étendu, soit une ProjectReference vers
+    PROC_RETAUD.csproj.
+
+    Directory.Build.props injecte xUnit + FluentAssertions + Moq + SkippableFact
+    pour tout projet qui se termine par .Tests.
+  -->
+
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <RootNamespace>Rig.Rapture.Tests</RootNamespace>
+    <!--
+      Nullable disable : le code Rapture importé par Link est écrit en
+      pre-nullable style (string, pas string?). Pour éviter une cascade de
+      warnings → errors via TreatWarningsAsErrors hérité de Directory.Build.props,
+      on désactive nullable annotations dans ce projet test.
+      Le code Rapture lui-même n'est pas modifié (il reste tel quel sur sa branche prod).
+    -->
+    <Nullable>disable</Nullable>
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+    <!-- SmokeRunner n'est pas signé (FlaUI non-signé) : désactiver signing ici aussi.
+         Un assembly strong-named ne peut pas charger un assembly non-signé au runtime. -->
+    <SignAssembly>false</SignAssembly>
+  </PropertyGroup>
+
+  <!-- Référence framework requise par RaptureImportParser + DTOs (DataContractJsonSerializer) -->
+  <ItemGroup>
+    <Reference Include="System.Runtime.Serialization" />
+  </ItemGroup>
+
+  <!-- Source code Rapture importé par lien (pas de copie : référence directe au fichier prod) -->
+  <ItemGroup>
+    <!-- Import side : DTO + Parser (standalone, juste System.Runtime.Serialization) -->
+    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportDto.cs">
+      <Link>Vendored\Import\RaptureImportDto.cs</Link>
+    </Compile>
+    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportParser.cs">
+      <Link>Vendored\Import\RaptureImportParser.cs</Link>
+    </Compile>
+    <!-- Sanitizer : static helper standalone (sans dépendance RIG.METIER), testable
+         côté xUnit. Linke le source de prod directement. -->
+    <Compile Include="..\..\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureAudienceSanitizer.cs">
+      <Link>Vendored\Import\RaptureAudienceSanitizer.cs</Link>
+    </Compile>
+    <!-- Export side : DTOs Plumitif + Referentiels (standalone aussi). On exclut
+         volontairement PlumitifJsonExporter.cs / ReferentielsExporter.cs qui
+         dépendent de RIG.METIER.* (Juge, Mandataire, SqlRigConnection, …). -->
+    <Compile Include="..\..\RIG\DLL\Processus\PROC_PREAUD\PREAUD\PlumitifJsonDto.cs">
+      <Link>Vendored\Export\PlumitifJsonDto.cs</Link>
+    </Compile>
+    <Compile Include="..\..\RIG\DLL\Processus\PROC_PREAUD\PREAUD\ReferentielsDto.cs">
+      <Link>Vendored\Export\ReferentielsDto.cs</Link>
+    </Compile>
+  </ItemGroup>
+
+  <!-- Fixture JSON copiée dans le bin pour lecture via AppContext.BaseDirectory -->
+  <ItemGroup>
+    <None Update="Fixtures\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Rig.Wpf.Kbis.SmokeRunner\Rig.Wpf.Kbis.SmokeRunner.csproj" />
+    <!-- ML LOOP S1.4 — tests des services ML LOOP de TestViewer (cache + dHash) -->
+    <ProjectReference Include="..\Rig.Wpf.Kbis.TestViewer\Rig.Wpf.Kbis.TestViewer.csproj" />
+  </ItemGroup>
+
+</Project>

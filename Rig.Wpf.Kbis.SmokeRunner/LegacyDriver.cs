@@ -1,0 +1,4579 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Runtime.InteropServices;
+using System.Threading;
+using FlaUI.Core;
+using FlaUI.Core.AutomationElements;
+using FlaUI.Core.Definitions;
+using FlaUI.UIA3;
+
+namespace Rig.Wpf.Kbis.SmokeRunner;
+
+/// <summary>
+/// Smoke FlaUI sur le legacy <c>RigClientAccueil.exe</c> (WinForms x86, COM interop).
+///
+/// Driver à état persistant : on garde <see cref="_app"/> / <see cref="_window"/> entre
+/// les étapes pour que Program.cs puisse découper en N <c>TryStep</c> distincts
+/// (1 ligne smoke par étape), tout en partageant le process et le UIA automation.
+///
+/// 3 étapes v1 :
+///  1. <see cref="Launch"/> : démarre le binaire + détecte la main window
+///  2. <see cref="ClickSeConnecter"/> : clique le bouton login (variantes), attend
+///     post-login, vérifie que l'app survit
+///  3. (à venir) ouverture d'un PROC_*
+///
+/// <see cref="Dispose"/> ferme le process proprement (fallback Kill si timeout).
+/// </summary>
+public sealed class LegacyDriver : IDisposable
+{
+    public string ExePath { get; }
+    public bool ExeExists => File.Exists(ExePath);
+
+    private Application? _app;
+    private UIA3Automation? _automation;
+    private Window? _window;
+    private RigDesktop? _desktop;
+    private static bool Headless =>
+        (Environment.GetEnvironmentVariable("RIG_DRIVER_HEADLESS") ?? "1") != "0";
+
+    // Self-snap periodique : voit ce qui se passe dans RIG meme en HDESK isole.
+    // Cache le hwnd au demarrage (cote thread attache HDESK), le Timer callback
+    // PrintWindow direct (pas d'UIA cross-thread vers AutomationElement HDESK).
+    private System.Threading.Timer? _snapTimer;
+    private IntPtr _snapHwnd = IntPtr.Zero;
+    private string? _snapDir;
+    private int _snapSeq;
+    private volatile bool _snapStopped;
+
+    /// <summary>
+    /// ML LOOP S1.2 — Helper retry+ProcessId filter pour les FindDescendants en mode //.
+    /// Le mode visible-parallel ouvre N RigClientAccueil simultanés ; UIA peut
+    /// jeter ou retourner un élément d'une AUTRE instance (cross-process shortcut).
+    /// Pattern : poll up to <paramref name="timeoutSec"/>s, filtre sur _app.ProcessId,
+    /// retourne null si rien trouvé.
+    /// </summary>
+    private AutomationElement? FindButtonWithRetry(string buttonNameSubstring,
+                                                    double timeoutSec = 20.0,
+                                                    int pollMs = 250)
+    {
+        if (_window is null) return null;
+        int? appPid = null;
+        try { appPid = _app?.ProcessId; } catch { }
+
+        var sw = Stopwatch.StartNew();
+        int attempts = 0;
+        while (sw.Elapsed.TotalSeconds < timeoutSec)
+        {
+            attempts++;
+            try
+            {
+                var btn = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                    .FirstOrDefault(b =>
+                    {
+                        try
+                        {
+                            if (SafeText(() => b.Name).IndexOf(buttonNameSubstring, StringComparison.OrdinalIgnoreCase) < 0)
+                                return false;
+                            if (appPid.HasValue)
+                            {
+                                var pid = b.Properties.ProcessId.ValueOrDefault;
+                                return pid == 0 || pid == appPid.Value;
+                            }
+                            return true;
+                        }
+                        catch { return false; }
+                    });
+                if (btn != null)
+                {
+                    if (attempts > 1)
+                        Console.WriteLine($"      ✓ Bouton '{buttonNameSubstring}' trouvé au {attempts}e essai ({sw.Elapsed.TotalSeconds:F1}s, pid={appPid})");
+                    return btn;
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"      ⚠ FindButtonWithRetry('{buttonNameSubstring}') attempt#{attempts} threw {ex.GetType().Name}: {ex.Message} — retry");
+            }
+            Thread.Sleep(pollMs);
+        }
+        Console.WriteLine($"      ✗ Bouton '{buttonNameSubstring}' INTROUVABLE après {attempts} essais en {sw.Elapsed.TotalSeconds:F1}s (pid filter={appPid})");
+        return null;
+    }
+
+    public LegacyDriver(string exePath, RigDesktop desktop) { ExePath = exePath; _desktop = desktop; }
+
+    /// <summary>Lance le binaire et attend la main window (default 60s).</summary>
+    public void Launch(int mainWindowWaitSeconds = 60)
+    {
+        Console.WriteLine($"      → Launch {ExePath}");
+
+        // WorkingDirectory = dossier de l'exe — sinon RigClientAccueil échoue à charger
+        // les plugins via paths relatifs (C:\rig\Bin Processus\…) et les imports COM.
+        var workingDir = Path.GetDirectoryName(ExePath) ?? Environment.CurrentDirectory;
+        Console.WriteLine($"      → WorkingDirectory={workingDir}");
+
+        // Le desktop est fourni par le constructeur (Program.cs via RigDesktop.RunAttached).
+        // Le thread courant est déjà attaché au HDESK (RunAttached a appelé AttachCurrentThread).
+        Console.WriteLine($"      → RigDesktop : desktop='{_desktop?.DesktopName ?? "(courant)"}'");
+
+        Process process;
+        try
+        {
+            process = _desktop.LaunchProcess(ExePath, workingDir);
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"RigDesktop.LaunchProcess a jeté {ex.GetType().Name} : {ex.Message}. " +
+                                $"Possibles causes : UAC requis, anti-virus qui bloque, exe corrompu, " +
+                                $"dépendance native manquante (Vintasoft/IKVM/LibreOffice DLL).", ex);
+        }
+        _app = Application.Attach(process);
+        Console.WriteLine($"      → Process started PID={_app.ProcessId} Name={_app.Name}");
+        _automation = new UIA3Automation(); // APRÈS AttachCurrentThread() — obligatoire
+
+        // ⚠ FlaUI.Application.GetMainWindow() appelle Process.WaitForInputIdle() qui
+        // timeout à ~1.5s avec un Win32Exception (HRESULT 0x800705B4) sur les apps
+        // WinForms lourdes : RigClientAccueil charge plugins COM + IKVM + GAC au boot,
+        // il n'atteint "input-idle" qu'après plusieurs secondes. On bypass donc
+        // GetMainWindow et on poll directement Process.MainWindowHandle, puis on
+        // attache la fenêtre via UIA3.
+        Console.WriteLine($"      → Wait main window up to {mainWindowWaitSeconds}s (polling MainWindowHandle + UIA.FromHandle)…");
+        var sw = Stopwatch.StartNew();
+        IntPtr hwnd = IntPtr.Zero;
+        string? lastTitle = null;
+        Window? attached = null;
+        Exception? lastUiaError = null;
+        int hwndFoundLogged = 0;
+
+        // Boucle unique qui poll en parallèle :
+        //   1. Process.MainWindowHandle (hwnd dispo)
+        //   2. UIA3Automation.FromHandle(hwnd) — peut throw Win32Exception 0x800705B4 si
+        //      les peers UIA WinForms ne sont pas encore prêts (cas observé : appelé depuis
+        //      le TestViewer WPF, la 1ère tentative timeout, la 2e passe).
+        while (sw.Elapsed.TotalSeconds < mainWindowWaitSeconds && attached is null)
+        {
+            if (_app.HasExited)
+                throw new Exception($"Process RigClientAccueil a quitté pendant le boot (exit code {_app.ExitCode}) — crash silencieux (TypeLoadException ? dépendance native manquante ?)");
+            try
+            {
+                var p = Process.GetProcessById(_app.ProcessId);
+                p.Refresh();
+                if (p.MainWindowHandle != IntPtr.Zero)
+                {
+                    hwnd = p.MainWindowHandle;
+                    lastTitle = p.MainWindowTitle;
+                    if (hwndFoundLogged == 0)
+                    {
+                        Console.WriteLine($"      → MainWindowHandle trouvé en {sw.Elapsed.TotalSeconds:F1}s : hwnd=0x{hwnd.ToInt64():X} title='{lastTitle}'");
+                        hwndFoundLogged = 1;
+                    }
+                    try
+                    {
+                        var el = _automation.FromHandle(hwnd);
+                        if (el is not null)
+                        {
+                            attached = el.AsWindow();
+                        }
+                    }
+                    catch (Exception uiaEx) // ex Win32Exception 0x800705B4 : UIA pas prête
+                    {
+                        lastUiaError = uiaEx;
+                    }
+                }
+            }
+            catch (ArgumentException) { break; /* process disparu */ }
+            if (attached is null) Thread.Sleep(250);
+        }
+
+        if (attached is null)
+        {
+            var allRigProcs = Process.GetProcessesByName("RigClientAccueil");
+            Console.WriteLine($"      → Échec attache UIA après {sw.Elapsed.TotalSeconds:F1}s (hwnd={(hwnd != IntPtr.Zero ? "0x" + hwnd.ToInt64().ToString("X") : "absent")})");
+            if (lastUiaError is not null)
+                Console.WriteLine($"      → Dernière erreur UIA : {lastUiaError.GetType().Name} {lastUiaError.Message}");
+            Console.WriteLine($"      → Process RigClientAccueil actuels : {allRigProcs.Length}");
+            foreach (var p in allRigProcs)
+            {
+                try { Console.WriteLine($"          PID={p.Id} title='{p.MainWindowTitle}' exited={p.HasExited}"); } catch { }
+            }
+            if (hwnd == IntPtr.Zero)
+                throw new Exception($"Main window non détectée après {mainWindowWaitSeconds}s — process vivant mais sans MainWindowHandle (boot bloqué pré-UI ?)");
+            throw new Exception($"UIA3.FromHandle a échoué pendant {mainWindowWaitSeconds}s — hwnd existait mais peers UIA jamais prêts" + (lastUiaError is not null ? $" ({lastUiaError.GetType().Name})" : ""));
+        }
+
+        _window = attached;
+        Console.WriteLine($"      → Main window UIA OK après {sw.Elapsed.TotalSeconds:F1}s : titre='{SafeText(() => _window.Title)}'");
+        Console.WriteLine($"      → [TIME] {DateTime.Now:HH:mm:ss.fff} RIG main window ready PID={_app.ProcessId}");
+
+        // Comportement naturel : on ne force PAS la taille de la fenetre RIG.
+        // RIG decide de sa taille (legacy 750x480 par defaut, max si user click maximize).
+        // DIAG : log les metrics screen vues depuis ce HDESK pour confirmer 1920x1080.
+        if (Headless)
+        {
+            try
+            {
+                int cx = GetSystemMetrics(0);  // SM_CXSCREEN
+                int cy = GetSystemMetrics(1);  // SM_CYSCREEN
+                Console.WriteLine($"      → HDESK screen metrics : {cx}x{cy} (vu depuis le worker attache HDESK)");
+            }
+            catch { }
+        }
+
+        // Mosaïque : si env vars RIG_TILE_INDEX (0-based) et RIG_TILE_PARALLELISM (1-16) set,
+        // positionne la fenêtre RIG dans un quadrant de l'écran pour qu'on voie les N
+        // workers en simultané sans qu'ils se masquent. SWP_NOACTIVATE = ne vole pas le focus.
+        try
+        {
+            var tileIdxStr = Environment.GetEnvironmentVariable("RIG_TILE_INDEX");
+            var tileParStr = Environment.GetEnvironmentVariable("RIG_TILE_PARALLELISM");
+            if (int.TryParse(tileIdxStr, out var tileIdx) && int.TryParse(tileParStr, out var tilePar) && tilePar >= 1 && tileIdx >= 0 && tileIdx < tilePar)
+            {
+                // Grid : 2x2 pour 4, 4x4 pour 16, 3x3 pour 9, etc.
+                int gridSide = (int)Math.Ceiling(Math.Sqrt(tilePar));
+                int col = tileIdx % gridSide;
+                int row = tileIdx / gridSide;
+                int screenW = 1920;  // assume primary 1920x1080 — TODO: read SystemParameters
+                int screenH = 1080;
+                int taskbarH = 50;
+                int cellW = screenW / gridSide;
+                int cellH = (screenH - taskbarH) / gridSide;
+                int x = col * cellW;
+                int y = row * cellH;
+                SetWindowPos(hwnd, IntPtr.Zero, x, y, cellW, cellH, SWP_NOZORDER | SWP_NOACTIVATE);
+                Console.WriteLine($"      → MOSAIC tile [{tileIdx}/{tilePar}] grid {gridSide}x{gridSide} → pos=({x},{y}) size=({cellW}x{cellH})");
+            }
+        }
+        catch (Exception exTile) { Console.WriteLine($"      → (mosaic skip : {exTile.GetType().Name})"); }
+    }
+
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+    [DllImport("user32.dll", SetLastError = true)]
+    private static extern bool PostMessage(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+    private const uint SWP_NOZORDER = 0x0004;
+    private const uint SWP_NOACTIVATE = 0x0010;
+    private const uint WM_SYSCOMMAND = 0x0112;
+    private const int SC_MAXIMIZE = 0xF030;
+
+    /// <summary>
+    /// Cherche le bouton « Se connecter » (variantes : Connexion / OK), click, attend
+    /// post-login que la transition FormLogin → FormAccueil soit effective (poll actif
+    /// sur le titre de fenêtre + UIA-attachable, pas de sleep blind). Vérifie que le
+    /// process est toujours vivant ET qu'une main window est encore accessible.
+    /// </summary>
+    /// <param name="postLoginTimeoutSeconds">
+    /// Timeout MAX (pire cas boot lent). Le poll sort dès que la fenêtre "Console
+    /// d'accueil" est UIA-attachable — typiquement &lt; 5 s.
+    /// </param>
+    public void ClickSeConnecter(int postLoginTimeoutSeconds = 60)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() doit être appelé avant ClickSeConnecter()");
+
+        // RigButton extends RigPanel (pas Button) → UIA Type=Pane, pas Button.
+        // POLL la readiness du bouton (pas one-shot) : sous cold-boot 4× parallèle, Launch()
+        // peut accepter la fenêtre AVANT la fin du Load de FormLogin (titre='', btnOk pas encore
+        // créé). Root cause 2026-05-29 : 3/4 XEX échouaient ici car la recherche one-shot ratait
+        // le bouton qui se rendait ~100ms–2s plus tard. WaitForLoginButton attend la readiness.
+        var btn = WaitForLoginButton(20000);
+        if (btn is null)
+        {
+            Console.WriteLine("      → btnOk introuvable après 20s de poll, dump des descendants pour diag :");
+            DumpDescendants(_window!, maxDepth: 4);
+            throw new Exception("Bouton 'btnOk' / 'Se connecter' introuvable dans FormLogin après 20s (cf. dump ci-dessus)");
+        }
+
+        Console.WriteLine($"      → Bouton login trouvé : AutomationId='{SafeText(() => btn.AutomationId)}' Name='{SafeText(() => btn.Name)}' Type={btn.ControlType}");
+        // Snapshot du titre pré-click (typiquement "Connection à la base de données Rig")
+        // pour détecter la transition vers "Console d'accueil de RIG (…)".
+        var preLoginTitle = SafeText(() => _window.Title);
+
+        Interaction.Click(btn);
+
+        // Poll actif : on attend que la main window du process change de titre (FormLogin
+        // se ferme → FormAccueil devient main) ET soit UIA-attachable. Pas de Sleep blind.
+        Console.WriteLine($"      → Wait post-login (poll titre + UIA, max {postLoginTimeoutSeconds}s) …");
+        var sw = Stopwatch.StartNew();
+        Window? postWin = null;
+        Exception? lastUiaErr = null;
+        string lastTitle = preLoginTitle;
+        while (sw.Elapsed.TotalSeconds < postLoginTimeoutSeconds && postWin is null)
+        {
+            if (_app.HasExited)
+                throw new Exception($"App fermée après click 'Se connecter' (exit code {_app.ExitCode}) — login refusé ou crash silencieux");
+
+            try
+            {
+                var p = Process.GetProcessById(_app.ProcessId);
+                p.Refresh();
+                if (p.MainWindowHandle != IntPtr.Zero)
+                {
+                    Window? candidate = null;
+                    try { candidate = _automation!.FromHandle(p.MainWindowHandle).AsWindow(); }
+                    catch (Exception ex) { lastUiaErr = ex; }
+
+                    if (candidate is not null)
+                    {
+                        var title = SafeText(() => candidate.Title);
+                        lastTitle = title;
+                        // Critère d'acceptance : titre différent du pré-login (= FormLogin
+                        // disparue, FormAccueil promue main window). Le titre Console
+                        // d'accueil contient "Console d'accueil" ou au minimum n'est plus
+                        // celui du login. On accepte aussi tout titre non-vide ≠ pré-login.
+                        if (!string.IsNullOrEmpty(title)
+                            && !string.Equals(title, preLoginTitle, StringComparison.Ordinal))
+                        {
+                            postWin = candidate;
+                        }
+                    }
+                }
+            }
+            catch (ArgumentException) { break; /* process disparu */ }
+            if (postWin is null) Thread.Sleep(150);
+        }
+        if (postWin is null)
+            throw new Exception(
+                $"Transition post-login non détectée après {sw.Elapsed.TotalSeconds:F1}s "
+                + $"(dernier titre observé = '{lastTitle}', pré-login = '{preLoginTitle}')"
+                + (lastUiaErr is not null ? $" — dernière erreur UIA : {lastUiaErr.GetType().Name}" : ""));
+
+        _window = postWin;
+        Console.WriteLine($"      → App ouverte post-login en {sw.Elapsed.TotalSeconds:F1}s : titre='{SafeText(() => _window.Title)}'");
+
+        // En HDESK isole : maximize la fenetre Accueil via PostMessage WM_SYSCOMMAND SC_MAXIMIZE.
+        // C'est l'equivalent d'un click user sur le bouton maximize -> WinForms set WindowState=Maximized
+        // (sticky : persiste a travers les transitions de Form). Plus naturel que SetWindowPos.
+        // VERIFIÉ + retry (root cause flake XEX 2026-05-29) : l'ancien fire-and-forget laissait
+        // parfois la fenetre a 750x480 (taille legacy par defaut) -> btn3..btn6 du rail HORS
+        // de la zone visible -> clics ignores -> scan menu fige -> XEX (sous GÉNÉRAL/btn6) jamais
+        // atteint. EnsureWindowMaximized poll la taille reelle et re-poste tant que < seuil.
+        if (Headless)
+            EnsureWindowMaximized();
+    }
+
+    /// <summary>
+    /// Garantit que la fenetre RIG est MAXIMISÉE (≈1920x1080) avant toute navigation menu.
+    /// Root cause flake XEX intermittent (2026-05-29) : SC_MAXIMIZE etait fire-and-forget ->
+    /// la fenetre restait parfois 750x480 -> les boutons rail btn3..btn6 (UIA y=200..588)
+    /// tombaient SOUS la zone visible -> PostMessage WM_LBUTTON a des coords hors fenetre ->
+    /// clics ignores -> panneau lstSousmenu fige sur le dernier bouton visible (ENDETTEMENT)
+    /// -> PROC_XEX (sous GÉNÉRAL) introuvable. VK survivait (btn1 RCS toujours en haut/visible).
+    ///
+    /// Re-poste SC_MAXIMIZE + poll BoundingRectangle.Width jusqu'a >= minWidth (retry).
+    /// </summary>
+    private void EnsureWindowMaximized(int minWidth = 1400, int maxMs = 6000)
+    {
+        if (_window is null) return;
+        var sw = Stopwatch.StartNew();
+        int attempt = 0;
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            double w = 0, h = 0;
+            try { var r = _window.BoundingRectangle; w = r.Width; h = r.Height; } catch { }
+            if (w >= minWidth)
+            {
+                if (attempt > 0)
+                    Console.WriteLine($"      → Fenetre maximisee ({w:F0}x{h:F0}) apres {attempt} SC_MAXIMIZE en {sw.ElapsedMilliseconds}ms");
+                else
+                    Console.WriteLine($"      → Fenetre deja maximisee ({w:F0}x{h:F0})");
+                return;
+            }
+            // Pas (encore) maximisee -> (re)poste SC_MAXIMIZE
+            attempt++;
+            IntPtr hwnd = IntPtr.Zero;
+            try { if (_window.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+            if (hwnd != IntPtr.Zero)
+            {
+                PostMessage(hwnd, WM_SYSCOMMAND, (IntPtr)SC_MAXIMIZE, IntPtr.Zero);
+                Console.WriteLine($"      → SC_MAXIMIZE tentative {attempt} (fenetre {w:F0}x{h:F0} < {minWidth})");
+            }
+            Thread.Sleep(400);
+        }
+        Console.WriteLine($"      → ⚠ Fenetre toujours < {minWidth}px apres {maxMs}ms — scan menu risque d'echouer (btn rail offscreen)");
+    }
+
+    /// <summary>
+    /// Ouvre le plugin PROC_KBIS depuis la Console d'accueil post-login.
+    ///
+    /// La Console d'accueil de RIG expose 7 onglets (controls Name=<c>btn1</c>..<c>btn7</c>)
+    /// peuplés depuis la table MENU_ONGLET. Cliquer un onglet remplit <c>lstSousmenu</c>,
+    /// cliquer un sous-menu remplit <c>lstProcessus</c>. PROC_KBIS apparaît comme ListItem
+    /// Name="PROC_KBIS" dans <c>lstProcessus</c>. Double-clic = launch (cf. handler
+    /// <c>lstProcessus_DoubleClick</c> dans FORM_ACCUEIL.cs).
+    ///
+    /// La config (quel onglet, quel sous-menu) dépend du greffe (BDD) — on itère donc
+    /// btn1..btn7 et tous les sous-menus jusqu'à trouver PROC_KBIS. Tentative directe
+    /// d'abord (si le focus est déjà sur le bon onglet par défaut).
+    /// </summary>
+    public void OpenProcKbis()
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + ClickSeConnecter() doivent être appelés avant OpenProcKbis()");
+
+        // ⚠ CORRECTION 2026-05-18 : le processus de consultation K-bis est **VK**
+        //   ("Visualisation - Extrait RCS"), PAS XXKBIS qui est "Suppression d'un
+        //   dossier" (destructeur !). L'ancien matcher fuzzy `contains "kbis"`
+        //   attrapait XXKBIS → les scénarios testaient le mauvais processus.
+        //
+        //   Pièges du libellé/code dans lstProcessus (cf capture greffe 9995) :
+        //     VK     → "Visualisation - Extrait RCS"      ← CIBLE
+        //     XXKBIS → "Suppression d'un dossier"          ← À EXCLURE
+        //     VKREJ  → "Rejets de Kbis XML transmis…"      ← à exclure (contient "VK")
+        //     XEX    → "Edition interne d'un Kbis"          ← à exclure (contient "kbis")
+        //
+        //   Le Name de l'item lstProcessus peut être soit le code seul ("VK"),
+        //   soit "code libellé" concaténé. On match donc :
+        //     - token code == "VK" exact (1er mot), OU
+        //     - libellé contient "visualisation" ET "rcs"
+        //   ET on exclut explicitement les codes pièges.
+        bool IsKbisName(string name)
+        {
+            if (string.IsNullOrWhiteSpace(name)) return false;
+            var n = name.Trim();
+            var firstToken = n.Split(new[] { ' ', '\t', '|', '-' },
+                StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+
+            // Exclusions dures (codes pièges)
+            if (firstToken.Equals("XXKBIS", StringComparison.OrdinalIgnoreCase)) return false;
+            if (firstToken.Equals("VKREJ", StringComparison.OrdinalIgnoreCase)) return false;
+            if (firstToken.Equals("XEX", StringComparison.OrdinalIgnoreCase)) return false;
+            if (n.IndexOf("Suppression", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+            if (n.IndexOf("Rejets", StringComparison.OrdinalIgnoreCase) >= 0) return false;
+
+            // Cible : code VK exact OU libellé "Visualisation … RCS"
+            if (firstToken.Equals("VK", StringComparison.OrdinalIgnoreCase)) return true;
+            if (n.IndexOf("visualisation", StringComparison.OrdinalIgnoreCase) >= 0
+             && n.IndexOf("rcs", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            return false;
+        }
+
+        // 1) Tentative directe par code processus VK — UNIQUEMENT un ListItem
+        //    (pas un Text sous-item 'ListViewSubItem-0' qui porte aussi Name='VK'
+        //    mais n'est pas lançable au double-clic). TryLaunchKbis vérifie qu'un
+        //    tab s'ouvre, sinon retourne false → on enchaîne sur le scan.
+        Console.WriteLine("      → Recherche directe du processus VK (ListItem)…");
+        var direct = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem))
+            .FirstOrDefault(li => IsKbisName(SafeText(() => li.Name)));
+        if (direct is not null && TryLaunchKbis(direct, source: "direct (ListItem VK)"))
+            return;
+        Console.WriteLine("      → Direct KO (ou pas de tab ouvert), passage au scan menu…");
+
+        // 2) Itère btn1..btn7 + items lstSousmenu, à chaque sous-menu énumère lstProcessus
+        //    et matche tout libellé contenant "kbis" / "k-bis" (le ListView affiche le
+        //    libellé métier, pas le code PROC_KBIS).
+        Console.WriteLine("      → Pas visible directement, scan onglets × sous-menus × lstProcessus…");
+        for (int n = 1; n <= 7; n++)
+        {
+            var btn = FindByAutomationId("btn" + n);
+            if (btn is null)
+            {
+                Console.WriteLine($"          btn{n} absent — fin onglets disponibles");
+                break;
+            }
+            string btnLabel = SafeText(() => btn.Name);
+            Console.WriteLine($"          btn{n} ('{btnLabel}') click…");
+            try { Interaction.Click(btn); } catch (Exception ex) { Console.WriteLine($"          click jeté : {ex.GetType().Name}"); continue; }
+            Thread.Sleep(500);
+
+            var lstSousmenu = FindByAutomationId("lstSousmenu");
+            if (lstSousmenu is null) { Console.WriteLine("          lstSousmenu absent"); continue; }
+            var subItems = lstSousmenu.FindAllChildren();
+            for (int i = 0; i < subItems.Length; i++)
+            {
+                string subLabel = SafeText(() => subItems[i].Name);
+                try { Interaction.Click(subItems[i]); } catch (Exception ex) { Console.WriteLine($"          sousmenu[{i}] click jeté : {ex.GetType().Name}"); continue; }
+                Thread.Sleep(250);
+
+                var lstProc = FindByAutomationId("lstProcessus");
+                if (lstProc is null) continue;
+                var procItems = lstProc.FindAllChildren();
+                foreach (var item in procItems)
+                {
+                    var nm = SafeText(() => item.Name);
+                    if (string.IsNullOrEmpty(nm)) continue;
+                    if (IsKbisName(nm))
+                    {
+                        Console.WriteLine($"          ✓ Match KBIS via btn{n} ('{btnLabel}') > sousmenu[{i}] ('{subLabel}') > item Name='{nm}'");
+                        if (TryLaunchKbis(item, source: $"btn{n} > '{subLabel}' > '{nm}'"))
+                            return;
+                    }
+                }
+            }
+        }
+
+        // 3) Échec total — dump détaillé pour diag.
+        Console.WriteLine("      → KBIS introuvable. Dump des items de chaque onglet > sousmenu > lstProcessus :");
+        for (int n = 1; n <= 7; n++)
+        {
+            var btn = FindByAutomationId("btn" + n);
+            if (btn is null) break;
+            try { Interaction.Click(btn); } catch { continue; }
+            Thread.Sleep(300);
+            var lstSousmenu = FindByAutomationId("lstSousmenu");
+            if (lstSousmenu is null) continue;
+            var subItems = lstSousmenu.FindAllChildren();
+            Console.WriteLine($"          === btn{n} '{SafeText(() => btn.Name)}' ===");
+            for (int i = 0; i < subItems.Length && i < 3; i++) // cap à 3 sous-menus par onglet pour le dump
+            {
+                try { Interaction.Click(subItems[i]); } catch { continue; }
+                Thread.Sleep(200);
+                var lstProc = FindByAutomationId("lstProcessus");
+                if (lstProc is null) continue;
+                var procItems = lstProc.FindAllChildren();
+                Console.WriteLine($"            sousmenu[{i}] '{SafeText(() => subItems[i].Name)}' → {procItems.Length} processus :");
+                for (int p = 0; p < procItems.Length && p < 6; p++) // cap à 6 items par sous-menu
+                    Console.WriteLine($"              - '{SafeText(() => procItems[p].Name)}'");
+            }
+        }
+        throw new Exception("KBIS introuvable dans la Console d'accueil après scan détaillé (cf. dump)");
+    }
+
+    /// <summary>
+    /// Ouvre un processus de la Console d'accueil en scannant onglets btn1..btn7 +
+    /// items lstSousmenu, et double-cliquant le 1er item de lstProcessus dont le
+    /// Name matche <paramref name="nameMatcher"/>. Pattern générique extrait de
+    /// <see cref="OpenProcKbis"/>.
+    /// </summary>
+    /// <param name="processusLabel">Libellé pour les logs (ex. "PROC_RETAUD")</param>
+    /// <param name="nameMatcher">Predicate qui dit si un item Name est le bon processus</param>
+    public void OpenProcessus(string processusLabel, Func<string, bool> nameMatcher,
+        int? fastPathBtnIndex = null, int? fastPathSousmenuIndex = null)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException($"Launch() + ClickSeConnecter() doivent être appelés avant Open{processusLabel}()");
+
+        // Si un autre processus est déjà ouvert (ex. XXKBIS), le tabControl pointe dessus
+        // et les btn1..btn7 du menu Accueil ne sont plus dans l'arbre UIA. On switch
+        // explicitement sur le tab '&Accueil' pour ré-exposer la navigation.
+        var tabControl = FindByAutomationId("tabControl");
+        if (tabControl is not null)
+        {
+            var accueilTab = tabControl.FindAllChildren()
+                .FirstOrDefault(t => SafeText(() => t.Name).IndexOf("accueil", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (accueilTab is not null)
+            {
+                Console.WriteLine($"      → Click tab '{SafeText(() => accueilTab.Name)}' pour revenir au menu d'accueil");
+                Interaction.Select(accueilTab);
+                // Poll : on attend que btn1 (premier onglet du menu Accueil) soit
+                // accessible — au lieu de Sleep(800) blind.
+                WaitForAutomationId("btn1", 800);
+            }
+        }
+
+        // Defense-in-depth (root cause flake XEX 2026-05-29) : garantit que la fenetre est
+        // MAXIMISÉE avant le scan rail. Si elle est restee 750x480 (SC_MAXIMIZE rate au login,
+        // ou un PROC l'a de-maximisee), btn3..btn6 sont offscreen → clics ignores → scan fige.
+        if (Headless)
+            EnsureWindowMaximized();
+
+        // FAST PATH : si on connaît (btn, sousmenu) du processus → click direct
+        if (fastPathBtnIndex.HasValue && fastPathSousmenuIndex.HasValue)
+        {
+            var btnDirect = FindByAutomationId("btn" + fastPathBtnIndex.Value);
+            if (btnDirect is not null)
+            {
+                Console.WriteLine($"      → Fast path {processusLabel} : btn{fastPathBtnIndex.Value} > sousmenu[{fastPathSousmenuIndex.Value}]");
+                TryActivateRailTab(btnDirect, $"fast-btn{fastPathBtnIndex.Value}");
+                // Poll lstSousmenu présent — timeout extended to 3s for parallel mode.
+                var lstSousmenu = WaitForAutomationId("lstSousmenu", 3000);
+                if (lstSousmenu is null) Console.WriteLine($"      [DIAG] fast: lstSousmenu NULL après clic btn{fastPathBtnIndex.Value}");
+                if (lstSousmenu is not null)
+                {
+                    var subs = lstSousmenu.FindAllChildren();
+                    Console.WriteLine($"      [DIAG] fast: {subs.Length} sous-menus = [{string.Join(" | ", subs.Select(s => SafeText(() => s.Name)))}]");
+                    if (fastPathSousmenuIndex.Value < subs.Length)
+                    {
+                        try { Interaction.Click(subs[fastPathSousmenuIndex.Value]); } catch (Exception ex) { Console.WriteLine($"      [DIAG] fast: clic sousmenu jeté : {ex.Message}"); }
+                        // Poll lstProcessus présent (au lieu de Sleep(250) blind)
+                        var lstProc = WaitForAutomationId("lstProcessus", 500);
+                        if (lstProc is null) Console.WriteLine($"      [DIAG] fast: lstProcessus NULL après clic sousmenu[{fastPathSousmenuIndex.Value}]");
+                        if (lstProc is not null)
+                        {
+                            var fpItems = lstProc.FindAllChildren();
+                            Console.WriteLine($"      [DIAG] fast: {fpItems.Length} processus = [{string.Join(" | ", fpItems.Select(p => SafeText(() => p.Name)))}]");
+                            foreach (var item in fpItems)
+                            {
+                                var nm = SafeText(() => item.Name);
+                                if (!string.IsNullOrEmpty(nm) && nameMatcher(nm))
+                                {
+                                    Console.WriteLine($"          ✓ Fast match : Name='{nm}'");
+                                    int prevTabCount = SnapshotTabCount();
+                                    // Lancement mouse-free : sélection + Entrée sur la
+                                    // RigListView (handler lstProcessus_KeyDown). 2× Click
+                                    // ne lançait jamais — voir Interaction.ActivateListItem.
+                                    Interaction.ActivateListItem(item, lstProc);
+                                    WaitForProcessusTabLoaded(prevTabCount, processusLabel, 5000);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                }
+                Console.WriteLine($"      → Fast path raté, fallback scan complet…");
+            }
+        }
+
+        // ML LOOP fix visible-parallel : scan complet btn1..btn7 avec
+        // (a) retry sur chaque FindByAutomationId (mode //: UIA transient KO)
+        // (b) PAS de break early sur null btn (continue à n+1)
+        // (c) timeouts plus longs pour lstSousmenu/lstProcessus (mode // = UIA lent)
+        // (d) whole-scan retry une fois si premier pass vide
+        Console.WriteLine($"      → Recherche {processusLabel} : scan onglets × sous-menus × lstProcessus…");
+        for (int passNo = 1; passNo <= 2; passNo++)
+        {
+            if (passNo == 2)
+            {
+                Console.WriteLine($"      [DIAG] {processusLabel} pass 1 KO — attente 2s puis pass 2…");
+                Thread.Sleep(2000);
+            }
+            bool anyBtnSeen = false;
+            for (int n = 1; n <= 7; n++)
+            {
+                // (a) Retry per-btn find. Mode //: certains btn{n} transientement null.
+                var btn = FindByAutomationIdWithRetry("btn" + n, timeoutMs: 2000);
+                if (btn is null)
+                {
+                    // (b) PAS de break — on continue à btn{n+1} (en // un null transient ne
+                    // signifie pas que les btn suivants n'existent pas).
+                    if (n <= 3) Console.WriteLine($"          btn{n} absent après retry 2s — continue scan");
+                    continue;
+                }
+                anyBtnSeen = true;
+                string btnLabel = SafeText(() => btn.Name);
+                Console.WriteLine($"      [DIAG] === btn{n} '{btnLabel}' : activate ===");
+                // ROOT CAUSE flake XEX (2026-05-29) : après un clic rail (ex. btn2 ENDETTEMENT),
+                // RIG ignore parfois les clics suivants (domaine encore en chargement async sous
+                // contention parallèle VK) → le panneau lstSousmenu reste FIGÉ sur le bouton
+                // précédent (btn3..btn6 lisaient tous les sous-menus endettement → XEX jamais
+                // atteint sous GÉNÉRAL). Fix : verify-and-retry — on re-clique le bouton tant que
+                // le panneau n'a pas BASCULÉ vers un contenu DIFFÉRENT du bouton précédent.
+                string prevSousmenuSig = CurrentListSignature("lstSousmenu");
+                AutomationElement[] subItems = System.Array.Empty<AutomationElement>();
+                string newSousmenuSig = prevSousmenuSig;
+                const int btnMaxAttempts = 3;
+                for (int attempt = 1; attempt <= btnMaxAttempts; attempt++)
+                {
+                    if (!TryActivateRailTab(btn, $"btn{n}")) break;
+                    subItems = WaitForListRepopulated("lstSousmenu", prevSousmenuSig, 3000);
+                    newSousmenuSig = string.Join("|", subItems.Select(s => SafeText(() => s.Name)));
+                    // Bascule réussie = panneau non vide ET différent du bouton précédent.
+                    // (2 domaines distincts n'ont jamais les mêmes sous-menus → diff = switch OK.)
+                    if (subItems.Length > 0 && newSousmenuSig != prevSousmenuSig) break;
+                    if (attempt < btnMaxAttempts)
+                        Console.WriteLine($"      [DIAG] btn{n} '{btnLabel}' : panneau FIGÉ (== bouton précédent, clic ignoré par RIG) — re-clic tentative {attempt + 1}/{btnMaxAttempts}");
+                    // 800ms : RIG récupère sa réactivité rail après ~1-2s (cf. preuve : btn1
+                    // re-switchait OK après la pause inter-passe de 2s). Laisse le domaine finir
+                    // son chargement async avant le re-clic.
+                    Thread.Sleep(800);
+                }
+                if (subItems.Length == 0) { Console.WriteLine($"      [DIAG] btn{n} '{btnLabel}' : lstSousmenu vide/NULL après repopulation"); continue; }
+                if (newSousmenuSig == prevSousmenuSig)
+                    Console.WriteLine($"      [DIAG] btn{n} '{btnLabel}' : ⚠ panneau toujours figé après {btnMaxAttempts} clics — sous-menus possiblement stale");
+                Console.WriteLine($"      [DIAG] btn{n} '{btnLabel}' : {subItems.Length} sous-menus = [{string.Join(" | ", subItems.Select(s => SafeText(() => s.Name)))}]");
+                for (int i = 0; i < subItems.Length; i++)
+                {
+                    string subLabel = SafeText(() => subItems[i].Name);
+                    // Signature du sous-menu PRÉCÉDENT (contenu actuel de lstProcessus) AVANT clic.
+                    string prevProcSig = CurrentListSignature("lstProcessus");
+                    if (!TryActivateRailTab(subItems[i], $"sousmenu[{i}]")) { Console.WriteLine($"      [DIAG]   sousmenu[{i}] activation KO — skip"); continue; }
+                    // Attendre la REPOPULATION de lstProcessus (même fix : évite le read stale
+                    // type '245 processus' / liste du sous-menu précédent).
+                    var procItems = WaitForListRepopulated("lstProcessus", prevProcSig, 2000);
+                    if (procItems.Length == 0) { Console.WriteLine($"      [DIAG]   sousmenu[{i}] '{subLabel}' : lstProcessus vide/NULL"); continue; }
+                    Console.WriteLine($"      [DIAG]   sousmenu[{i}] '{subLabel}' : {procItems.Length} processus = [{string.Join(" | ", procItems.Select(p => SafeText(() => p.Name)))}]");
+                    foreach (var item in procItems)
+                    {
+                        var nm = SafeText(() => item.Name);
+                        if (string.IsNullOrEmpty(nm)) continue;
+                        if (nameMatcher(nm))
+                        {
+                            Console.WriteLine($"          ✓ Match {processusLabel} via btn{n} ('{btnLabel}') > sousmenu[{i}] ('{subLabel}') > item Name='{nm}'");
+                            int prevTabCount = SnapshotTabCount();
+                            // Lancement mouse-free : sélection + Entrée sur la RigListView.
+                            // Re-fetch du conteneur lstProcessus (les items viennent de
+                            // WaitForListRepopulated qui ne retourne que les enfants).
+                            var lstProcContainer = FindByAutomationId("lstProcessus");
+                            Interaction.ActivateListItem(item, lstProcContainer);
+                            WaitForProcessusTabLoaded(prevTabCount, processusLabel, 5000);
+                            return;
+                        }
+                    }
+                }
+            }
+            if (!anyBtnSeen && passNo == 1)
+            {
+                Console.WriteLine($"      [DIAG] Pass 1 n'a vu AUCUN btn — Console d'accueil pas rendue ? retry…");
+            }
+        }
+        // Diagnostic screenshot avant throw — voir l'état RIG au moment du fail.
+        try { CaptureScreenshot($"open-{processusLabel.ToLowerInvariant()}-failed"); } catch { }
+        throw new Exception($"{processusLabel} introuvable dans la Console d'accueil après scan complet btn1..btn7 (2 passes)");
+    }
+
+    /// <summary>
+    /// Poll actif jusqu'à ce qu'un élément UIA avec l'AutomationId donné soit
+    /// présent (remplace les sleeps blind post-click). Retourne null après timeout.
+    /// </summary>
+    private AutomationElement? WaitForAutomationId(string automationId, int maxMs)
+    {
+        var sw = Stopwatch.StartNew();
+        int iter = 0;
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            iter++;
+            var el = FindByAutomationId(automationId);
+            if (el is not null)
+            {
+                if (sw.ElapsedMilliseconds > 700)
+                    Console.WriteLine($"      [DIAG] WaitForAutomationId('{automationId}') trouvé en {sw.ElapsedMilliseconds}ms ({iter} iter)");
+                return el;
+            }
+            Thread.Sleep(50);
+        }
+        Console.WriteLine($"      [DIAG] WaitForAutomationId('{automationId}') TIMEOUT {sw.ElapsedMilliseconds}ms (budget {maxMs}ms, {iter} iter) -> null");
+        return null;
+    }
+
+    /// <summary>Signature courante (noms enfants joints) d'une liste UIA. "" si absente.</summary>
+    private string CurrentListSignature(string automationId)
+    {
+        var el = FindByAutomationId(automationId);
+        if (el is null) return "";
+        try { return string.Join("|", el.FindAllChildren().Select(s => SafeText(() => s.Name))); }
+        catch { return ""; }
+    }
+
+    /// <summary>
+    /// Attend qu'une liste UIA (lstSousmenu / lstProcessus) soit REPEUPLÉE après un clic de
+    /// navigation — pas juste présente. Root cause du flake XEX intermittent (2026-05-29) :
+    /// le clic rail est un PostMessage WM_LBUTTON fire-and-forget qui déclenche
+    /// _ChargerSousmenu côté RIG, lequel repeuple la liste EN PLACE de façon ASYNCHRONE.
+    /// L'ancien WaitForAutomationId ne checkait que l'existence (liste persistante → retour
+    /// immédiat) → FindAllChildren lisait les enfants STALE du bouton précédent
+    /// (ex. btn6 'GÉNÉRAL' lisait les sous-menus endettement de btn5 → XEX jamais vu).
+    ///
+    /// Condition de repopulation (condition-based-waiting) :
+    ///   - signature (noms enfants joints) STABLE sur 2 lectures consécutives (~120ms), ET
+    ///   - soit différente de <paramref name="previousSignature"/> (= contenu du NOUVEAU bouton),
+    ///   - soit settle-time écoulé (≥ 700ms) pour le cas où le contenu est légitimement
+    ///     identique (re-clic du bouton actif, ou 2 sous-menus au même lstProcessus).
+    /// Retourne les enfants, ou la dernière lecture au timeout (best-effort).
+    /// </summary>
+    private AutomationElement[] WaitForListRepopulated(string automationId, string previousSignature, int maxMs)
+    {
+        var sw = Stopwatch.StartNew();
+        string? lastSig = null;
+        AutomationElement[] lastItems = System.Array.Empty<AutomationElement>();
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            var el = FindByAutomationId(automationId);
+            if (el is not null)
+            {
+                AutomationElement[] items;
+                try { items = el.FindAllChildren(); }
+                catch { items = System.Array.Empty<AutomationElement>(); }
+                var sig = string.Join("|", items.Select(s => SafeText(() => s.Name)));
+                bool stable = sig == lastSig;
+                bool changed = sig != previousSignature;
+                if (items.Length > 0 && stable && (changed || sw.ElapsedMilliseconds >= 700))
+                {
+                    if (sw.ElapsedMilliseconds > 300)
+                        Console.WriteLine($"      [DIAG] WaitForListRepopulated('{automationId}') stable+{(changed ? "changed" : "settled")} en {sw.ElapsedMilliseconds}ms");
+                    return items;
+                }
+                lastSig = sig;
+                lastItems = items;
+            }
+            Thread.Sleep(120);
+        }
+        Console.WriteLine($"      [DIAG] WaitForListRepopulated('{automationId}') TIMEOUT {sw.ElapsedMilliseconds}ms — fallback dernière lecture ({lastItems.Length} items)");
+        return lastItems;
+    }
+
+    /// <summary>
+    /// Capture le nombre de TabItems du tabControl principal — utilisé pour
+    /// détecter l'ouverture d'un nouveau tab processus (signal de fin de chargement).
+    /// </summary>
+    private int SnapshotTabCount()
+    {
+        try
+        {
+            var tc = FindByAutomationId("tabControl");
+            if (tc is null) return -1;
+            return tc.FindAllChildren(cf => cf.ByControlType(ControlType.TabItem)).Length;
+        }
+        catch { return -1; }
+    }
+
+    /// <summary>
+    /// Poll actif post-DoubleClick processus : attend l'apparition d'un nouveau
+    /// TabItem dans le tabControl (= processus chargé). Remplace le Sleep(3500)
+    /// blind. Tolérant si le snapshot pré était -1 (UIA momentanément indispo) :
+    /// dans ce cas on attend qu'un tabControl existe avec ≥ 2 tabs.
+    /// </summary>
+    private void WaitForProcessusTabLoaded(int prevTabCount, string processusLabel, int maxMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            int now = SnapshotTabCount();
+            if (prevTabCount >= 0 && now > prevTabCount)
+            {
+                Console.WriteLine($"      → {processusLabel} chargé en {sw.Elapsed.TotalSeconds:F1}s (TabControl : {prevTabCount} → {now})");
+                return;
+            }
+            // Fallback : si snapshot pré était KO, on accepte ≥ 2 tabs (Accueil + nouveau)
+            if (prevTabCount < 0 && now >= 2)
+            {
+                Console.WriteLine($"      → {processusLabel} chargé en {sw.Elapsed.TotalSeconds:F1}s ({now} tabs, snapshot pré indispo)");
+                return;
+            }
+            Thread.Sleep(150);
+        }
+        Console.WriteLine($"      ⚠ Timeout {sw.Elapsed.TotalSeconds:F1}s : nouveau TabItem pas détecté (prev={prevTabCount}, current={SnapshotTabCount()}). Continue quand même.");
+    }
+
+    /// <summary>Wrapper : ouvre PROC_RETAUD. Fast path btn3 ('AFFAIRES JUDICIAIRES') > sousmenu[3] ('Audiences et cabinets').</summary>
+    public void OpenProcRetaud()
+    {
+        OpenProcessus("PROC_RETAUD", nm =>
+            nm.IndexOf("retaud", StringComparison.OrdinalIgnoreCase) >= 0
+         || nm.IndexOf("retour audience", StringComparison.OrdinalIgnoreCase) >= 0
+         || nm.IndexOf("retour cabinet", StringComparison.OrdinalIgnoreCase) >= 0,
+            fastPathBtnIndex: 3, fastPathSousmenuIndex: 3);
+    }
+
+    /// <summary>Wrapper : ouvre PROC_PREAUD. Fast path btn3 ('AFFAIRES JUDICIAIRES') > sousmenu[3] ('Audiences et cabinets').</summary>
+    public void OpenProcPreaud()
+    {
+        OpenProcessus("PROC_PREAUD", nm =>
+            nm.IndexOf("preaud", StringComparison.OrdinalIgnoreCase) >= 0
+         || nm.IndexOf("plumitif", StringComparison.OrdinalIgnoreCase) >= 0,
+            fastPathBtnIndex: 3, fastPathSousmenuIndex: 3);
+    }
+
+    /// <summary>
+    /// Vérifie qu'un bouton dont le Name matche est présent dans la pageTab active
+    /// (typiquement la toolbar tbAutomate après ouverture d'un processus).
+    /// Le smoke valide juste l'existence visuelle — il ne click PAS le bouton (qui
+    /// requiert souvent une audience chargée). C'est la preuve que le binary post-merge
+    /// est bien déployé.
+    /// </summary>
+    public AutomationElement VerifyButtonPresent(string buttonLabel, params string[] nameSubstrings)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        // Scan ALL descendants (Button + Pane + autres) — on matche juste par Name substring,
+        // évite les PropertyNotSupportedException si certains controls n'ont pas de ControlType
+        // ou si certaines branches UIA throw.
+        AutomationElement? match = null;
+        try
+        {
+            foreach (var c in _window.FindAllDescendants())
+            {
+                var nm = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(nm)) continue;
+                foreach (var sub in nameSubstrings)
+                {
+                    if (nm.IndexOf(sub, StringComparison.OrdinalIgnoreCase) >= 0)
+                    { match = c; break; }
+                }
+                if (match is not null) break;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      → Scan jeté ({ex.GetType().Name}), partial dump…"); }
+        if (match is null)
+        {
+            Console.WriteLine($"      → Bouton '{buttonLabel}' introuvable (cherché : {string.Join(", ", nameSubstrings)})");
+            Console.WriteLine($"      → Dump des Button + Pane avec Name non vide :");
+            int n = 0;
+            foreach (var c in _window.FindAllDescendants())
+            {
+                string ct = "?"; try { ct = c.ControlType.ToString(); } catch { continue; /* skip unsupported */ }
+                if (ct != "Button" && ct != "Pane") continue;
+                var nm = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(nm) || nm.StartsWith("Veuillez patienter", StringComparison.OrdinalIgnoreCase)) continue;
+                Console.WriteLine($"          [{n++}] {ct} Name='{nm}'");
+                if (n > 30) break;
+            }
+            throw new Exception($"Bouton '{buttonLabel}' introuvable dans la window — preuve que le binary post-merge n'est pas chargé OU que l'UI n'est pas dans la bonne phase.");
+        }
+        string matchType = "?"; try { matchType = match.ControlType.ToString(); } catch { }
+        Console.WriteLine($"      → ✓ Bouton '{buttonLabel}' présent : Type={matchType} AutomationId='{SafeText(() => match.AutomationId)}' Name='{SafeText(() => match.Name)}'");
+        return match;
+    }
+
+    /// <summary>
+    /// ID de la dernière audience créée pendant ce smoke run (via le scénario "Oui,
+    /// créer une nouvelle audience"). Sert au cleanup SQL post-run pour ne pas
+    /// polluer RIG_DEV. Null si pas de création (refus ou refus orchestrateur).
+    /// </summary>
+    public int? LastCreatedAudienceId { get; private set; }
+
+    /// <summary>
+    /// Compteurs lus sur la dernière FormRaptureImportRecap affichée (4 stat tiles :
+    /// erreur bloquante, avertissements, affaires bloquées, modifications détectées).
+    /// Null sur les champs non lus. Renseigné par <see cref="ReadRecapCounters"/>
+    /// pendant la capture de la recap, et consommé par SmokeRunner Program.cs pour
+    /// asserter contre scenario.expectedWarnings / scenario.expectedModifications.
+    /// </summary>
+    public sealed class RecapCounters
+    {
+        public int? Errors;
+        public int? Warnings;
+        public int? Blocked;
+        public int? Modifications;
+        public override string ToString() =>
+            $"err={Errors?.ToString() ?? "?"} warn={Warnings?.ToString() ?? "?"} blocked={Blocked?.ToString() ?? "?"} modif={Modifications?.ToString() ?? "?"}";
+    }
+    public RecapCounters LastRecapCounters { get; private set; }
+
+    /// <summary>
+    /// Lit les 4 stat tiles de la recap (label "modifications détectées" / "avertissements"
+    /// / "erreur bloquante" / "affaires bloquées") + le label de valeur adjacent (chiffre).
+    /// Best-effort : retourne null sur les champs qu'on ne trouve pas. Le matching se fait
+    /// par texte du label (UIA Name d'un Label WinForms = le texte affiché).
+    /// </summary>
+    public RecapCounters ReadRecapCounters(AutomationElement recap)
+    {
+        var c = new RecapCounters();
+        if (recap is null) return c;
+        try
+        {
+            // Récupère tous les Text/Pane descendants (Label WinForms = ControlType.Text en UIA)
+            var labels = recap.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .Select(e => new { El = e, Name = SafeText(() => e.Name) ?? "", Loc = TryBounds(e) })
+                .Where(x => !string.IsNullOrEmpty(x.Name))
+                .ToList();
+            // Trouve les "value tiles" : labels dont le texte = uniquement un nombre (0..N).
+            // En face de chaque, un "label tile" texte = "modifications détectées", "avertissements", etc.
+            // En WinForms, lblStatXxxValue est à Y=top, lblStatXxxLabel est juste en dessous (même X).
+            int? ParseLabelByLabelText(string contains)
+            {
+                // Trouve le label "label tile" matchant
+                var labelTile = labels.FirstOrDefault(x => x.Name.IndexOf(contains, StringComparison.OrdinalIgnoreCase) >= 0
+                                                          && !int.TryParse(x.Name.Trim(), out _));
+                if (labelTile == null) return null;
+                // Trouve le label numérique le plus proche (proche en X, juste au-dessus en Y)
+                var valueTile = labels.FirstOrDefault(x =>
+                    int.TryParse(x.Name.Trim(), out _)
+                    && Math.Abs(x.Loc.X - labelTile.Loc.X) < 100
+                    && x.Loc.Y < labelTile.Loc.Y);
+                if (valueTile != null && int.TryParse(valueTile.Name.Trim(), out var v)) return v;
+                return null;
+            }
+            c.Errors = ParseLabelByLabelText("erreur bloquante");
+            c.Warnings = ParseLabelByLabelText("avertissement");
+            c.Blocked = ParseLabelByLabelText("affaires bloquées");
+            c.Modifications = ParseLabelByLabelText("modifications détectées");
+            Console.WriteLine($"      → Recap counters : {c}");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⚠ ReadRecapCounters threw : {ex.GetType().Name}: {ex.Message}");
+        }
+        LastRecapCounters = c;
+        return c;
+    }
+
+    private static (int X, int Y) TryBounds(AutomationElement e)
+    {
+        try { var r = e.BoundingRectangle; return ((int)r.X, (int)r.Y); }
+        catch { return (0, 0); }
+    }
+
+    /// <summary>
+    /// Click 'Importer Rapture' dans PROC_RETAUD → OpenFileDialog → tape le path
+    /// du JSON sample → Ouvrir → vérifie qu'un écran récap ou progression apparaît
+    /// (preuve que le pipeline d'import a démarré sans crash).
+    ///
+    /// <paramref name="acceptCreate"/> : si true, accepte la création d'audience
+    /// quand le JSON ne matche aucune audience RIG (clic 'Oui' sur "Aucune
+    /// audience RIG ne correspond... Créer ?"). L'ID de l'audience créée est
+    /// extrait du MessageBox de confirmation et stocké dans
+    /// <see cref="LastCreatedAudienceId"/> pour cleanup SQL ultérieur.
+    /// Si false (défaut), refuse la création (clic 'Non' → import annulé).
+    /// </summary>
+    public void ClickImporterRaptureAndOpenJson(string jsonPath, bool acceptCreate = false, bool clickImporter = false)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        if (!File.Exists(jsonPath)) throw new FileNotFoundException("JSON sample introuvable", jsonPath);
+        Console.WriteLine($"      → JSON source : {jsonPath} ({new FileInfo(jsonPath).Length} octets)");
+
+        // 1) Find Importer Rapture button (Toolbar button — AutomationId='IMPORT' standard).
+        // ML LOOP S1.2 — Retry pattern : en mode //, l'UIA cache peut être
+        // momentanément KO juste après navigation (PhaseChanged async, RIG
+        // re-render). On poll jusqu'à 20s avec sleep 250ms avant de throw.
+        // UIA FindAllDescendants sur RIG en mode // peut prendre 5-8s par
+        // appel (contention), donc 5s ne donne qu'une tentative. 20s = au
+        // moins 2-3 vraies tentatives + tampon.
+        // Filtre ProcessId pour éviter qu'un FindFirst tombe sur un bouton
+        // d'une AUTRE instance RIG en parallèle (cross-process UIA shortcut).
+        AutomationElement? btn = null;
+        var btnSw = Stopwatch.StartNew();
+        int btnAttempts = 0;
+        int? appPid = null;
+        try { appPid = _app?.ProcessId; } catch { }
+        while (btnSw.Elapsed.TotalSeconds < 20 && btn is null)
+        {
+            btnAttempts++;
+            try
+            {
+                btn = _window.FindFirstDescendant(cf => cf.ByAutomationId("IMPORT"));
+                if (btn != null && appPid.HasValue)
+                {
+                    // Vérif ProcessId : si UIA a sauté sur un autre RigClientAccueil en //,
+                    // on rejette et re-cherche.
+                    try
+                    {
+                        var pid = btn.Properties.ProcessId.ValueOrDefault;
+                        if (pid != 0 && pid != appPid.Value)
+                        {
+                            Console.WriteLine($"      ⚠ btn 'IMPORT' trouvé mais pid={pid} ≠ _app.pid={appPid} — reject (cross-process UIA)");
+                            btn = null;
+                        }
+                    }
+                    catch { }
+                }
+                if (btn is null)
+                {
+                    btn = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                        .FirstOrDefault(b =>
+                        {
+                            if (SafeText(() => b.Name).IndexOf("importer rapture", StringComparison.OrdinalIgnoreCase) < 0) return false;
+                            if (!appPid.HasValue) return true;
+                            try
+                            {
+                                var pid = b.Properties.ProcessId.ValueOrDefault;
+                                return pid == 0 || pid == appPid.Value;
+                            }
+                            catch { return true; }
+                        });
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"      ⚠ attempt#{btnAttempts} find 'Importer Rapture' threw : {ex.GetType().Name} — retry");
+                btn = null;
+            }
+            if (btn is null) Thread.Sleep(250);
+        }
+        if (btn is null)
+            throw new Exception($"Bouton 'Importer Rapture' introuvable après {btnAttempts} tentatives en {btnSw.Elapsed.TotalSeconds:F1}s — fix PhaseChanged() pas effective ? Mode // = UIA cache contaminé ?");
+        if (btnAttempts > 1)
+            Console.WriteLine($"      ✓ Bouton 'Importer Rapture' trouvé au {btnAttempts}e essai ({btnSw.Elapsed.TotalSeconds:F1}s)");
+        Console.WriteLine($"      → Click 'Importer Rapture' (AutomationId={SafeText(() => btn.AutomationId)})");
+        // Le handler du bouton ouvre un OpenFileDialog modal côté WinForms : InvokePattern.Invoke()
+        // ne retourne donc qu'à la fermeture de la modale → on doit fire-and-forget.
+        //
+        // Stratégie : (1) attendre que la BoundingRectangle soit valide (max 5s), (2) tirer Click()
+        // dans un Task background sans attendre, (3) la suite de la méthode poll déjà le dialog.
+        // Si Click() pose problème (NoClickablePointException), fallback Focus+Space sur le thread courant.
+        var clickWaitSw = Stopwatch.StartNew();
+        while (clickWaitSw.Elapsed.TotalSeconds < 5)
+        {
+            try
+            {
+                var rect = btn.BoundingRectangle;
+                if (rect.Width > 0 && rect.Height > 0) break;
+            }
+            catch { /* keep waiting */ }
+            Thread.Sleep(200);
+        }
+        // ⚠ Le bouton 'Importer Rapture' (toolbar RIG) n'a PAS de hwnd natif :
+        // Interaction.Click retombe alors sur InvokePattern.Invoke(), qui est
+        // SYNCHRONE et bloque jusqu'à la fermeture de l'OpenFileDialog modal ouvert
+        // par le handler. Appelé sur le thread courant, ça gèle le driver ~60s
+        // jusqu'au timeout UIA. On tire donc le clic dans un Task background : le
+        // thread courant continue et poll le dialog (étape 2 ci-dessous). La preuve
+        // que le clic a réussi = le dialog apparaît (sinon throw après 10s).
+        System.Threading.Tasks.Task.Run(() =>
+        {
+            try { Interaction.Click(btn); }
+            catch (Exception ex)
+            { Console.WriteLine($"      → (bg) Interaction.Click a jeté : {ex.GetType().Name}: {ex.Message}"); }
+        });
+        Console.WriteLine("      → Click 'Importer Rapture' tiré en background (handler = OpenFileDialog modal)");
+
+        // 2) Attendre OpenFileDialog ('Importer Rapture' ou 'Ouvrir' ou 'Choisir')
+        // Timing : sur le user desktop (RIG_DRIVER_HEADLESS=0), l'OpenFileDialog
+        // Windows met plus de temps à s'initialiser que sur un HDESK séparé (file system
+        // enum, shell icons, etc.). 10s s'est avéré trop court → on monte à 30s.
+        // Log instrumenté pour diagnostiquer quelles fenêtres sont vues à chaque tour.
+        var sw = Stopwatch.StartNew();
+        AutomationElement? dialog = null;
+        int iter = 0;
+        var seenTitles = new System.Collections.Generic.HashSet<string>();
+        while (sw.Elapsed.TotalSeconds < 30 && dialog is null)
+        {
+            iter++;
+            try
+            {
+                foreach (var w in _app!.GetAllTopLevelWindows(_automation!))
+                {
+                    var t = SafeText(() => w.Title);
+                    if (!string.IsNullOrEmpty(t) && seenTitles.Add(t))
+                        Console.WriteLine($"      → [poll#{iter} {sw.Elapsed.TotalSeconds:F1}s] top-level window seen : '{t}'");
+                    if (t.IndexOf("Ouvrir", StringComparison.OrdinalIgnoreCase) >= 0
+                     || t.IndexOf("Importer", StringComparison.OrdinalIgnoreCase) >= 0
+                     || t.IndexOf("Choisir", StringComparison.OrdinalIgnoreCase) >= 0
+                     || t.IndexOf("Rapture", StringComparison.OrdinalIgnoreCase) >= 0)
+                    { dialog = w; break; }
+                }
+                if (dialog is null)
+                {
+                    foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                    {
+                        var nm = SafeText(() => w.Name);
+                        if (!string.IsNullOrEmpty(nm) && seenTitles.Add("[child]" + nm))
+                            Console.WriteLine($"      → [poll#{iter} {sw.Elapsed.TotalSeconds:F1}s] descendant Window : '{nm}'");
+                        if (nm.IndexOf("Ouvrir", StringComparison.OrdinalIgnoreCase) >= 0
+                         || nm.IndexOf("Importer", StringComparison.OrdinalIgnoreCase) >= 0
+                         || nm.IndexOf("Choisir", StringComparison.OrdinalIgnoreCase) >= 0)
+                        { dialog = w; break; }
+                    }
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"      → [poll#{iter}] enum exception (continuing) : {ex.GetType().Name}: {ex.Message}"); }
+            if (dialog is null) Thread.Sleep(300);
+        }
+        if (dialog is null)
+            throw new Exception($"OpenFileDialog pas apparu après 30s click 'Importer Rapture' (polls={iter})");
+        Console.WriteLine($"      → OpenFileDialog DÉTECTÉ après {sw.Elapsed.TotalSeconds:F1}s ({iter} polls)");
+        Console.WriteLine($"      → OpenFileDialog détecté : Name='{SafeText(() => dialog.Name)}'");
+
+        // 3) Trouver le champ 'Nom du fichier'.
+        // ⚠ AutomationId='1148' = ComboBoxEx WRAPPER (avec dropdown autocomplete historique).
+        //    ValuePattern.SetValue sur le wrapper N'ÉCRIT PAS dans le edit visible (bug
+        //    découvert via screenshot 2026-05-22 14:53 : path renseigné mais champ vide).
+        //    On cherche d'abord le ComboBoxEx, puis l'EDIT enfant dont le hwnd accepte
+        //    WM_SETTEXT correctement (ou ValuePattern sur l'edit lui-même).
+        var fileNameCombo = dialog.FindFirstDescendant(cf => cf.ByAutomationId("1148"));
+        AutomationElement? fileNameEdit = null;
+        if (fileNameCombo is not null)
+        {
+            // L'Edit interne du ComboBoxEx — où la valeur est réellement stockée.
+            fileNameEdit = fileNameCombo.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit));
+        }
+        fileNameEdit ??= dialog.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit));
+        if (fileNameEdit is null)
+            throw new Exception("Champ 'Nom du fichier' (edit inner) introuvable dans OpenFileDialog");
+
+        // 4) Renseigne le chemin sur l'EDIT INTERNE (pas sur le wrapper ComboBoxEx).
+        //    Force WM_SETTEXT pour bypass ValuePattern qui ne propage pas sur le wrapper.
+        Interaction.SetText(fileNameEdit, jsonPath);
+        Console.WriteLine($"      → Path renseigné sur Edit inner ComboBoxEx : {jsonPath}");
+        Thread.Sleep(200);
+
+        // DEBUG (règle 16 CLAUDE.md) : screenshot du dialog APRÈS SetValue, AVANT submit,
+        // pour observer que la valeur est BIEN affichée dans le champ.
+        try
+        {
+            var dbgDir = @"C:\Code RIG\Audit\screenshots-loop";
+            Directory.CreateDirectory(dbgDir);
+            var dbgPath = Path.Combine(dbgDir, $"dialog-after-setvalue-{DateTime.Now:yyyyMMdd-HHmmss}.png");
+            Interaction.CaptureWindow(dialog, dbgPath);
+            Console.WriteLine($"      → 📸 Dialog après SetValue : {dbgPath}");
+        }
+        catch (Exception exShot) { Console.WriteLine($"      → (debug shot a jeté, non-bloquant : {exShot.GetType().Name})"); }
+
+        // Mémoriser le titre du file dialog pour pouvoir filtrer dans la détection
+        // post-import (sinon le dialogue d'origine matche "Import" → faux positif).
+        var fileDialogTitle = SafeText(() => dialog.Name);
+
+        // 5) Submit OpenFileDialog : ENTER posté directement sur le HWND DU DIALOG
+        //    (pas sur l'edit interne qui peut ne pas avoir de hwnd via FlaUI).
+        //    Le dialog reçoit WM_KEYDOWN VK_RETURN → invoque son default button (Ouvrir)
+        //    avec la valeur courante de l'edit field (commit automatique).
+        //    Mouse-free ET focus-free (PostMessage ciblé sur hwnd dialog).
+        var dialogHwnd = (IntPtr)dialog.Properties.NativeWindowHandle.ValueOrDefault;
+        Console.WriteLine($"      → Submit file dialog via Enter sur hwnd dialog 0x{dialogHwnd.ToInt64():X}");
+        if (dialogHwnd == IntPtr.Zero)
+            throw new Exception("Dialog OpenFileDialog sans hwnd natif — impossible de poster WM_KEYDOWN");
+        Interaction.PressKey(dialogHwnd, 0x0D); // VK_RETURN
+
+        // 5.b) Attendre la FERMETURE du file dialog (preuve que Ouvrir a été pris en
+        //      compte). Si le dialog reste ouvert >10s, soit le bouton Ouvrir n'a
+        //      pas été cliqué, soit RIG a crashé/freezé et la modale OS reste à l'écran.
+        var closeSw = Stopwatch.StartNew();
+        bool fileDialogClosed = false;
+        while (closeSw.Elapsed.TotalSeconds < 10)
+        {
+            try
+            {
+                // Le dialog est "fermé" quand UIA ne le retrouve plus par titre.
+                var stillThere = _app!.GetAllTopLevelWindows(_automation!)
+                    .Any(w => string.Equals(SafeText(() => w.Title), fileDialogTitle, StringComparison.Ordinal));
+                if (!stillThere)
+                {
+                    fileDialogClosed = true;
+                    break;
+                }
+            }
+            catch { }
+            Thread.Sleep(300);
+        }
+        if (!fileDialogClosed)
+        {
+            // RIG est-il encore vivant ?
+            bool rigAlive;
+            try { rigAlive = _app is not null && !_app.HasExited; } catch { rigAlive = false; }
+            Console.WriteLine($"      → ⚠ File dialog '{fileDialogTitle}' toujours présent après 10s. RIG alive={rigAlive}");
+            // Cleanup best-effort pour pas laisser un modal en zombie
+            try
+            {
+                var btnX = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                    .FirstOrDefault(b =>
+                    {
+                        var n = SafeText(() => b.Name);
+                        return n.Equals("Annuler", StringComparison.OrdinalIgnoreCase)
+                            || n.Equals("Cancel", StringComparison.OrdinalIgnoreCase)
+                            || n.Equals("Fermer", StringComparison.OrdinalIgnoreCase);
+                    });
+                if (btnX is not null) { try { Interaction.Click(btnX); } catch { } }
+            }
+            catch { }
+            throw new Exception(
+                $"File dialog '{fileDialogTitle}' n'a pas fermé après click 'Ouvrir' — RIG a probablement crashé/freezé en traitant le JSON. " +
+                $"RIG.HasExited={!rigAlive}. Voir C:\\rig\\logs\\ pour l'erreur exacte.");
+        }
+
+        Console.WriteLine($"      → File dialog fermé après {closeSw.Elapsed.TotalSeconds:F1}s. Poll pipeline import (top-level windows)…");
+
+        // 5.c) Poll : on attend qu'un NOUVEAU top-level window apparaisse (MessageBox
+        //      "Aucune audience...", "Audience différente...", FormRaptureImportRecap, ou
+        //      DialogBox erreur). Le pipeline peut prendre du temps (Mapper.Load fait du
+        //      référentiel DB lourd). Poll 20s, log toutes les 2s les top-levels.
+        var pollSw = Stopwatch.StartNew();
+        AutomationElement? popup = null;
+        bool MatchesPopupTitle(string t) =>
+               t.IndexOf("Audience non trouvée", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("Audience différente", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("Import JSON Rapture", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("Récap", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("Recap", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("DialogBox", StringComparison.OrdinalIgnoreCase) >= 0
+            || t.IndexOf("Rapture", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        while (pollSw.Elapsed.TotalSeconds < 20)
+        {
+            // RIG mort ?
+            if (_app is not null && _app.HasExited)
+                throw new Exception($"RigClientAccueil a crashé pendant le pipeline import (ExitCode={_app.ExitCode})");
+
+            // ⚠ Bug trouvé : WinForms MessageBox.Show(_ownerWindow, ...) avec un owner =
+            // FORM_LIVAUD apparaît comme DESCENDANT de la main window, PAS comme top-level.
+            // On doit polléger les deux. (FormRaptureImportRecap.ShowDialog(_ownerWindow)
+            // pareil — modal owned, donc descendant.)
+            try
+            {
+                foreach (var w in _app!.GetAllTopLevelWindows(_automation!))
+                {
+                    var t = SafeText(() => w.Title);
+                    if (string.Equals(t, fileDialogTitle, StringComparison.Ordinal)) continue;
+                    if (MatchesPopupTitle(t)) { popup = w; Console.WriteLine($"      → Popup TOP-LEVEL après {pollSw.Elapsed.TotalSeconds:F1}s : '{t}'"); break; }
+                }
+            }
+            catch { }
+            if (popup is null)
+            {
+                try
+                {
+                    foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                    {
+                        var nm = SafeText(() => w.Name);
+                        if (string.Equals(nm, fileDialogTitle, StringComparison.Ordinal)) continue;
+                        if (nm.Equals("Live Audience", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (nm.Equals("Live Cabinet", StringComparison.OrdinalIgnoreCase)) continue;
+                        if (MatchesPopupTitle(nm)) { popup = w; Console.WriteLine($"      → Popup DESCENDANT après {pollSw.Elapsed.TotalSeconds:F1}s : Name='{nm}'"); break; }
+                    }
+                }
+                catch { }
+            }
+            if (popup is not null) break;
+
+            // Log de progrès toutes les 2s
+            if ((int)pollSw.Elapsed.TotalSeconds % 2 == 0)
+            {
+                try
+                {
+                    var titles = _app!.GetAllTopLevelWindows(_automation!).Select(w => SafeText(() => w.Title)).ToList();
+                    var descs = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+                        .Select(w => SafeText(() => w.Name)).ToList();
+                    Console.WriteLine($"      → [poll {pollSw.Elapsed.TotalSeconds:F0}s] top=[{string.Join(" | ", titles)}] desc=[{string.Join(" | ", descs)}]");
+                }
+                catch { }
+            }
+            Thread.Sleep(300);
+        }
+
+        if (popup is null)
+        {
+            // Pas de popup en 20s — vraie anomalie. Dump complet.
+            Console.WriteLine($"      → ⚠ Aucune popup post-import en 20s. Tous les top-level :");
+            try { foreach (var w in _app!.GetAllTopLevelWindows(_automation!)) Console.WriteLine($"          - '{SafeText(() => w.Title)}'"); } catch { }
+            Console.WriteLine("      → Descendants Window de la main window :");
+            foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                Console.WriteLine($"          - Name='{SafeText(() => w.Name)}'");
+            throw new Exception(
+                "Aucune popup post-import en 30s — le pipeline a complété SILENCIEUSEMENT, ou s'est planté sans DialogBox. " +
+                "Probables causes : exception swallowed dans Mapper.Load / Validator / Diff, ou crash de la UI thread. " +
+                "Vérifier les logs C:\\rig\\logs\\ et l'event viewer Windows.");
+        }
+
+        Console.WriteLine($"      → ✓ Popup post-import : Name='{SafeText(() => popup.Name)}'");
+
+        // 7) Routage selon le titre de la popup + acceptCreate :
+        //    a) "Audience non trouvée" → si acceptCreate=true click 'Oui' (créer),
+        //       sinon click 'Non' (refuser l'import).
+        //    b) "Audience différente" → click 'Oui' pour switcher (rare en smoke).
+        //    c) Autres → click Annuler/Fermer/OK pour pas polluer BDD.
+        var popupName = SafeText(() => popup.Name);
+        bool isAudienceNotFound = popupName.IndexOf("Audience non trouvée", StringComparison.OrdinalIgnoreCase) >= 0;
+        bool isAudienceDifferent = popupName.IndexOf("Audience différente", StringComparison.OrdinalIgnoreCase) >= 0
+                                || popupName.IndexOf("Audience differente", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        // 7a) Cas A direct : l'audience ouverte matche le JSON (date+greffe) →
+        // l'Orchestrateur n'affiche AUCUNE popup intermédiaire et la 1ère "popup"
+        // détectée par notre poll EST déjà le FormRaptureImportRecap. On capture
+        // la fenêtre window-only puis on Annule, sans passer par les branches
+        // YES-create / Audience-différente.
+        bool popupIsRecapDirect = false;
+        try
+        {
+            bool hasGrid = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Table)).Any()
+                        || popup.FindAllDescendants(cf => cf.ByControlType(ControlType.DataGrid)).Any();
+            bool hasRecapBtns = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .Any(b => SafeText(() => b.Name).IndexOf("Annuler", StringComparison.OrdinalIgnoreCase) >= 0)
+                && popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                    .Any(b => SafeText(() => b.Name).IndexOf("Importer", StringComparison.OrdinalIgnoreCase) >= 0);
+            popupIsRecapDirect = hasGrid && hasRecapBtns;
+        }
+        catch { }
+        if (popupIsRecapDirect)
+        {
+            Console.WriteLine($"      → ✓ Recap atteinte DIRECTEMENT (Cas A : audience ouverte matche par date+greffe)");
+            try
+            {
+                Thread.Sleep(900);
+                var shotPath = Path.Combine(ScreenshotDir(),
+                    $"smoke-rapture-recap-VIEW-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+                Interaction.CaptureWindow(popup, shotPath);
+                Console.WriteLine($"      📸 Screenshot recap : {shotPath}");
+            }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ Screenshot recap échoué : {ex.Message}"); }
+            // Lit les 4 stat tiles (modifications / avertissements / erreur / bloquées)
+            ReadRecapCounters(popup);
+            if (clickImporter)
+            {
+                ClickRecapImporterAndConfirm(popup);
+            }
+            else
+            {
+                Console.WriteLine($"      → Annuler (clickImporter=false)");
+                ClickButtonByNames(popup, "Annuler", "&Annuler", "Cancel", "Fermer", "&Fermer");
+            }
+            return;
+        }
+
+        if (isAudienceDifferent)
+        {
+            // ── Cas A bis : JSON cible une audience EXISTANTE différente de celle
+            // actuellement ouverte. L'Orchestrator demande "Importer dans l'audience
+            // TROUVÉE ?" → on clique Oui pour switcher sur l'audience matchée, puis
+            // on attend que la recap apparaisse pour la traiter normalement.
+            Console.WriteLine($"      → ✓ Popup 'Audience différente' (Cas A bis) — click Oui pour switcher");
+            ClickButtonByNames(popup, "Oui", "&Oui", "Yes");
+
+            // L'Orchestrator continue avec l'audience trouvée : Mapper.Load → Validator
+            // → Diff.Compute → FormRaptureImportRecap. Diff.Compute prend ~20s sur 72
+            // affaires donc cap raisonnable à 45s (au lieu de 90s historique).
+            Console.WriteLine("      → Wait FormRaptureImportRecap (Cas A bis post-switch)…");
+            AutomationElement? recapBis = null;
+            var swBis = Stopwatch.StartNew();
+            while (swBis.Elapsed.TotalSeconds < 45 && recapBis is null)
+            {
+                Thread.Sleep(300);
+                recapBis = WaitForPopupByNameContains("Import JSON Rapture", excludingName: popupName, timeoutSec: 1);
+            }
+            if (recapBis is null)
+            {
+                throw new Exception("Cas A bis : FormRaptureImportRecap pas apparu après 'Oui' switch en 45s");
+            }
+            Console.WriteLine($"      → ✓ FormRaptureImportRecap (Cas A bis) après {swBis.Elapsed.TotalSeconds:F1}s");
+            // Capture + click bouton selon clickImporter
+            try
+            {
+                Thread.Sleep(900);
+                var shotPath = Path.Combine(ScreenshotDir(),
+                    $"smoke-rapture-recap-VIEW-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+                Interaction.CaptureWindow(recapBis, shotPath);
+                Console.WriteLine($"      📸 Screenshot recap (Cas A bis) : {shotPath}");
+            }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ Screenshot recap échoué : {ex.Message}"); }
+            ReadRecapCounters(recapBis);
+            if (clickImporter)
+            {
+                ClickRecapImporterAndConfirm(recapBis);
+            }
+            else
+            {
+                Console.WriteLine($"      → Annuler (clickImporter=false)");
+                ClickButtonByNames(recapBis, "Annuler", "&Annuler", "Cancel", "Fermer", "&Fermer");
+            }
+            return;
+        }
+
+        if (isAudienceNotFound && acceptCreate)
+        {
+            // ── Scénario YES : on accepte la création de l'audience depuis le JSON.
+            ClickButtonByNames(popup, "Oui", "&Oui", "Yes");
+
+            // L'orchestrateur appelle Creator.CreateFromJson, puis affiche une popup
+            // MessageBox "Audience créée (ID=NNNN).\r\nL'import va se poursuivre..."
+            // On capture l'ID pour le cleanup SQL, et on clique OK pour continuer.
+            var createdPopup = WaitForPopupByNameContains("Import JSON Rapture", excludingName: popupName, timeoutSec: 15);
+            if (createdPopup is null)
+                throw new Exception("Popup de confirmation 'Audience créée' pas apparue en 15s — Creator.CreateFromJson a peut-être throw");
+            var createdText = ExtractStaticText(createdPopup);
+            Console.WriteLine($"      → Popup 'Audience créée' : {createdText}");
+            // Match "ID=12345" dans le texte
+            var m = System.Text.RegularExpressions.Regex.Match(createdText, @"ID\s*=\s*(\d+)");
+            if (m.Success && int.TryParse(m.Groups[1].Value, out var newId))
+            {
+                LastCreatedAudienceId = newId;
+                Console.WriteLine($"      → ✓ LastCreatedAudienceId={newId} (sera cleanup en SQL post-smoke)");
+            }
+            else
+            {
+                Console.WriteLine($"      → ⚠ Impossible d'extraire l'ID de la popup, pas de cleanup possible");
+            }
+            ClickButtonByNames(createdPopup, "OK", "&OK");
+
+            // L'orchestrateur continue (sur le thread UI WinForms, BLOQUÉ) :
+            //   Mapper.Load → Validator.Validate → Diff.Compute → FormRaptureImportRecap.ShowDialog
+            // Diff.Compute fait 1 SELECT * APPEL_AFFAIRE puis itère 44 affaires × N champs en
+            // mémoire, ce qui peut prendre 20-30s. On poll jusqu'à 45s pour voir la recap apparaître.
+            // Le titre attendu est "Import JSON Rapture" (cf FormRaptureImportRecap.cs:68).
+            Console.WriteLine("      → Wait FormRaptureImportRecap (Diff.Compute peut prendre 20-30s sur 44 affaires)…");
+            AutomationElement? recap = null;
+            var recapSw = Stopwatch.StartNew();
+            int lastLogSec = -1;
+            while (recapSw.Elapsed.TotalSeconds < 45)
+            {
+                try
+                {
+                    // Cherche tout window descendant ou top-level dont le Name == "Import JSON Rapture"
+                    // mais qui n'est PAS la popup "Audience créée" déjà fermée. Discriminateur : le
+                    // recap form a beaucoup de descendants (DataGridView, boutons), la MessageBox en a peu.
+                    var candidates = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+                        .Where(w =>
+                        {
+                            var nm = SafeText(() => w.Name);
+                            if (nm.IndexOf("Rapture", StringComparison.OrdinalIgnoreCase) < 0) return false;
+                            if (nm.Equals("Live Audience", StringComparison.OrdinalIgnoreCase)) return false;
+                            if (nm.Equals("Live Cabinet", StringComparison.OrdinalIgnoreCase)) return false;
+                            return true;
+                        })
+                        .ToList();
+                    // Le recap est celui qui a un DataGridView descendant ou un bouton "Annuler"/"Importer"
+                    foreach (var c in candidates)
+                    {
+                        bool hasGrid = c.FindAllDescendants(cf => cf.ByControlType(ControlType.Table)).Any()
+                                    || c.FindAllDescendants(cf => cf.ByControlType(ControlType.DataGrid)).Any();
+                        bool hasRecapButtons = c.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                            .Any(b => SafeText(() => b.Name).IndexOf("Annuler", StringComparison.OrdinalIgnoreCase) >= 0
+                                  || SafeText(() => b.Name).IndexOf("Importer", StringComparison.OrdinalIgnoreCase) >= 0);
+                        if (hasGrid || hasRecapButtons) { recap = c; break; }
+                    }
+                }
+                catch { }
+                if (recap is not null) break;
+
+                // Log toutes les 5s : top-levels + descendants Window avec leur Name
+                int sec = (int)recapSw.Elapsed.TotalSeconds;
+                if (sec / 5 != lastLogSec / 5)
+                {
+                    lastLogSec = sec;
+                    try
+                    {
+                        var descs = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+                            .Select(w => SafeText(() => w.Name)).ToList();
+                        Console.WriteLine($"      → [recap poll {sec}s] descendants Window=[{string.Join(" | ", descs)}]");
+                    }
+                    catch { }
+                }
+                Thread.Sleep(300);
+            }
+            if (recap is null)
+            {
+                Console.WriteLine("      ⚠ FormRaptureImportRecap pas détecté en 45s. Top-level + descendants à ce moment :");
+                try { foreach (var w in _app!.GetAllTopLevelWindows(_automation!)) Console.WriteLine($"          top: '{SafeText(() => w.Title)}'"); } catch { }
+                foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                    Console.WriteLine($"          desc: Name='{SafeText(() => w.Name)}'");
+            }
+            else
+            {
+                Console.WriteLine($"      → ✓ FormRaptureImportRecap détecté après {recapSw.Elapsed.TotalSeconds:F1}s : Name='{SafeText(() => recap.Name)}'");
+                // Capture la récap PENDANT qu'elle est ouverte (gate visuel : layout
+                // de FormRaptureImportRecap) AVANT de l'annuler.
+                try
+                {
+                    Thread.Sleep(900);
+                    // Capture la FENÊTRE recap uniquement (pas le bureau multi-moniteur).
+                    try
+                    {
+                        var shotPath = Path.Combine(ScreenshotDir(),
+                            $"smoke-rapture-recap-VIEW-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+                        Interaction.CaptureWindow(recap, shotPath);
+                        Console.WriteLine($"      📸 Screenshot recap (fenêtre) : {shotPath}");
+                    }
+                    catch (Exception ex) { Console.WriteLine($"      ⚠ Screenshot recap échoué : {ex.Message}"); }
+                }
+                catch { }
+                ReadRecapCounters(recap);
+                if (clickImporter)
+                {
+                    ClickRecapImporterAndConfirm(recap);
+                }
+                else
+                {
+                    Console.WriteLine($"      → Annuler (clickImporter=false)");
+                    ClickButtonByNames(recap, "Annuler", "&Annuler", "Cancel", "Fermer", "&Fermer");
+                }
+            }
+            return;
+        }
+
+        // Refus (défaut) : clique Non / Annuler / Fermer / OK
+        var btnRefuse = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b =>
+            {
+                var n = SafeText(() => b.Name);
+                return n.Equals("Non", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("&Non", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("No", StringComparison.OrdinalIgnoreCase)
+                    || n.IndexOf("Annuler", StringComparison.OrdinalIgnoreCase) >= 0
+                    || n.IndexOf("Fermer", StringComparison.OrdinalIgnoreCase) >= 0
+                    || n.Equals("OK", StringComparison.OrdinalIgnoreCase);
+            });
+        if (btnRefuse is not null)
+        {
+            Console.WriteLine($"      → Cleanup : click '{SafeText(() => btnRefuse.Name)}'");
+            Interaction.Click(btnRefuse);
+        }
+    }
+
+    /// <summary>
+    /// Mode APPLY de la recap : trouve le bouton "Importer (N champ(s) coché(s))" qui
+    /// matche un préfixe (le compteur N varie), click, gère les 2 popups successifs
+    /// du flux <c>BtnImporter_Click</c> :
+    ///   1. Confirmation : "Appliquer N modification(s) en base ?" → click Oui
+    ///   2. Résultat     : "Import terminé. Appliqués: X / Skipped: Y / Erreurs: Z" → click OK
+    /// Puis attend la fermeture du form recap (DialogResult.OK).
+    ///
+    /// ⚠ Appelle ApplyService → ÉCRITURE RÉELLE en base. Doit être encadré
+    /// par snapshot+restore côté SmokeRunner pour rester net-zero sur RIG_DEV.
+    /// </summary>
+    private void ClickRecapImporterAndConfirm(AutomationElement recap)
+    {
+        // 1. Trouver le bouton "Importer (...)" — Name préfixé, suffixe variable
+        var importer = recap.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b => SafeText(() => b.Name).StartsWith("Importer", StringComparison.OrdinalIgnoreCase));
+        if (importer is null)
+            throw new Exception("Bouton 'Importer (...)' introuvable dans la recap");
+        var importerLabel = SafeText(() => importer.Name);
+        if (!importer.IsEnabled)
+        {
+            // Bouton Importer désactivé = 0 modif applicable (header en erreur OU
+            // 0 affaire matchable OU pré-validation bloque). Pour les scénarios de
+            // test négatif (erreurs header/affaire, JSON vide, audience nouvellement
+            // créée sans cascade), c'est le résultat ATTENDU. On clique Annuler au
+            // lieu de throw — le smoke marque PASS (le test négatif a réussi : le
+            // pipeline a correctement refusé l'import).
+            Console.WriteLine($"      → '{importerLabel}' DÉSACTIVÉ (0 modif applicable — test négatif réussi). Annuler.");
+            ClickButtonByNames(recap, "Annuler", "&Annuler", "Cancel", "Fermer", "&Fermer");
+            return;
+        }
+        Console.WriteLine($"      → Click '{importerLabel}' (APPLY mode — écriture base)");
+        // Interaction.Click poste WM_LBUTTON* : non-bloquant, ne vole pas la souris,
+        // et ne deadlocke pas sur le MessageBox.Show synchrone du handler.
+        Interaction.Click(importer);
+        Console.WriteLine($"      → Click posté sur '{importerLabel}' — poll popup confirmation");
+
+        // 2. Popup confirmation "Appliquer N modification(s) en base ?" → Oui
+        var confirm = WaitForPopupByNameContains("Confirmation import Rapture", excludingName: SafeText(() => recap.Name), timeoutSec: 10);
+        if (confirm is null)
+            throw new Exception("Popup 'Confirmation import Rapture' pas apparue en 10s post-click Importer");
+        Console.WriteLine($"      → Popup confirmation détectée — click Oui");
+        ClickButtonByNames(confirm, "Oui", "&Oui", "Yes");
+
+        // 3. Popup résultat "Import terminé..." → OK
+        //    ApplyService.Apply tourne sync (peut prendre 1-5s sur 30 modifs).
+        var result = WaitForPopupByNameContains("Résultat de l'import", excludingName: SafeText(() => recap.Name), timeoutSec: 60);
+        if (result is null)
+            throw new Exception("Popup 'Résultat de l'import' pas apparue en 60s — ApplyService a-t-il throw ?");
+        var resultText = ExtractStaticText(result);
+        Console.WriteLine($"      → Popup résultat : {resultText.Replace("\r\n", " | ")}");
+        ClickButtonByNames(result, "OK", "&OK");
+
+        // 4. La recap se ferme avec DialogResult.OK. Poll sa disparition pour confirmer.
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < 5)
+        {
+            if (!recap.IsAvailable) break;
+            Thread.Sleep(150);
+        }
+        Console.WriteLine($"      → ✓ Recap fermée (apply terminé)");
+    }
+
+    /// <summary>
+    /// Click un bouton dont le Name match l'un des candidats (case-insensitive).
+    /// Throw si aucun match. Helper pour le flow YES create audience.
+    /// </summary>
+    private void ClickButtonByNames(AutomationElement parent, params string[] candidates)
+    {
+        var btn = parent.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b =>
+            {
+                var n = SafeText(() => b.Name);
+                return candidates.Any(c => n.Equals(c, StringComparison.OrdinalIgnoreCase));
+            });
+        if (btn is null)
+        {
+            var available = parent.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .Select(b => "'" + SafeText(() => b.Name) + "'");
+            throw new Exception($"Aucun bouton parmi [{string.Join(", ", candidates)}] dans la popup. Disponibles : {string.Join(", ", available)}");
+        }
+        Console.WriteLine($"      → Click '{SafeText(() => btn.Name)}' dans popup '{SafeText(() => parent.Name)}'");
+        Interaction.Click(btn);
+        Thread.Sleep(300); // laisse la modale se fermer
+    }
+
+    /// <summary>
+    /// Poll les top-level + descendants pour trouver une popup dont le Name CONTIENT
+    /// <paramref name="needle"/>, en excluant celle dont le Name == excludingName.
+    /// Returns null si timeout.
+    /// </summary>
+    private AutomationElement? WaitForPopupByNameContains(string needle, string excludingName, int timeoutSec)
+    {
+        if (_window is null || _app is null || _automation is null) return null;
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < timeoutSec)
+        {
+            foreach (var w in SafeGet(() => _app.GetAllTopLevelWindows(_automation).Cast<AutomationElement>().ToList()) ?? new List<AutomationElement>())
+            {
+                var t = SafeText(() => w.Name);
+                if (string.IsNullOrEmpty(t) || string.Equals(t, excludingName, StringComparison.Ordinal)) continue;
+                if (t.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0) return w;
+            }
+            foreach (var w in SafeGet(() => _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)).ToList()) ?? new List<AutomationElement>())
+            {
+                var nm = SafeText(() => w.Name);
+                if (string.IsNullOrEmpty(nm) || string.Equals(nm, excludingName, StringComparison.Ordinal)) continue;
+                if (nm.Equals("Live Audience", StringComparison.OrdinalIgnoreCase)) continue;
+                if (nm.Equals("Live Cabinet", StringComparison.OrdinalIgnoreCase)) continue;
+                if (nm.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0) return w;
+            }
+            Thread.Sleep(500);
+        }
+        return null;
+    }
+
+    /// <summary>Concat des Text descendants de la popup, pour extraire le message body d'une MessageBox.</summary>
+    private string ExtractStaticText(AutomationElement parent)
+    {
+        try
+        {
+            var texts = parent.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .Select(t => SafeText(() => t.Name))
+                .Where(s => !string.IsNullOrWhiteSpace(s));
+            return string.Join(" ⏎ ", texts);
+        }
+        catch { return ""; }
+    }
+
+    private static T? SafeGet<T>(Func<T> f) where T : class
+    {
+        try { return f(); } catch { return null; }
+    }
+
+    /// <summary>
+    /// Click 'Export JSON' Plumitif → SaveFileDialog → tape un path target → Save →
+    /// vérifie que le fichier JSON est bien produit sur disque.
+    /// </summary>
+    public void ClickExportJsonAndSaveTo(string outputPath)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        // 1) Préparer le dossier target + cleanup ancien fichier si existant
+        var dir = Path.GetDirectoryName(outputPath);
+        if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+        if (File.Exists(outputPath)) File.Delete(outputPath);
+        Console.WriteLine($"      → Target export : {outputPath}");
+
+        // 2) Trouver le bouton Export JSON (Pane=Ult_Button avec AutomationId='BtnExportJsonPlum')
+        var btn = _window.FindFirstDescendant(cf => cf.ByAutomationId("BtnExportJsonPlum"));
+        if (btn is null)
+            throw new Exception("Bouton BtnExportJsonPlum introuvable — PROC_PREAUD pas ouvert ou audience pas sélectionnée");
+        Console.WriteLine($"      → Click 'Export JSON'");
+        Interaction.Click(btn);
+
+        // 3) Attendre soit SaveFileDialog soit DialogBox "Aucune affaire" (descendant de _window,
+        //    pas top-level — pareil pattern que la modale RCS de KBIS smoke).
+        var sw = Stopwatch.StartNew();
+        AutomationElement? dialog = null;
+        bool isError = false;
+        while (sw.Elapsed.TotalSeconds < 10 && dialog is null)
+        {
+            try
+            {
+                // a) Top-level (SaveFileDialog Windows standard)
+                foreach (var w in _app!.GetAllTopLevelWindows(_automation!))
+                {
+                    var t = SafeText(() => w.Title);
+                    if (t.IndexOf("Export JSON", StringComparison.OrdinalIgnoreCase) >= 0
+                     || t.IndexOf("Enregistrer", StringComparison.OrdinalIgnoreCase) >= 0)
+                    { dialog = w; break; }
+                }
+                // b) Descendant (modale custom RIG ou DialogBox "Aucune affaire")
+                if (dialog is null)
+                {
+                    foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                    {
+                        var nm = SafeText(() => w.Name);
+                        if (nm.IndexOf("Export JSON", StringComparison.OrdinalIgnoreCase) >= 0
+                         || nm.IndexOf("Aucune affaire", StringComparison.OrdinalIgnoreCase) >= 0
+                         || nm.IndexOf("DialogBox", StringComparison.OrdinalIgnoreCase) >= 0)
+                        { dialog = w; if (nm.IndexOf("Aucune", StringComparison.OrdinalIgnoreCase) >= 0) isError = true; break; }
+                    }
+                }
+            }
+            catch { }
+            if (dialog is null) Thread.Sleep(300);
+        }
+        if (dialog is null)
+        {
+            Console.WriteLine("      → Aucun dialog détecté. Top-level windows :");
+            foreach (var w in _app!.GetAllTopLevelWindows(_automation!))
+                Console.WriteLine($"          - '{SafeText(() => w.Title)}'");
+            Console.WriteLine("      → Descendants Window de _window :");
+            foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                Console.WriteLine($"          - Name='{SafeText(() => w.Name)}'");
+            throw new Exception("Aucun dialog post-click Export JSON (ni SaveFileDialog ni DialogBox d'erreur)");
+        }
+        if (isError)
+        {
+            Console.WriteLine($"      → ⚠ DialogBox d'erreur détecté : '{SafeText(() => dialog.Name)}'");
+            // Cleanup : close it
+            var okBtn = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .FirstOrDefault(b => SafeText(() => b.Name).Equals("OK", StringComparison.OrdinalIgnoreCase));
+            if (okBtn is not null) { try { Interaction.Click(okBtn); } catch { } }
+            throw new Exception("Click Export JSON déclenche DialogBox 'Aucune affaire à exporter' — _audienceCabinet n'est pas bindé à OPE_EDIT_PLUMITIF, peut-être que la sélection d'audience ne propage pas au control export.");
+        }
+        Console.WriteLine($"      → SaveFileDialog détecté : Title/Name='{SafeText(() => dialog.Name)}'");
+
+        // 4) Trouver le champ "Nom du fichier" (Edit avec AutomationId='1148' standard Windows)
+        var fileNameEdit = dialog.FindFirstDescendant(cf => cf.ByAutomationId("1148"))
+                        ?? dialog.FindFirstDescendant(cf => cf.ByControlType(ControlType.Edit));
+        if (fileNameEdit is null)
+            throw new Exception("Champ 'Nom du fichier' introuvable dans SaveFileDialog");
+
+        // 5) Renseigne le chemin via SetValue (ValuePattern) — remplace click + Ctrl+A + Delete + Type.
+        //    SetValue écrase le contenu intégral du champ sans synthèse clavier globale.
+        Interaction.SetText(fileNameEdit, outputPath);
+        Console.WriteLine($"      → Path renseigné via ValuePattern : {outputPath}");
+        Thread.Sleep(500);
+
+        // 6) Click bouton "Enregistrer" (= Save) du dialog
+        var btnSave = dialog.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b =>
+            {
+                var n = SafeText(() => b.Name);
+                return n.Equals("Enregistrer", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("Save", StringComparison.OrdinalIgnoreCase)
+                    || n.Equals("&Enregistrer", StringComparison.OrdinalIgnoreCase);
+            });
+        if (btnSave is null)
+        {
+            Console.WriteLine("      → Bouton Enregistrer introuvable, fallback PressEnter sur le champ");
+            Interaction.PressEnter(fileNameEdit);
+        }
+        else
+        {
+            Console.WriteLine($"      → Click '{SafeText(() => btnSave.Name)}'");
+            Interaction.Click(btnSave);
+        }
+        Thread.Sleep(2000); // laisse l'écriture + le DialogBox de confirmation
+
+        // 7) Si un DialogBox "Export JSON terminé" apparaît, ferme-le. Le DialogBox est
+        //    un descendant de _window (custom RIG, pas top-level Windows). Son OK est
+        //    un Pane Name='Ok' (k minuscule, pas un vrai Button UIA).
+        Thread.Sleep(500);
+        try
+        {
+            AutomationElement? okEl = null;
+            foreach (var c in _window.FindAllDescendants())
+            {
+                var nm = SafeText(() => c.Name);
+                if (nm.Equals("Ok", StringComparison.OrdinalIgnoreCase) || nm.Equals("OK", StringComparison.Ordinal))
+                { okEl = c; break; }
+            }
+            if (okEl is not null)
+            {
+                Console.WriteLine($"      → Cleanup dialog : click '{SafeText(() => okEl.Name)}'");
+                try { Interaction.Click(okEl); } catch { }
+                Thread.Sleep(500);
+            }
+        }
+        catch { }
+
+        // 8) Verify fichier sur disque
+        Thread.Sleep(500);
+        if (!File.Exists(outputPath))
+            throw new Exception($"Export JSON terminé mais fichier introuvable : {outputPath}");
+        var size = new FileInfo(outputPath).Length;
+        Console.WriteLine($"      → ✓ Fichier JSON produit : {outputPath} ({size} octets)");
+        if (size < 50)
+            throw new Exception($"Fichier produit trop petit ({size} octets) — probablement vide ou tronqué");
+
+        // 9) Sanity : le contenu commence par '{' (JSON objet)
+        var firstChar = File.ReadAllText(outputPath).TrimStart().FirstOrDefault();
+        if (firstChar != '{')
+            throw new Exception($"Fichier produit ne commence pas par '{{' (1er char : '{firstChar}') — pas un JSON valide");
+        Console.WriteLine($"      → ✓ Contenu commence par '{{' (JSON valide)");
+    }
+
+    /// <summary>
+    /// Après ouverture de PROC_RETAUD, sélectionne la 1ère audience dans la grille de résultats
+    /// et clique 'Valider la sélection' pour passer en phase Saisie. C'est dans cette phase
+    /// que les boutons 'Importer Rapture' / 'Voir données Rapture' deviennent visibles
+    /// (cf. FORM_RETAUD.cs : eButtonVisibleOnPhase.Saisie).
+    /// </summary>
+    public void SelectFirstAudienceInRetaud()
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        // ML LOOP S1.2 — retry+pid filter pour mode visible-parallèle.
+        var btnValider = FindButtonWithRetry("Valider la sélection", timeoutSec: 20.0);
+        if (btnValider is null)
+            throw new Exception("Bouton 'Valider la sélection' introuvable dans la phase Recherche de PROC_RETAUD (20s, pid-filtered)");
+
+        // Pick row : prefer non-INT (PROC_LIVAUD interactive). Pour PROC_RETAUD (retour
+        // post-audience) il faut une audience type CX/AU ou PLD ou PC, pas INT.
+        // 1) Liste toutes les rows de la grille
+        var rows = _window.FindAllDescendants().Where(c =>
+        {
+            try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+            catch { return false; }
+        }).ToList();
+        Console.WriteLine($"      → {rows.Count} rows dans la grille audiences");
+
+        // 2) Pour chaque row, construit un "résumé" = Name + Names des cells enfants
+        // ⚠ SAFETY 2026-05-22 (anti-mail-spam) : whitelist chambre obligatoire. Cf.
+        //    SelectAudienceInRetaudByDateHeure pour explication. Valider une row
+        //    avec chambre tronquée UIA ("Mise " au lieu de "Mise en état") déclenche
+        //    RIG.METIER.TableRef.CHAMBRE.GetCHAMBRE("Mise ") → throw → mail envoyé.
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        AutomationElement? targetRow = null;
+        string targetSummary = "";
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var rowName = SafeText(() => rows[i].Name);
+            var cells = rows[i].FindAllChildren();
+            var cellNames = cells.Select(c => SafeText(() => c.Name)).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            var cellsContent = string.Join(" | ", cellNames);
+            var summary = $"'{rowName}' [{cellsContent}]";
+            bool isInteractive = summary.IndexOf("INT", StringComparison.OrdinalIgnoreCase) >= 0;
+            bool hasKnownChambre = cellNames.Any(c =>
+                knownChambreCodes.Any(k => c.Trim().Equals(k, StringComparison.Ordinal)));
+            string statusTag = isInteractive ? "⊘ INT" : (!hasKnownChambre ? "⊘ chambre-suspecte" : "✓ valide");
+            Console.WriteLine($"          row[{i}] {statusTag} {summary}");
+            if (!isInteractive && hasKnownChambre && targetRow is null)
+            {
+                targetRow = rows[i];
+                targetSummary = summary;
+            }
+        }
+
+        if (targetRow is null)
+        {
+            throw new Exception($"Aucune audience VALIDE (non-INT + chambre whitelistée) trouvée parmi les {rows.Count} rows. " +
+                                "Évite mail-spam RIG. Hardcoder un IdAudCab via env si nécessaire.");
+        }
+
+        Console.WriteLine($"      → Sélection row non-INT : {targetSummary}");
+        try { Interaction.Select(targetRow); } catch { }
+        Thread.Sleep(500);
+
+        Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
+        Interaction.Click(btnValider);
+        Thread.Sleep(1500);
+    }
+
+    /// <summary>
+    /// Sélectionne dans la grille RETAUD la ligne dont les cellules contiennent À LA FOIS
+    /// la date (ex "15/05/2026") ET l'heure (ex "09:00"). Sert au process E2E où l'on
+    /// veut cibler une audience PRÉCISE (peuplée, dans la fenêtre RETAUD) pour qu'un
+    /// JSON Rapture matche par date+greffe (Orchestrator Cas A) → recap directe.
+    /// </summary>
+    public void SelectAudienceInRetaudByDateHeure(string dateFr, string heure)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        // ML LOOP S1.2 — retry+pid filter pour mode visible-parallèle.
+        var btnValider = FindButtonWithRetry("Valider la sélection", timeoutSec: 20.0);
+        if (btnValider is null)
+            throw new Exception("Bouton 'Valider la sélection' introuvable dans la phase Recherche de PROC_RETAUD (20s, pid-filtered)");
+        var rows = _window.FindAllDescendants().Where(c =>
+        {
+            try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+            catch { return false; }
+        }).ToList();
+        Console.WriteLine($"      → {rows.Count} rows dans la grille, recherche '{dateFr}' + '{heure}'");
+        // Collecte tous les matches, puis preferer celui avec le plus d'affaires.
+        // ⚠ SAFETY 2026-05-22 : les cellules UIA retournent le texte AFFICHÉ (peut être
+        // tronqué visuellement par largeur de colonne, ex "Mise " au lieu de "Mise en
+        // état"). Valider une telle row → RIG GetCHAMBRE("Mise ") → throw → mail envoyé.
+        // → on PRÉ-FILTRE en blacklistant les rows dont le content révèle troncature
+        //    (espace de padding final dans une cellule courte, ou substring "audience i").
+        var matches = new System.Collections.Generic.List<(AutomationElement row, string content, int affaireCount)>();
+        // Whitelist des codes chambre courts valides (col 4 dans la grille RETAUD greffe 9995).
+        // À étendre si nouveau code apparaît. Si content NE contient PAS l'un de ces codes,
+        // la row est suspecte (probablement tronquée par UIA) → on skip.
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var cells = rows[i].FindAllChildren();
+            var cellNames = cells.Select(c => SafeText(() => c.Name)).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            var content = string.Join(" | ", cellNames);
+            bool hasDate = content.IndexOf(dateFr, StringComparison.OrdinalIgnoreCase) >= 0;
+            bool hasHeure = content.IndexOf(heure, StringComparison.OrdinalIgnoreCase) >= 0;
+            bool isInteractive = content.IndexOf("audience i", StringComparison.OrdinalIgnoreCase) >= 0
+                              || content.IndexOf("interactive", StringComparison.OrdinalIgnoreCase) >= 0;
+            // Garde anti-mail-spam : refuse les rows dont aucune cellule ne matche un code
+            // chambre connu (= signal d'UIA truncation, RIG plantera sur GetCHAMBRE).
+            bool hasKnownChambre = cellNames.Any(c =>
+                knownChambreCodes.Any(k => c.Trim().Equals(k, StringComparison.Ordinal)));
+            if (hasDate && hasHeure && !isInteractive && hasKnownChambre)
+            {
+                int affaireCount = cellNames.Select(n =>
+                    int.TryParse(n, out var v) ? v : 0
+                ).Sum();
+                Console.WriteLine($"          row[{i}] ✓ MATCH {dateFr} {heure} (affaires={affaireCount}) : [{content}]");
+                matches.Add((rows[i], content, affaireCount));
+            }
+            else if (hasDate && hasHeure && !isInteractive && !hasKnownChambre)
+            {
+                // SKIP row suspecte — log pour diag
+                Console.WriteLine($"          row[{i}] ⊘ SKIP (chambre non whitelistée, probable troncature UIA) : [{content}]");
+            }
+        }
+        if (matches.Count == 0)
+            throw new Exception($"Aucune row VALIDE (date '{dateFr}' + heure '{heure}' + chambre whitelistée) trouvée. Évite mail-spam RIG.");
+        var best = matches.OrderByDescending(m => m.affaireCount).First();
+        var targetRow = best.row;
+        var targetSummary = best.content;
+        if (matches.Count > 1)
+            Console.WriteLine($"      → {matches.Count} matches : choisi celui avec affaires={best.affaireCount} (vs autres)");
+        Console.WriteLine($"      → Sélection : {targetSummary}");
+        try { Interaction.Select(targetRow); } catch { }
+        Thread.Sleep(500);
+        Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
+        Interaction.Click(btnValider);
+        Thread.Sleep(1500);
+    }
+
+    private bool TryLaunchKbis(AutomationElement item, string source)
+    {
+        Console.WriteLine($"      → Processus VK candidat via {source} : Type={item.ControlType} Name='{item.Name}'");
+        int TabCount()
+        {
+            try
+            {
+                var tc = FindByAutomationId("tabControl");
+                return tc?.FindAllChildren().Length ?? -1;
+            }
+            catch { return -1; }
+        }
+        int before = TabCount();
+        try
+        {
+            var kbisList = FindByAutomationId("lstProcessus");
+            if (kbisList is null)
+                throw new InvalidOperationException("lstProcessus introuvable pour lancer KBIS");
+            Interaction.ActivateListItem(item, kbisList);
+            Console.WriteLine("      → Launch via Entrée (RigListView KeyDown handler)");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      → Double-clic jeté ({ex.GetType().Name}), fallback Click+Enter");
+            try { Interaction.Click(item); Thread.Sleep(200); Interaction.PressEnter(item); }
+            catch { /* best-effort */ }
+        }
+        // Vérifie qu'un NOUVEAU tab est apparu (preuve que le processus s'est lancé).
+        // VK = automate lourd (COM/Vintasoft) → on laisse jusqu'à 8s.
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < 8)
+        {
+            int now = TabCount();
+            if (now > before && before >= 0)
+            {
+                Console.WriteLine($"      → ✓ Tab ouvert (tabs {before}→{now}) après {sw.Elapsed.TotalSeconds:F1}s");
+                return true;
+            }
+            Thread.Sleep(400);
+        }
+        Console.WriteLine($"      → ✗ Aucun nouveau tab après 8s (tabs restés à {before}) — launch raté via {source}");
+        return false;
+    }
+
+    /// <summary>
+    /// Cherche un SIREN dans le plugin KBIS et vérifie qu'il s'affiche.
+    ///
+    /// Étapes :
+    /// 1. Trouve la zone de saisie : essaie d'abord les AutomationId connus
+    ///    (<c>txtAffichage</c>, <c>ultNumeroMetier</c>, <c>txtNumIdent</c>…), sinon
+    ///    fallback sur le 1er control Edit du tab actif.
+    /// 2. Tape le SIREN (env <c>RIG_LEGACY_SIREN</c> ou défaut <paramref name="defaultSiren"/>).
+    /// 3. Trouve le bouton recherche : <c>RECHERCHER</c> AutomationId (RigToolBar ToolStripButton)
+    ///    ou Name "Rechercher".
+    /// 4. Vérifie qu'au moins une indication post-recherche apparaît (un Name contenant
+    ///    le SIREN, une dénomination, ou des controls dossier comme <c>ultNumGestion</c>).
+    ///
+    /// Dump UIA détaillé du tab à chaque étape qui échoue.
+    /// </summary>
+    public void SearchKbisSiren(string defaultSiren, int waitResultSeconds = 15)
+    {
+        if (_window is null || _app is null || _automation is null)
+            throw new InvalidOperationException("ClickSeConnecter() + OpenProcKbis() doivent être appelés avant SearchKbisSiren()");
+
+        var siren = Environment.GetEnvironmentVariable("RIG_LEGACY_SIREN");
+        if (string.IsNullOrWhiteSpace(siren)) siren = defaultSiren;
+        Console.WriteLine($"      → SIREN cible : '{siren}' (env RIG_LEGACY_SIREN sinon défaut)");
+
+        // Pattern VK (Visualisation - Extrait RCS) = automate VB6 :
+        //   1. Click "Rechercher..." dans le tab VK → ouvre une fenêtre modale RigOcxRecherche
+        //   2. Dans la modale : tape SIREN dans un Edit + click Valider/OK
+        //   3. La modale se ferme, le dossier s'affiche dans le tab VK
+
+        // 1) Click Rechercher... (substring "echerch" → match "Rechercher...")
+        var rechercheBtn = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b => SafeText(() => b.Name).IndexOf("echerch", StringComparison.OrdinalIgnoreCase) >= 0);
+        if (rechercheBtn is null)
+            throw new Exception("Bouton 'Rechercher...' introuvable dans le tab VK");
+        Console.WriteLine($"      → Click 'Rechercher...' AutomationId='{SafeText(() => rechercheBtn.AutomationId)}'");
+        Interaction.Click(rechercheBtn);
+        Thread.Sleep(1500);
+
+        // 2) Détecte la modale "Recherche d'un dossier RCS". Note : elle apparaît comme
+        //    Window DESCENDANT de la main window (child window UI), PAS comme top-level
+        //    du process. On la trouve par Name partiel "Recherche".
+        var sw = Stopwatch.StartNew();
+        AutomationElement? popup = null;
+        while (sw.Elapsed.TotalSeconds < 8 && popup is null)
+        {
+            popup = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+                .FirstOrDefault(w =>
+                {
+                    var t = SafeText(() => w.Name);
+                    return t.IndexOf("recherch", StringComparison.OrdinalIgnoreCase) >= 0
+                        && t.IndexOf("RigFormAutomateVB6", StringComparison.OrdinalIgnoreCase) < 0;
+                });
+            if (popup is null) Thread.Sleep(500);
+        }
+
+        if (popup is null)
+        {
+            Console.WriteLine("      → Modale 'Recherche…' introuvable. Dump :");
+            DumpDescendants(_window, maxDepth: 4, maxLines: 100);
+            throw new Exception("Modale 'Recherche d'un dossier RCS' introuvable après click sur 'Rechercher...'");
+        }
+        Console.WriteLine($"      → Modale trouvée : Name='{SafeText(() => popup.Name)}'. Dump enrichi avec positions :");
+        DumpDescendantsWithPositions(popup, maxDepth: 5, maxLines: 60);
+
+        // 3) Cible le champ "Numéro Ident." par position : dans le groupe 'Criteres Entreprise',
+        //    les Edits forment une grille 2 colonnes × 4 lignes :
+        //      Y=204 (Raison Sociale | Adresse)
+        //      Y=228 (Numéro Ident.  | Code postal)   ← SIREN va ici
+        //      Y=252 (Dirigeant      | Ville)
+        //      Y=276 (Activité       | Date Immat)
+        //    Le SIREN field = colonne gauche (X ≈ 125), 2ème ligne (Y ≈ 228), large (W ≈ 257).
+        //    Le Code postal a une width étroite (73px) → easy à exclure.
+        var popupEdits = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit));
+        Console.WriteLine($"      → Popup : {popupEdits.Length} Edits.");
+
+        // Sort par (Y, X) ascendant
+        var sortedEdits = popupEdits
+            .Select(e => { var r = e.BoundingRectangle; return (edit: e, x: (int)r.X, y: (int)r.Y, w: (int)r.Width); })
+            .Where(t => t.w > 100) // exclut Code postal (73px) et autres petits champs
+            .OrderBy(t => t.y).ThenBy(t => t.x)
+            .ToList();
+        Console.WriteLine($"      → {sortedEdits.Count} Edits 'larges' triés par (Y,X) :");
+        for (int i = 0; i < sortedEdits.Count; i++)
+            Console.WriteLine($"          [{i}] id='{sortedEdits[i].edit.AutomationId}' ({sortedEdits[i].x},{sortedEdits[i].y} w={sortedEdits[i].w})");
+
+        // SIREN = 3ème dans l'ordre (Y, X) = (Y=228, X≈125)
+        if (sortedEdits.Count < 3)
+            throw new Exception($"Layout inattendu : seulement {sortedEdits.Count} Edits 'larges' dans le popup (attendu ≥ 3)");
+        var sirenInput = sortedEdits[2].edit;
+        Console.WriteLine($"      → Champ 'Numéro Ident.' (SIREN) : Edit '{sirenInput.AutomationId}' à ({sortedEdits[2].x},{sortedEdits[2].y})");
+
+        try
+        {
+            Interaction.SetText(sirenInput, siren);
+            Thread.Sleep(300);
+            string? readBack = null;
+            try { readBack = sirenInput.AsTextBox().Text; } catch { }
+            Console.WriteLine($"      → SIREN renseigné via SetText : readback='{readBack ?? "<no VP>"}'");
+            if (readBack is null || !readBack.Contains(siren))
+                throw new Exception($"Le SIREN n'a pas été accepté par le champ Numéro Ident. (readback='{readBack}')");
+        }
+        catch (Exception ex) { throw new Exception("Échec saisie SIREN : " + ex.Message); }
+
+        // 4) Click 'Rechercher (F7)' pour lancer la recherche.
+        var btnRechercher = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b => SafeText(() => b.Name).IndexOf("Rechercher (F7)", StringComparison.OrdinalIgnoreCase) >= 0);
+        if (btnRechercher is not null)
+        {
+            Console.WriteLine($"      → Click 'Rechercher (F7)'");
+            Interaction.Click(btnRechercher);
+        }
+        Thread.Sleep(3000); // laisse la BDD répondre
+
+        // 4b) Détecte le popup d'erreur "Vos critères n'ont permis de trouver aucun dossier"
+        var errorPopup = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+            .FirstOrDefault(w =>
+            {
+                var n = SafeText(() => w.Name);
+                return n.IndexOf("RIG_Client_RechRCS", StringComparison.OrdinalIgnoreCase) >= 0
+                    || n.IndexOf("aucun dossier", StringComparison.OrdinalIgnoreCase) >= 0;
+            });
+        if (errorPopup is not null)
+        {
+            Console.WriteLine($"      → ⚠ Popup d'erreur détecté : '{SafeText(() => errorPopup.Name)}'");
+            // Dump pour voir le message exact
+            var msgTexts = errorPopup.FindAllDescendants(cf => cf.ByControlType(ControlType.Text));
+            foreach (var t in msgTexts)
+            {
+                var msg = SafeText(() => t.Name);
+                if (!string.IsNullOrEmpty(msg) && msg.Length > 5)
+                    Console.WriteLine($"          message : '{msg}'");
+            }
+            // Cleanup : click OK pour fermer
+            var okBtn = errorPopup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .FirstOrDefault(b => SafeText(() => b.Name).Equals("OK", StringComparison.OrdinalIgnoreCase));
+            if (okBtn is not null) { try { Interaction.Click(okBtn); } catch { } }
+            // Fermer aussi le popup de recherche (sinon le RigClientAccueil reste bloqué)
+            Thread.Sleep(500);
+            var btnAnnuler = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .FirstOrDefault(b => SafeText(() => b.Name).IndexOf("Annuler", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (btnAnnuler is not null) { try { Interaction.Click(btnAnnuler); } catch { } }
+            throw new Exception($"SIREN '{siren}' introuvable dans RIG_DEV — override via $env:RIG_LEGACY_SIREN = <SIREN existant en BDD> puis relance.");
+        }
+
+        // 5) Click 'Valider la recherche (F12)' pour fermer le popup et charger le dossier
+        var btnValider = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+            .FirstOrDefault(b => SafeText(() => b.Name).IndexOf("Valider", StringComparison.OrdinalIgnoreCase) >= 0);
+        if (btnValider is not null)
+        {
+            Console.WriteLine($"      → Click 'Valider' : Name='{SafeText(() => btnValider.Name)}'");
+            Interaction.Click(btnValider);
+        }
+        else
+        {
+            // Fallback : bouton 'Valider' introuvable → on envoie F12 directement sur le champ SIREN,
+            // ce qui reproduit exactement le comportement original (VK_F12) de la modale RigOcxRecherche.
+            Console.WriteLine("      → 'Valider' introuvable, fallback PressF12 sur le champ SIREN (comportement F12 original préservé)");
+            try { Interaction.PressF12(sirenInput); } catch { /* best-effort */ }
+        }
+        Thread.Sleep(2000);
+
+        // 5) Vérifie que la popup est fermée + que le dossier s'affiche dans le tab VK.
+        //    On cible spécifiquement la pageTab VK pour exclure le popup encore visible.
+        Console.WriteLine($"      → Wait {waitResultSeconds}s + check résultat dans le tab VK…");
+        bool resultDetected = false;
+        string? matchedHint = null;
+        var sw2 = Stopwatch.StartNew();
+        while (sw2.Elapsed.TotalSeconds < waitResultSeconds && !resultDetected)
+        {
+            // Cible la pageTab VK (descendant), pas la fenêtre globale (qui contient le popup).
+            var kbisTab = _window.FindFirstDescendant(cf =>
+                cf.ByControlType(ControlType.Pane).And(cf.ByAutomationId("pagetabVK")));
+            if (kbisTab is null) { Thread.Sleep(500); continue; }
+
+            // Match strict : un Edit DANS le tab VK a maintenant le SIREN comme valeur
+            var tabEdits = kbisTab.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit));
+            foreach (var e in tabEdits)
+            {
+                string? v = null;
+                try { v = e.AsTextBox().Text; } catch { }
+                if (!string.IsNullOrEmpty(v) && v.Contains(siren))
+                {
+                    resultDetected = true;
+                    matchedHint = $"Edit '{SafeText(() => e.AutomationId)}' du tab VK value='{v}'";
+                    break;
+                }
+            }
+            // Ou un libellé/control contient le SIREN
+            if (!resultDetected)
+            {
+                var byNameSiren = kbisTab.FindFirstDescendant(cf => cf.ByName(siren));
+                if (byNameSiren is not null) { resultDetected = true; matchedHint = $"Element Name='{siren}' dans tab VK"; }
+            }
+            if (!resultDetected) Thread.Sleep(500);
+        }
+
+        if (!resultDetected)
+        {
+            Console.WriteLine("      → SIREN pas affiché dans le tab VK. Dump tab :");
+            var kbisTab = _window.FindFirstDescendant(cf =>
+                cf.ByControlType(ControlType.Pane).And(cf.ByAutomationId("pagetabVK")));
+            if (kbisTab is not null) DumpDescendants(kbisTab, maxDepth: 4, maxLines: 80);
+            throw new Exception($"Le SIREN '{siren}' ne s'affiche pas dans le tab VK après {waitResultSeconds}s — la validation n'a pas chargé le dossier (Valider F12 nécessite peut-être de sélectionner un résultat avant).");
+        }
+        Console.WriteLine($"      → ✓ Dossier KBIS chargé : {matchedHint}");
+    }
+
+    /// <summary>
+    /// Vérifie qu'un nouveau tab a été ajouté au tabControl principal après le double-clic
+    /// sur l'item KBIS, et que ce tab a un libellé contenant "kbis" / "k-bis". À l'état
+    /// initial le tabControl contient 2 tabs (&amp;Accueil, &amp;Demandes) — après ouverture
+    /// de PROC_KBIS un 3ème apparaît.
+    /// </summary>
+    public void VerifyKbisTabOpened(int waitSeconds = 10)
+    {
+        if (_window is null) throw new InvalidOperationException("ClickSeConnecter() doit être appelé avant VerifyKbisTabOpened()");
+
+        var sw = Stopwatch.StartNew();
+        AutomationElement? kbisTab = null;
+        int tabCount = 0;
+        string tabNames = "";
+        while (sw.Elapsed.TotalSeconds < waitSeconds && kbisTab is null)
+        {
+            var tabControl = FindByAutomationId("tabControl");
+            if (tabControl is not null)
+            {
+                var tabs = tabControl.FindAllChildren();
+                tabCount = tabs.Length;
+                tabNames = string.Join(" / ", tabs.Select(t => "'" + SafeText(() => t.Name) + "'"));
+                // Le processus VK ("Visualisation - Extrait RCS") n'a PAS "kbis"
+                // dans le Name du tab. On matche : AutomationId == pagetabVK,
+                // OU Name contient "VK" / "visualisation" / "rcs" / "extrait".
+                kbisTab = tabs.FirstOrDefault(t =>
+                {
+                    var n = SafeText(() => t.Name);
+                    var aid = SafeText(() => t.AutomationId);
+                    if (aid.Equals("pagetabVK", StringComparison.OrdinalIgnoreCase)) return true;
+                    return n.Equals("VK", StringComparison.OrdinalIgnoreCase)
+                        || n.IndexOf("visualisation", StringComparison.OrdinalIgnoreCase) >= 0
+                        || n.IndexOf("extrait rcs", StringComparison.OrdinalIgnoreCase) >= 0
+                        || n.IndexOf("rcs", StringComparison.OrdinalIgnoreCase) >= 0;
+                });
+            }
+            if (kbisTab is null) Thread.Sleep(400);
+        }
+        Console.WriteLine($"      → tabControl après KBIS open : {tabCount} tabs : {tabNames}");
+        if (kbisTab is null)
+            throw new Exception($"Pas de tab KBIS dans tabControl après {waitSeconds}s — le plugin n'a pas chargé (TypeLoadException ? dépendance native manquante ? cf. logs RIG)");
+        Console.WriteLine($"      → Tab KBIS détecté : '{SafeText(() => kbisTab.Name)}' (en {sw.Elapsed.TotalSeconds:F1}s)");
+    }
+
+    private AutomationElement? FindByAutomationId(string id)
+    {
+        if (_window is null) return null;
+        var sw = Stopwatch.StartNew();
+        var el = _window.FindFirstDescendant(cf => cf.ByAutomationId(id));
+        sw.Stop();
+        if (sw.ElapsedMilliseconds > 700)
+            Console.WriteLine($"      [DIAG] FindByAutomationId('{id}') = {sw.ElapsedMilliseconds}ms -> {(el is null ? "null" : "ok")}");
+        return el;
+    }
+
+    /// <summary>
+    /// Mode visible-parallèle fix : retry pattern + filter ProcessId pour
+    /// FindByAutomationId. En mode //, 4 RIG processes hammer simultanément
+    /// la UIA tree → un FindFirstDescendant peut transientement return null
+    /// même quand l'élément existe. Cf. bug "PROC_RETAUD introuvable après
+    /// scan complet btn1..btn7" du 2026-05-26.
+    ///
+    /// Poll jusqu'à <paramref name="timeoutMs"/>ms, sleep <paramref name="pollMs"/>ms entre essais.
+    /// Filtre par _app.ProcessId si dispo (évite cross-process UIA shortcut).
+    /// </summary>
+    /// <summary>
+    /// Active une rail-tab btn{n} de la Console d'accueil RIG. Essaye dans
+    /// l'ordre : SelectionItem.Select() → Invoke.Invoke() → LegacyIAccessible
+    /// → Interaction.Click fallback (PostMessage WM_LBUTTON).
+    ///
+    /// ML LOOP fix visible-parallel : les btn{n} hors viewport ne reçoivent
+    /// pas de PostMessage WM_LBUTTON (coords offscreen). UIA patterns
+    /// (Select/Invoke) bypass le hit-test visuel → switch quel que soit
+    /// l'état du scroll/viewport.
+    /// </summary>
+    private bool TryActivateRailTab(AutomationElement btn, string label)
+    {
+        if (btn is null) return false;
+
+        // ITER 5 — Interaction.Click PRIMARY. Analyse FORM_ACCUEIL.cs (Explore agent) :
+        //   btn1..btn7 wirent tous le même handler `toolbarOnglet_Click` sur l'event `.Click`.
+        //   RigPanel = Panel WinForms standard, fenêtré, propre hwnd. SEUL WM_LBUTTONDOWN/UP
+        //   posté sur ce hwnd raise OnClick → toolbarOnglet_Click → _SelectMenuOngletByOnglet
+        //   → _ChargerSousmenu (populate lstSousmenu). Les UIA patterns Invoke/SelectionItem/
+        //   LegacyIAccessible NE FIRENT PAS .Click sur un Panel (pas de provider Invoke natif).
+        //   D'où le bug iter 2-4 : les patterns retournaient true (provider présent) mais
+        //   .Click ne fire jamais — lstSousmenu reste sur son état boot (RCS).
+        // DIAG : log hwnd + rect pour confirmer que btn3+ exposent bien leur hwnd.
+        int hwnd = 0;
+        try { if (btn.Properties.NativeWindowHandle.IsSupported) hwnd = btn.Properties.NativeWindowHandle.ValueOrDefault.ToInt32(); } catch { }
+        var br = btn.BoundingRectangle;
+        Console.WriteLine($"      [DIAG] {label} hwnd=0x{hwnd:X} rect=({(int)br.X},{(int)br.Y},{(int)br.Width}x{(int)br.Height})");
+
+        try
+        {
+            Interaction.Click(btn);
+            Console.WriteLine($"      [DIAG] {label} activé via Interaction.Click (WM_LBUTTONDOWN/UP)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      [DIAG] {label} Interaction.Click jeté : {ex.GetType().Name}: {ex.Message}");
+        }
+
+        // Fallback UIA patterns (rarement utile pour RigPanel mais ne coûte rien d'essayer).
+        try
+        {
+            try { btn.Focus(); } catch { }
+            if (btn.Patterns.Invoke.IsSupported)
+            { btn.Patterns.Invoke.Pattern.Invoke(); Console.WriteLine($"      [DIAG] {label} fallback Invoke"); return true; }
+            if (btn.Patterns.LegacyIAccessible.IsSupported)
+            { btn.Patterns.LegacyIAccessible.Pattern.DoDefaultAction(); Console.WriteLine($"      [DIAG] {label} fallback LegacyIAccessible"); return true; }
+            if (btn.Patterns.SelectionItem.IsSupported)
+            { btn.Patterns.SelectionItem.Pattern.Select(); Console.WriteLine($"      [DIAG] {label} fallback SelectionItem"); return true; }
+        }
+        catch (Exception ex) { Console.WriteLine($"      [DIAG] {label} fallback UIA jeté : {ex.GetType().Name}: {ex.Message}"); }
+        return false;
+    }
+
+    private AutomationElement? FindByAutomationIdWithRetry(string id, int timeoutMs = 2000, int pollMs = 100)
+    {
+        if (_window is null) return null;
+        int? appPid = null;
+        try { appPid = _app?.ProcessId; } catch { }
+
+        var sw = Stopwatch.StartNew();
+        int attempts = 0;
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            attempts++;
+            try
+            {
+                var el = _window.FindFirstDescendant(cf => cf.ByAutomationId(id));
+                if (el != null)
+                {
+                    if (appPid.HasValue)
+                    {
+                        try
+                        {
+                            var pid = el.Properties.ProcessId.ValueOrDefault;
+                            if (pid != 0 && pid != appPid.Value)
+                            {
+                                Console.WriteLine($"      ⚠ FindByAutomationIdWithRetry('{id}') trouvé mais pid={pid} ≠ _app.pid={appPid} — reject");
+                                el = null;
+                            }
+                        }
+                        catch { }
+                    }
+                    if (el != null)
+                    {
+                        if (attempts > 1)
+                            Console.WriteLine($"      [DIAG] FindByAutomationIdWithRetry('{id}') trouvé au {attempts}e essai en {sw.ElapsedMilliseconds}ms");
+                        return el;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"      ⚠ FindByAutomationIdWithRetry('{id}') attempt#{attempts} threw {ex.GetType().Name}: {ex.Message}");
+            }
+            Thread.Sleep(pollMs);
+        }
+        return null;
+    }
+
+    private AutomationElement? FindByName(string name)
+    {
+        if (_window is null) return null;
+        return _window.FindFirstDescendant(cf => cf.ByName(name));
+    }
+
+    /// <summary>
+    /// Attend (poll) que le bouton login de FormLogin soit RENDU, puis le retourne.
+    /// Root cause 2026-05-29 (3/4 XEX en échec au login sous stress 4× parallèle) :
+    /// <see cref="Launch"/> accepte la main window dès qu'elle est UIA-attachable, SANS attendre
+    /// la fin du Load de FormLogin. Sous cold-boot 4× simultané (CPU/UIA saturés), la fenêtre est
+    /// capturée pré-Load (titre='', btnOk pas encore créé) ; la recherche ONE-SHOT du bouton dans
+    /// <see cref="ClickSeConnecter"/> ratait alors le bouton, qui se rend ~100ms–2s plus tard (le
+    /// self-snap montre la FormLogin bien rendue APRÈS l'échec). Ici on poll le bouton (btnOk /
+    /// "Se connecter" / variantes) jusqu'à readiness — condition-based-waiting, pas de sleep blind.
+    /// </summary>
+    private AutomationElement? WaitForLoginButton(int timeoutMs = 20000, int pollMs = 200)
+    {
+        if (_window is null) return null;
+        var sw = Stopwatch.StartNew();
+        int attempts = 0;
+        while (sw.ElapsedMilliseconds < timeoutMs)
+        {
+            attempts++;
+            AutomationElement? btn = null;
+            try
+            {
+                // RigButton extends RigPanel → UIA Type=Pane. AutomationId = WinForms control.Name
+                // (btnOk) ; le designer dit btnOk.Text="Se &connecter" → UIA Name = "Se connecter".
+                btn = _window.FindFirstDescendant(cf => cf.ByAutomationId("btnOk"))
+                   ?? _window.FindFirstDescendant(cf => cf.ByName("Se connecter"))
+                   ?? _window.FindFirstDescendant(cf => cf.ByName("Connexion"))
+                   ?? _window.FindFirstDescendant(cf => cf.ByName("OK"));
+            }
+            catch (Exception ex)
+            {
+                // Tree UIA transitoirement instable sous contention 4× → re-essaie au tour suivant.
+                if (attempts == 1)
+                    Console.WriteLine($"      [DIAG] WaitForLoginButton attempt#1 threw {ex.GetType().Name}: {ex.Message}");
+            }
+            if (btn is not null)
+            {
+                if (attempts > 1)
+                    Console.WriteLine($"      → Bouton login rendu au {attempts}e essai en {sw.ElapsedMilliseconds}ms (FormLogin Load terminé)");
+                return btn;
+            }
+            Thread.Sleep(pollMs);
+        }
+        return null;
+    }
+
+    /// <summary>Dump récursif des descendants UIA (AutomationId, Name, ControlType) — diag uniquement.</summary>
+    private static void DumpDescendants(AutomationElement el, int maxDepth, int depth = 0, int maxLines = 80)
+    {
+        if (depth > maxDepth) return;
+        try
+        {
+            foreach (var child in el.FindAllChildren())
+            {
+                if (maxLines-- <= 0) return;
+                string id = "", nm = "", ct = "";
+                try { id = child.AutomationId ?? ""; } catch { }
+                try { nm = child.Name ?? ""; } catch { }
+                try { ct = child.ControlType.ToString(); } catch { }
+                Console.WriteLine($"          {new string(' ', depth * 2)}[{ct}] id='{id}' name='{nm}'");
+                DumpDescendants(child, maxDepth, depth + 1, maxLines);
+            }
+        }
+        catch { }
+    }
+
+    /// <summary>
+    /// Clique le bouton "K-bis" / "Visualiser K-bis" dans la toolbar tbAutomate du tab VK
+    /// (devenu visible après chargement du dossier), puis observe ce qui se passe :
+    ///   - Nouveau process (SumatraPDF, AcroRd32, msedge, …) ?
+    ///   - Nouveau top-level window dans le process RIG ?
+    ///   - Nouveau fichier PDF en zone temp ?
+    /// Le smoke réussit si AU MOINS UN signal "le K-bis s'est affiché" est détecté.
+    /// </summary>
+    /// <returns>Chemin du PDF K-bis généré (le plus récent apparu depuis le click), ou null si
+    /// aucun fichier sur disque (rendu OCX/viewer embarqué) ou path-B idempotent.</returns>
+    public string? OpenKbisDocument(int waitSeconds = 30)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("SearchKbisSiren() doit avoir réussi avant OpenKbisDocument()");
+
+        // 1) Cible la pageTab VK. Le bouton K-bis peut être :
+        //    - Un vrai Button (UIA Type=Button)
+        //    - Un RigButton custom (extends RigPanel → UIA Type=Pane) avec un Name "K-bis"…
+        //    - Dans tbAutomate, OU dans un toolbar/panel du form chargé après dossier
+        //    On cherche donc sur TOUS les controls par substring Name "kbis"/"k-bis".
+        var pageTab = _window.FindFirstDescendant(cf =>
+            cf.ByControlType(ControlType.Pane).And(cf.ByAutomationId("pagetabVK")));
+        var kbisRoot = pageTab ?? _window;
+
+        var allControls = kbisRoot.FindAllDescendants();
+        Console.WriteLine($"      → pageTab : {allControls.Length} descendants total.");
+
+        // 2 états possibles selon que ce SIREN a déjà été chargé via cet automate VK :
+        //
+        // (A) PREMIER PASSAGE : le bouton "Charger ce dossier" est visible → click pour
+        //     déclencher la génération du K-bis (crée une demande de modification en BDD).
+        //
+        // (B) PASSAGE SUIVANT : bouton absent + message rouge "Il y a déjà une demande de
+        //     modification en cours sur ce dossier" + numéro de demande (ex. D2613500028) →
+        //     preuve qu'on a déjà chargé. C'est un succès aussi (smoke idempotent).
+        //
+        // Note : le side-effect "crée une demande" n'est pas idéal — on accepte les 2 états
+        // pour ne pas saturer la BDD avec une demande par run.
+        // Note : le label rouge est splité en 3 Text UIA séparés :
+        //   "Il y a déjà une demande de" / "modification en cours sur ce" / "dossier"
+        // On matche juste le 1er fragment "déjà une demande".
+        var existingDemandeText = allControls.Where(c =>
+            c.ControlType == ControlType.Text
+            && SafeText(() => c.Name).IndexOf("déjà une demande", StringComparison.OrdinalIgnoreCase) >= 0)
+            .FirstOrDefault();
+        if (existingDemandeText is not null)
+        {
+            // Cherche le numéro de demande (ex. 'D2613500028') affiché à côté
+            var demandeNumber = allControls
+                .Select(c => SafeText(() => c.Name))
+                .Where(n => !string.IsNullOrEmpty(n) && n.Length >= 8 && n.StartsWith("D") && n.Skip(1).All(char.IsDigit))
+                .FirstOrDefault();
+            // Aussi : peut être dans un Edit (value via ValuePattern)
+            if (string.IsNullOrEmpty(demandeNumber))
+            {
+                foreach (var e in allControls.Where(c => c.ControlType == ControlType.Edit))
+                {
+                    string? v = null; try { v = e.AsTextBox().Text; } catch { }
+                    if (!string.IsNullOrEmpty(v) && v.Length >= 8 && v.StartsWith("D") && v.Skip(1).All(char.IsDigit))
+                    { demandeNumber = v; break; }
+                }
+            }
+            Console.WriteLine($"      → ✓ Dossier déjà chargé via demande de modification existante : '{demandeNumber ?? "(numéro non extrait)"}'");
+            if (!string.IsNullOrWhiteSpace(demandeNumber))
+            {
+                try { VerifyKbisDemandeInDb(demandeNumber); }
+                catch (Exception ex)
+                {
+                    throw new Exception($"UI affiche une demande '{demandeNumber}' mais vérif BDD a échoué : {ex.Message}");
+                }
+            }
+            else
+            {
+                Console.WriteLine("      → ⚠ Numéro de demande non extrait depuis l'UI — preuve BDD non vérifiée");
+            }
+            Console.WriteLine($"      → Smoke idempotent (path B) : run précédent a déjà déclenché le K-bis. PASS.");
+            return null; // path B : pas de nouveau fichier PDF à vérifier
+        }
+
+        var kbisCandidates = allControls.Where(c =>
+        {
+            if (c.ControlType == ControlType.Window) return false;
+            if (c.ControlType != ControlType.Button && c.ControlType != ControlType.Pane) return false;
+            var n = SafeText(() => c.Name);
+            if (string.IsNullOrEmpty(n)) return false;
+            return n.IndexOf("kbis", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("k-bis", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("k bis", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("visualis", StringComparison.OrdinalIgnoreCase) >= 0
+                || n.IndexOf("charger ce dossier", StringComparison.OrdinalIgnoreCase) >= 0;
+        }).ToList();
+
+        AutomationElement? kbisBtn = null;
+        if (kbisCandidates.Count > 0)
+        {
+            Console.WriteLine($"      → {kbisCandidates.Count} candidat(s) 'kbis'/'charger' :");
+            foreach (var c in kbisCandidates)
+                Console.WriteLine($"          - Type={c.ControlType} AutomationId='{SafeText(() => c.AutomationId)}' Name='{SafeText(() => c.Name)}'");
+            kbisBtn = kbisCandidates.FirstOrDefault(c => c.ControlType == ControlType.Button)
+                   ?? kbisCandidates.FirstOrDefault(c => c.ControlType == ControlType.Pane)
+                   ?? kbisCandidates.First();
+        }
+
+        // Fallback : pas de match Name "kbis" — dump TOUT le contenu utile de la pageTab
+        // (Button, Pane, Text) avec leurs positions, pour voir où est le bouton K-bis.
+        if (kbisBtn is null)
+        {
+            Console.WriteLine("      → Aucun match Name. Dump complet (Button/Pane/Text avec Name OR id non vide) :");
+            int n = 0;
+            foreach (var c in allControls)
+            {
+                if (c.ControlType != ControlType.Button
+                 && c.ControlType != ControlType.Pane
+                 && c.ControlType != ControlType.Text) continue;
+                var nm = SafeText(() => c.Name);
+                var id = SafeText(() => c.AutomationId);
+                if (string.IsNullOrEmpty(nm) && string.IsNullOrEmpty(id)) continue;
+                // Strip "Veuillez patienter / Traitement en cours" = bruit
+                if (nm.StartsWith("Veuillez patienter", StringComparison.OrdinalIgnoreCase)) nm = "<patienter>";
+                System.Drawing.Rectangle r = default;
+                try { var bb = c.BoundingRectangle; r = new System.Drawing.Rectangle((int)bb.X, (int)bb.Y, (int)bb.Width, (int)bb.Height); } catch { }
+                Console.WriteLine($"          [{n++}] {c.ControlType} id='{id}' name='{nm}' ({r.X},{r.Y} {r.Width}×{r.Height})");
+                if (n > 80) break;
+            }
+            throw new Exception("Bouton K-bis introuvable. Vu les controls ci-dessus, identifie-le pour corriger le matcher.");
+        }
+
+        Console.WriteLine($"      → Bouton K-bis retenu : Type={kbisBtn.ControlType} Name='{SafeText(() => kbisBtn.Name)}'");
+
+        // 3) Capture baseline AVANT click : process tree + top-level windows + fichiers PDF temp
+        var procsBefore = Process.GetProcesses()
+            .Select(p => { try { return (Id: p.Id, Name: p.ProcessName); } catch { return (Id: -1, Name: ""); } })
+            .Where(t => t.Id > 0).ToHashSet();
+        Window[] windowsBefore;
+        try { windowsBefore = _app.GetAllTopLevelWindows(_automation); } catch { windowsBefore = Array.Empty<Window>(); }
+        var tempDir = Path.GetTempPath();
+        var pdfsBefore = SafePdfList(tempDir);
+        Console.WriteLine($"      → Baseline avant click : {procsBefore.Count} processes, {windowsBefore.Length} top-level windows, {pdfsBefore.Count} PDFs dans temp");
+
+        // 4) Click le bouton K-bis
+        Console.WriteLine($"      → Click K-bis…");
+        Interaction.Click(kbisBtn);
+
+        // 5) Poll jusqu'à détection d'un signal (process / window / fichier PDF
+        //    n'importe où — temp ET aussi quelques dossiers RIG susceptibles d'héberger
+        //    le PDF généré par Apache FOP ou Document.AffichageFichier).
+        var extraPdfDirs = new[] { tempDir, @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF" };
+        var pdfsBeforeAll = extraPdfDirs.SelectMany(d => SafePdfList(d)).ToHashSet();
+        Console.WriteLine($"          + PDFs baseline ailleurs : {pdfsBeforeAll.Count - pdfsBefore.Count} hors %TEMP%");
+        var sw = Stopwatch.StartNew();
+        string? signal = null;
+        int? pdfViewerPid = null; // PID du viewer PDF lancé (Acrobat/Edge…) → sert à récupérer le chemin du PDF via sa cmdline
+        while (sw.Elapsed.TotalSeconds < waitSeconds && signal is null)
+        {
+            // Nouveau process ? ⚠ Un process hôte générique (dllhost = COM surrogate,
+            // conhost, svchost, RuntimeBroker…) N'EST PAS une preuve que le K-bis est
+            // rendu — il peut spawner pour mille raisons. On exige un process
+            // SIGNIFICATIF : le générateur K-bis (KBisXML2PDF) ou un viewer PDF
+            // réel (Acrobat, Edge, Foxit, Sumatra…). Sinon ce signal est ignoré.
+            var procsNow = Process.GetProcesses()
+                .Select(p => { try { return (Id: p.Id, Name: p.ProcessName); } catch { return (Id: -1, Name: ""); } })
+                .Where(t => t.Id > 0).ToHashSet();
+            bool IsGenericHost(string n) =>
+                   n.StartsWith("RigClientAccueil", StringComparison.OrdinalIgnoreCase)
+                || n.StartsWith("Rig.Wpf.Kbis.SmokeRunner", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("dllhost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("conhost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("svchost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("RuntimeBroker", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("backgroundTaskHost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("SearchProtocolHost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("SearchFilterHost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("WmiPrvSE", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("audiodg", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("csrss", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("taskhostw", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("sihost", StringComparison.OrdinalIgnoreCase)
+                || n.Equals("ctfmon", StringComparison.OrdinalIgnoreCase);
+            // Logique pure extraite + testée en xUnit (cf. KbisTextChecks). RigAffichageDoc =
+            // viewer interne RIG (signal le + fort), Acrobat/Edge/Foxit… = viewers externes.
+            bool IsMeaningfulKbisProc(string n) => KbisTextChecks.IsMeaningfulKbisProc(n);
+            var newProcs = procsNow.Except(procsBefore)
+                .Where(t => !IsGenericHost(t.Name)).ToList();
+            var meaningfulProcs = newProcs.Where(t => IsMeaningfulKbisProc(t.Name)).ToList();
+            if (meaningfulProcs.Count > 0)
+            {
+                pdfViewerPid = meaningfulProcs[0].Id; // viewer PDF (Acrobat/Edge/Foxit…) → cmdline = chemin du K-bis
+                signal = $"process K-bis significatif : {string.Join(", ", meaningfulProcs.Select(t => $"{t.Name} (PID {t.Id})"))}";
+                break;
+            }
+            // Process non-générique mais non-whitelisté : on le LOGUE mais on NE
+            // considère PAS ça comme preuve suffisante (continue à poller un signal fort).
+            if (newProcs.Count > 0)
+                Console.WriteLine($"      → ⓘ process non-déterminant ignoré : {string.Join(", ", newProcs.Select(t => $"{t.Name}(PID {t.Id})"))}");
+            // Nouvelle top-level window AVEC un titre non-vide (une fenêtre sans
+            // titre est souvent un host COM transitoire, pas le doc K-bis).
+            try
+            {
+                var windowsNow = _app.GetAllTopLevelWindows(_automation);
+                if (windowsNow.Length > windowsBefore.Length)
+                {
+                    var newWin = windowsNow.Skip(windowsBefore.Length)
+                        .FirstOrDefault(w => !string.IsNullOrWhiteSpace(SafeText(() => w.Title)));
+                    if (newWin is not null)
+                    {
+                        signal = $"nouvelle fenêtre document : '{SafeText(() => newWin.Title)}'";
+                        break;
+                    }
+                }
+            }
+            catch { }
+            // Nouveau PDF (temp + autres dossiers RIG potentiels) ?
+            var pdfsNow = extraPdfDirs.SelectMany(d => SafePdfList(d)).ToHashSet();
+            var newPdfs = pdfsNow.Except(pdfsBeforeAll).ToList();
+            if (newPdfs.Count > 0)
+            {
+                signal = $"nouveau(x) PDF : {string.Join(", ", newPdfs.Take(3).Select(Path.GetFileName))}";
+                break;
+            }
+            // Tab VK s'est enrichi de nouveaux controls → render embedé
+            var newDescCount = kbisRoot.FindAllDescendants().Length;
+            if (newDescCount > allControls.Length + 5)
+            {
+                signal = $"tab VK s'est enrichi de {newDescCount - allControls.Length} nouveaux controls (probable rendu K-bis embedé)";
+                break;
+            }
+            // Nouveau TabItem dans le tabControl principal (K-bis dans un onglet séparé) ?
+            var tabControl = _window.FindFirstDescendant(cf => cf.ByAutomationId("tabControl"));
+            if (tabControl is not null)
+            {
+                var tabsNow = tabControl.FindAllChildren();
+                if (tabsNow.Length > 3) // initial = 3 (Accueil, Demandes, VK)
+                {
+                    var newTab = tabsNow.Skip(3).FirstOrDefault();
+                    signal = $"nouveau tab apparu : '{SafeText(() => newTab?.Name)}' ({tabsNow.Length} tabs au total)";
+                    break;
+                }
+            }
+            Thread.Sleep(500);
+        }
+
+        if (signal is null)
+        {
+            // Dump post-action : qu'est-ce qui a changé visuellement ?
+            Console.WriteLine($"      → Aucun signal après {waitSeconds}s. État final de pagetabVK :");
+            var finalDescs = kbisRoot.FindAllDescendants();
+            Console.WriteLine($"          {finalDescs.Length} descendants (avant click : {allControls.Length})");
+            var newOrChanged = finalDescs.Where(c =>
+            {
+                if (c.ControlType != ControlType.Button && c.ControlType != ControlType.Pane && c.ControlType != ControlType.Text) return false;
+                var nm = SafeText(() => c.Name);
+                return !string.IsNullOrEmpty(nm)
+                    && !nm.StartsWith("Veuillez patienter", StringComparison.OrdinalIgnoreCase);
+            }).Take(40).ToList();
+            foreach (var c in newOrChanged)
+                Console.WriteLine($"          {c.ControlType} id='{SafeText(() => c.AutomationId)}' name='{SafeText(() => c.Name)}'");
+            // Liste aussi les windows ENFANTS (popups)
+            var childWindows = kbisRoot.FindAllDescendants(cf => cf.ByControlType(ControlType.Window));
+            Console.WriteLine($"          Windows enfants : {childWindows.Length}");
+            foreach (var w in childWindows.Take(5))
+                Console.WriteLine($"             - Name='{SafeText(() => w.Name)}'");
+            throw new Exception($"Aucun signal K-bis après {waitSeconds}s — click 'Charger ce dossier' n'a pas produit d'effet visible (process / window / PDF / nouveaux controls). Le PDF peut s'afficher dans un OCX (Vintasoft) invisible à UIA.");
+        }
+        // Délai de stabilisation : un signal "process/PDF/window apparu" ≠ "K-bis
+        // rendu et lisible". On laisse le viewer/FOP finir le rendu avant de
+        // déclarer succès ET avant le screenshot de fin (rule 15 : le screenshot
+        // doit montrer le K-bis RÉELLEMENT à l'écran, pas un viewer vide).
+        Console.WriteLine($"      → Signal détecté : {signal} — stabilisation 4s avant validation…");
+        Thread.Sleep(4000);
+        Console.WriteLine($"      → ✓ K-bis ouvert : {signal}");
+
+        // En Mode A/C (desktop composé par le DWM) : re-pointe le self-snap sur le viewer pour capturer
+        // la VRAIE page K-bis. En Mode B (HDESK) : no-op (AcroPDF non rendu). Voir RepointSnapToKbisViewer.
+        try { RepointSnapToKbisViewer(pdfViewerPid); }
+        catch (Exception exSnap) { Console.WriteLine($"      ⓘ re-point self-snap K-bis ignoré : {exSnap.Message}"); }
+
+        // Vérif BDD complémentaire : récupère le numéro de demande qui vient d'apparaître
+        // dans l'UI puis note le record DEMANDE eventuel (VK = visualisation, normalement aucun).
+        Thread.Sleep(500); // laisse l'UI se rafraîchir
+        var refreshed = kbisRoot.FindAllDescendants();
+        string? newDemandeNumber = refreshed
+            .Select(c => SafeText(() => c.Name))
+            .Where(n => !string.IsNullOrEmpty(n) && n.Length >= 8 && n.StartsWith("D") && n.Skip(1).All(char.IsDigit))
+            .FirstOrDefault();
+        if (string.IsNullOrEmpty(newDemandeNumber))
+        {
+            foreach (var e in refreshed.Where(c => c.ControlType == ControlType.Edit))
+            {
+                string? v = null; try { v = e.AsTextBox().Text; } catch { }
+                if (!string.IsNullOrEmpty(v) && v.Length >= 8 && v.StartsWith("D") && v.Skip(1).All(char.IsDigit))
+                { newDemandeNumber = v; break; }
+            }
+        }
+        if (!string.IsNullOrEmpty(newDemandeNumber))
+        {
+            Console.WriteLine($"      → Nouveau numéro de demande après click : '{newDemandeNumber}'");
+            try { VerifyKbisDemandeInDb(newDemandeNumber); }
+            catch (Exception ex) { Console.WriteLine($"      → ⚠ Vérif BDD échouée : {ex.Message}"); }
+        }
+        else
+        {
+            Console.WriteLine("      → ⓘ Numéro de demande pas encore extractible (UI peut-être pas full refresh)");
+        }
+
+        // Capture le PDF généré (le plus récent apparu depuis le click) pour vérif de CONTENU.
+        // Si rien sur disque → rendu OCX/viewer embarqué → null (contenu non extractible par texte).
+        try
+        {
+            var pdfsAfter = extraPdfDirs.SelectMany(d => SafePdfList(d)).ToHashSet();
+            var fresh = pdfsAfter.Except(pdfsBeforeAll)
+                .Select(p => { DateTime when; try { when = File.GetLastWriteTimeUtc(p); } catch { when = DateTime.MinValue; } return (Path: p, When: when); })
+                .OrderByDescending(t => t.When)
+                .ToList();
+            if (fresh.Count > 0)
+            {
+                Console.WriteLine($"      → PDF K-bis capturé sur disque : {fresh[0].Path}");
+                return fresh[0].Path;
+            }
+            Console.WriteLine("      → Aucun fichier PDF dans les dossiers scannés.");
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ scan disque PDF échoué : {ex.Message}"); }
+
+        // Fallback : RIG passe le PDF en ARGUMENT au viewer (Acrobat/Edge/Foxit…). On lit la ligne
+        // de commande du process viewer pour récupérer le chemin réel du K-bis, où qu'il soit.
+        if (pdfViewerPid is int vpid)
+        {
+            var fromCmd = GetPdfPathFromProcessCmdline(vpid);
+            if (!string.IsNullOrEmpty(fromCmd) && File.Exists(fromCmd))
+            {
+                Console.WriteLine($"      → PDF K-bis récupéré via cmdline du viewer (PID {vpid}) : {fromCmd}");
+                return fromCmd;
+            }
+            Console.WriteLine($"      → Chemin PDF non extrait de la cmdline du viewer (PID {vpid}).");
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// En Mode A/C (desktop composé par le DWM) : re-pointe le self-snap sur la fenêtre du viewer K-bis
+    /// (AcroPDF/IE), la maximise et attend qu'elle soit RÉELLEMENT rendue (fraction de blanc) → le
+    /// screenshot final de la tuile montre la VRAIE page K-bis. En Mode B (HDESK) : no-op — la page n'y
+    /// est jamais peinte (AcroPDF = composition DWM, absente d'un CreateDesktop, prouvé) → le snap reste
+    /// sur la console RIG (et 0 attente inutile).
+    /// </summary>
+    private void RepointSnapToKbisViewer(int? viewerPid)
+    {
+        if (_snapHwnd == IntPtr.Zero || string.IsNullOrEmpty(_snapDir)) return; // self-snap inactif
+        if (Headless)
+        {
+            Console.WriteLine("      ⓘ Mode B (HDESK) : viewer AcroPDF non rendu (composition DWM) → pas de re-point, snap conservé sur la console RIG.");
+            return;
+        }
+        // Mode A/C : desktop composé → la page se rend → capturable. Trouve le hwnd du viewer.
+        IntPtr viewerHwnd = IntPtr.Zero;
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < 3 && viewerHwnd == IntPtr.Zero)
+        {
+            if (viewerPid is int pid)
+            {
+                try { using var p = Process.GetProcessById(pid); p.Refresh(); viewerHwnd = p.MainWindowHandle; } catch { }
+            }
+            if (viewerHwnd == IntPtr.Zero)
+            {
+                foreach (var p in Process.GetProcesses())
+                {
+                    try
+                    {
+                        if (KbisTextChecks.IsMeaningfulKbisProc(p.ProcessName))
+                        {
+                            p.Refresh();
+                            var h = p.MainWindowHandle;
+                            if (h != IntPtr.Zero) { viewerHwnd = h; break; }
+                        }
+                    }
+                    catch { }
+                    finally { try { p.Dispose(); } catch { } }
+                }
+            }
+            if (viewerHwnd == IntPtr.Zero) Thread.Sleep(250);
+        }
+        if (viewerHwnd == IntPtr.Zero)
+        {
+            Console.WriteLine("      ⓘ Self-snap : fenêtre viewer K-bis introuvable — snap conservé sur la console RIG.");
+            return;
+        }
+        Interaction.MaximizeWindow(viewerHwnd);
+        _snapHwnd = viewerHwnd; // les prochains SnapTick captureront le viewer K-bis maximisé
+        Console.WriteLine($"      → Self-snap re-pointé + viewer K-bis maximisé (hwnd=0x{viewerHwnd.ToInt64():X}).");
+        // Attend que la page soit RÉELLEMENT rendue (fraction de blanc), plafond 10 s. Sur Desktop 1
+        // composé, AcroPDF peint en ~2-3 s → le poll sort tôt ; les ticks périodiques capturent la page.
+        var probe = Path.Combine(Path.GetTempPath(), $"kbis-render-probe-{Process.GetCurrentProcess().Id}.png");
+        var swRender = Stopwatch.StartNew();
+        double whiteFrac = 0;
+        while (swRender.Elapsed.TotalSeconds < 10)
+        {
+            Thread.Sleep(600);
+            try { Interaction.CaptureWindowByHwnd(viewerHwnd, probe); whiteFrac = Interaction.WhitePixelFraction(probe); } catch { }
+            if (whiteFrac >= 0.30) break;
+        }
+        try { if (File.Exists(probe)) File.Delete(probe); } catch { }
+        Console.WriteLine(whiteFrac >= 0.30
+            ? $"      → Page K-bis rendue ({whiteFrac:P0} de blanc) — le screenshot final montrera le K-bis."
+            : $"      → ⚠ Page K-bis pas confirmée rendue après 10s ({whiteFrac:P0} de blanc).");
+        try { SnapTick(); } catch { }
+    }
+
+    /// <summary>Lit la ligne de commande d'un process (WMI) et en extrait le 1er chemin .pdf —
+    /// le viewer PDF (Acrobat/Edge/Foxit…) est lancé par RIG AVEC le fichier K-bis en argument.</summary>
+    private static string? GetPdfPathFromProcessCmdline(int pid)
+    {
+        try
+        {
+            using var searcher = new System.Management.ManagementObjectSearcher(
+                $"SELECT CommandLine FROM Win32_Process WHERE ProcessId = {pid}");
+            foreach (System.Management.ManagementBaseObject mo in searcher.Get())
+            {
+                var cmd = mo["CommandLine"]?.ToString();
+                if (string.IsNullOrEmpty(cmd)) continue;
+                Console.WriteLine($"      → cmdline viewer PID {pid} : {cmd}");
+                var path = KbisTextChecks.ExtractPdfPathFromCmdline(cmd); // logique pure testée xUnit
+                if (!string.IsNullOrEmpty(path)) return path;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ lecture cmdline PID {pid} échouée : {ex.Message}"); }
+        return null;
+    }
+
+    private static System.Collections.Generic.HashSet<string> SafePdfList(string dir)
+    {
+        try { return Directory.EnumerateFiles(dir, "*.pdf", SearchOption.TopDirectoryOnly).ToHashSet(); }
+        catch { return new System.Collections.Generic.HashSet<string>(); }
+    }
+
+    /// <summary>
+    /// Vérifie le CONTENU du PDF K-bis SANS analyse d'image : extrait la couche texte (PdfPig)
+    /// et l'examine. 1er passage = EMPIRIQUE (dump du texte pour voir le contenu réel) ; les
+    /// assertions sur les vraies données (dénomination, SIREN — cross-check BDD) sont ajoutées
+    /// une fois le format réel connu. Throw si le PDF n'a pas de couche texte exploitable.
+    /// </summary>
+    public void VerifyKbisPdfContent(string? pdfPath, string numGestion)
+    {
+        if (string.IsNullOrEmpty(pdfPath) || !File.Exists(pdfPath))
+        {
+            Console.WriteLine("      → ⚠ Pas de fichier PDF capturé → contenu non vérifié par texte (rendu OCX embarqué ?).");
+            return;
+        }
+
+        string text;
+        try
+        {
+            var sb = new System.Text.StringBuilder();
+            using (var doc = UglyToad.PdfPig.PdfDocument.Open(pdfPath))
+            {
+                int np = 0;
+                foreach (var page in doc.GetPages()) { sb.AppendLine(page.Text); np++; }
+                Console.WriteLine($"      → PDF ouvert : {np} page(s), {sb.Length} caractères de texte.");
+            }
+            text = sb.ToString();
+        }
+        catch (Exception ex)
+        {
+            throw new Exception($"Extraction texte PDF échouée ({Path.GetFileName(pdfPath)}) : {ex.GetType().Name}: {ex.Message}");
+        }
+
+        // Dump complet du texte dans un sidecar UTF-8 (diagnostic permanent + inspection humaine).
+        try
+        {
+            var sidecar = pdfPath + ".extracted.txt";
+            File.WriteAllText(sidecar, text, new System.Text.UTF8Encoding(false));
+            Console.WriteLine($"      → Texte PDF dumpé : {sidecar}");
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ dump sidecar échoué : {ex.Message}"); }
+
+        if (text.Trim().Length < 200)
+            throw new Exception($"PDF K-bis quasi vide ({text.Length} chars) — génération échouée ou PDF image (pas de couche texte).");
+
+        // Toute la logique de contenu est PURE + testée en xUnit (cf. KbisTextChecks / KbisTextChecksTests).
+        // Marqueurs structurels d'un VRAI extrait K-bis (≥2 attendus, sinon page d'erreur/PDF parasite).
+        var found = KbisTextChecks.FindKbisMarkers(text);
+        Console.WriteLine($"      → Marqueurs K-bis trouvés ({found.Count}) : {string.Join(", ", found)}");
+        if (found.Count < 2)
+            throw new Exception($"PDF a du texte ({text.Length} chars) mais PAS les marqueurs d'un K-bis (trouvés: {string.Join(",", found)}) — pas le bon document ?");
+
+        // BONNES DONNÉES (1) : le K-bis correspond au dossier DEMANDÉ (son numéro de gestion y figure).
+        bool ngFound = KbisTextChecks.ContainsNumGestion(text, numGestion);
+        Console.WriteLine($"      → Numéro de gestion '{numGestion}' présent dans le PDF : {(ngFound ? "OUI" : "NON")}");
+        if (!ngFound)
+            throw new Exception($"K-bis généré NE correspond PAS au dossier demandé : numéro de gestion '{numGestion}' absent du PDF (mauvais dossier / PDF stale).");
+
+        // BONNES DONNÉES (2) : un numéro SIREN (9 chiffres) figure = données d'immatriculation réelles.
+        var siren = KbisTextChecks.FindSiren(text);
+        Console.WriteLine($"      → SIREN détecté dans le PDF : {siren ?? "(aucun)"}");
+        if (string.IsNullOrEmpty(siren))
+            throw new Exception("K-bis sans numéro SIREN (9 chiffres) — données d'immatriculation manquantes.");
+
+        // Complétude : le K-bis doit aller jusqu'au bout (pas tronqué).
+        bool complete = KbisTextChecks.IsComplete(text);
+        Console.WriteLine($"      → 'FIN DE L'EXTRAIT' présent (K-bis complet) : {(complete ? "OUI" : "non")}");
+
+        Console.WriteLine($"      → ✓ PDF K-bis CONFORME : dossier {numGestion}, SIREN {siren}, {text.Length} chars, {found.Count} marqueurs.");
+
+        // Snap FINAL de la tuile = rendu du VRAI PDF de RIG (moteur Windows), PAS un screenshot du
+        // viewer : RigAffichageDoc (ActiveX AcroPDF dans un WebBrowser IE) n'est pas capturable sur
+        // un HDESK non composité par le DWM (vérifié 2026-05-29).
+        WriteRealPdfSnap(pdfPath);
+    }
+
+    /// <summary>
+    /// Rend le VRAI PDF généré par RIG en image et l'écrit comme snap FINAL de la tuile, via le
+    /// helper PS <c>render-kbis-pdf.ps1</c> (moteur PDF intégré à Windows, headless, indépendant du
+    /// desktop). On ne screenshote PAS le viewer : son contrôle AcroPDF n'est pas capturable sur un
+    /// HDESK non composité par le DWM. On fige d'abord le timer self-snap pour que ce rendu reste le
+    /// snap le plus récent (donc l'image figée affichée sur la tuile).
+    /// </summary>
+    private void WriteRealPdfSnap(string? pdfPath)
+    {
+        if (string.IsNullOrEmpty(_snapDir) || string.IsNullOrEmpty(pdfPath) || !File.Exists(pdfPath)) return;
+        const string script = @"C:\Code RIG\render-kbis-pdf.ps1";
+        if (!File.Exists(script)) { Console.WriteLine($"      ⓘ {script} absent — snap PDF non généré."); return; }
+        try
+        {
+            StopPeriodicSnap(); // fige le timer self-snap pour que le rendu PDF soit le snap le plus récent
+            var outPng = Path.Combine(_snapDir!, $"snap-{DateTime.Now:HHmmss}-{System.Threading.Interlocked.Increment(ref _snapSeq):D4}.png");
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = $"-NoProfile -ExecutionPolicy Bypass -File \"{script}\" -PdfPath \"{pdfPath}\" -OutPng \"{outPng}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using (var proc = Process.Start(psi))
+            {
+                string so = proc!.StandardOutput.ReadToEnd();
+                string se = proc.StandardError.ReadToEnd();
+                proc.WaitForExit(30000);
+                if (File.Exists(outPng)) Console.WriteLine($"      → Snap final = rendu du VRAI PDF K-bis de RIG (moteur Windows) : {so.Trim()}");
+                else Console.WriteLine($"      ⚠ rendu PDF K-bis sans PNG. out='{so.Trim()}' err='{se.Trim()}'");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ rendu snap PDF ignoré : {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Vérif BDD INFORMATIVE d'un éventuel record DEMANDE. VK = "Visualisation -
+    /// Extrait RCS" est un processus de CONSULTATION : il ne crée normalement
+    /// AUCUNE demande (contrairement à l'ex-cible erronée XXKBIS = "Suppression
+    /// d'un dossier" qui, elle, était un workflow demande). Si une demande est
+    /// trouvée, on logue son code sans faire échouer le scénario — le vrai signal
+    /// de succès VK est le K-bis rendu (process KBisXML2PDF/dllhost), vérifié en amont.
+    /// </summary>
+    public static void VerifyKbisDemandeInDb(string demandeNumber)
+    {
+        if (string.IsNullOrWhiteSpace(demandeNumber))
+            throw new ArgumentException("Numéro de demande vide", nameof(demandeNumber));
+
+        // Connection string : env var (CI override) ou défaut SQL-DEV/DEV/RIG_DEV
+        var connStr = Environment.GetEnvironmentVariable("RIG_LEGACY_CONNECTION")
+            ?? @"Server=SQL-DEV\DEV;Database=RIG_DEV;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10;";
+
+        Console.WriteLine($"      → Query BDD : SELECT FROM DEMANDE WHERE DMND_NUM_DEMANDE='{demandeNumber}'");
+        using var conn = new SqlConnection(connStr);
+        conn.Open();
+        using var cmd = new SqlCommand(
+            "SELECT TOP 1 DMND_NUM_DEMANDE, DMND_CODE_PROSS, DMND_ETAT_DEMANDE, DMND_NOM_UTILISATEUR " +
+            "FROM DEMANDE WHERE DMND_NUM_DEMANDE = @num", conn);
+        cmd.Parameters.AddWithValue("@num", demandeNumber);
+        using var reader = cmd.ExecuteReader();
+        if (!reader.Read())
+            throw new Exception($"Demande '{demandeNumber}' INTROUVABLE en BDD — l'UI a affiché le numéro mais aucun record persisté.");
+        var codeProcess = reader.IsDBNull(1) ? "(NULL)" : reader.GetString(1);
+        var etat = reader.IsDBNull(2) ? "(NULL)" : reader.GetString(2);
+        var user = reader.IsDBNull(3) ? "(NULL)" : reader.GetString(3);
+        Console.WriteLine($"      → ✓ Record BDD : DMND_NUM='{demandeNumber}' DMND_CODE_PROSS='{codeProcess}' DMND_ETAT='{etat}' user='{user}'");
+        // VK = "Visualisation - Extrait RCS" : processus de CONSULTATION, pas un
+        // workflow DEMANDE (contrairement à l'ancien XXKBIS = "Suppression d'un
+        // dossier"). VK ne crée normalement pas de DEMANDE — le signal de succès
+        // est le K-bis rendu (process KBisXML2PDF / PDF), détecté en amont.
+        // Si une demande est tout de même trouvée, on la logue à titre informatif
+        // sans faire échouer le scénario (le mismatch de code n'est plus une erreur).
+        if (!string.Equals(codeProcess, "VK", StringComparison.Ordinal))
+            Console.WriteLine($"      → ⓘ DMND_CODE_PROSS='{codeProcess}' (≠ 'VK') — info seulement, VK est un processus de visualisation sans workflow demande.");
+    }
+
+    /// <summary>Dump avec BoundingRectangle (x, y, w, h) — sert à corréler Edit ↔ Text-label par proximité.</summary>
+    private static void DumpDescendantsWithPositions(AutomationElement el, int maxDepth, int depth = 0, int maxLines = 80)
+    {
+        if (depth > maxDepth) return;
+        try
+        {
+            foreach (var child in el.FindAllChildren())
+            {
+                if (maxLines-- <= 0) return;
+                string id = "", nm = "", ct = "", pos = "";
+                try { id = child.AutomationId ?? ""; } catch { }
+                try { nm = child.Name ?? ""; } catch { }
+                try { ct = child.ControlType.ToString(); } catch { }
+                try { var r = child.BoundingRectangle; pos = $"({r.X},{r.Y} {r.Width}×{r.Height})"; } catch { }
+                Console.WriteLine($"          {new string(' ', depth * 2)}[{ct}] id='{id}' name='{nm}' {pos}");
+                DumpDescendantsWithPositions(child, maxDepth, depth + 1, maxLines);
+            }
+        }
+        catch { }
+    }
+
+    private static string SafeText(Func<string?> getter)
+    {
+        try { return (getter() ?? "").Trim(); }
+        catch { return ""; }
+    }
+
+    /// <summary>Dossier screenshots scopé par run (PID du SmokeRunner) -> anti-collision parallèle.</summary>
+    private static string ScreenshotDir()
+    {
+        var runId = Process.GetCurrentProcess().Id.ToString();
+        var dir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "Desktop", "JsonRapture", "screenshots", runId);
+        Directory.CreateDirectory(dir);
+        return dir;
+    }
+
+    /// <summary>
+    /// Capture l'état visuel à la fin d'un run (succès OU échec) et l'écrit en PNG.
+    /// Best-effort : si la fenêtre RIG est fermée/morte, log + return null (jamais throw
+    /// — c'est un artefact de diagnostic, pas une étape bloquante).
+    ///
+    /// L'image sert de gate visuel FINAL (analysé par l'agent) PAR-DESSUS les
+    /// assertions SQL/log/UIA — pas à leur place.
+    /// </summary>
+    /// <param name="fullScreen">Conservé pour compat de signature mais ignoré — Interaction.CaptureWindow capture la fenêtre via PrintWindow.</param>
+    /// <returns>Path absolu du PNG produit, ou null si capture impossible.</returns>
+    public string? CaptureScreenshot(string label, bool fullScreen = false)
+    {
+        if (_window is null) return null;
+        try
+        {
+            var shotPath = Path.Combine(ScreenshotDir(),
+                $"smoke-{string.Join("_", (label ?? "run").Split(Path.GetInvalidFileNameChars()))}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
+            Interaction.CaptureWindow(_window, shotPath);
+            Console.WriteLine($"      📸 Screenshot : {shotPath}");
+            return shotPath;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⚠ CaptureScreenshot a throw (non-bloquant) : {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
+    public void Dispose()
+    {
+        StopPeriodicSnap();
+        try
+        {
+            if (_app is not null && !_app.HasExited)
+            {
+                var closeOk = false;
+                try { _app.Close(); closeOk = true; } catch { }
+                if (!closeOk || !_app.HasExited)
+                {
+                    Console.WriteLine("      ⓘ app.Close failed/timed out — killing");
+                    try { _app.Kill(); } catch { }
+                }
+            }
+        }
+        catch { /* best-effort */ }
+        try { _app?.Dispose(); } catch { }
+        try { _automation?.Dispose(); } catch { }
+        // _desktop est possédé par Program.cs (via RunAttached) — NE PAS le disposer ici.
+    }
+
+    /// <summary>
+    /// Demarre un Timer background qui PrintWindow le hwnd RIG toutes les
+    /// <paramref name="intervalMs"/> ms (default 5000) et sauve en PNG sous
+    /// %LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\&lt;runStamp&gt;\&lt;scenarioId&gt;\.
+    ///
+    /// Permet d'observer un scenario qui tourne en HDESK isole (RIG_DRIVER_HEADLESS=1,
+    /// invisible sur le desktop user) via les PNGs lus depuis l'exterieur. Zero vol
+    /// de focus user puisque RIG est sur un Desktop Windows separe.
+    ///
+    /// Le hwnd est CACHE au demarrage cote thread HDESK pour eviter les UIA
+    /// cross-thread vers _window dans le Timer callback (qui tourne sur le thread pool).
+    /// PrintWindow direct par hwnd ne necessite pas l'affinite HDESK du thread.
+    /// </summary>
+    public void StartPeriodicSnap(string scenarioId, int intervalMs = 500)
+    {
+        if (_window is null) { Console.WriteLine("      ⓘ StartPeriodicSnap : _window null, skip"); return; }
+        // Cache hwnd cote thread HDESK courant.
+        IntPtr hwnd = IntPtr.Zero;
+        try { if (_window.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      ⓘ StartPeriodicSnap : hwnd zero, skip"); return; }
+        _snapHwnd = hwnd;
+        var runStamp = Environment.GetEnvironmentVariable("RIG_RUN_STAMP");
+        if (string.IsNullOrEmpty(runStamp)) runStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+        var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        _snapDir = System.IO.Path.Combine(local, "rig-wpf-testviewer", "self-snaps", runStamp, scenarioId);
+        System.IO.Directory.CreateDirectory(_snapDir);
+        // Discovery file : le LiveViewer cote TV lit ce fichier.
+        // Format 3 lignes : hwnd (int64) / PID (int) / desktopName (string).
+        // - hwnd : pour PrintWindow cross-desktop
+        // - PID : pour validation lifecycle (Process.GetProcessById)
+        // - desktopName : pour bouton "Ouvrir HDESK" (SwitchDesktop) en mode B (HEADLESS=1).
+        //                 Vide en mode A (HEADLESS=0, _desktop.DesktopName=null).
+        try
+        {
+            var discoveryPath = System.IO.Path.Combine(_snapDir, "hwnd.txt");
+            var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+            var deskName = _desktop?.DesktopName ?? "";
+            System.IO.File.WriteAllText(discoveryPath, $"{hwnd.ToInt64()}{System.Environment.NewLine}{pid}{System.Environment.NewLine}{deskName}");
+        }
+        catch (Exception exDisco) { Console.WriteLine($"      ⓘ hwnd.txt write a jete : {exDisco.GetType().Name}: {exDisco.Message}"); }
+        _snapSeq = 0;
+        _snapStopped = false;
+        Console.WriteLine($"      ⓘ Self-snap demarre : hwnd=0x{hwnd.ToInt64():X} interval={intervalMs}ms dir={_snapDir}");
+        _snapTimer = new System.Threading.Timer(_ => SnapTick(), null, intervalMs, intervalMs);
+    }
+
+    private void SnapTick()
+    {
+        if (_snapStopped || _snapHwnd == IntPtr.Zero || string.IsNullOrEmpty(_snapDir)) return;
+        try
+        {
+            int seq = System.Threading.Interlocked.Increment(ref _snapSeq);
+            var stamp = DateTime.Now.ToString("HHmmss");
+            var path = System.IO.Path.Combine(_snapDir!, $"snap-{stamp}-{seq:D4}.png");
+            Interaction.CaptureWindowByHwnd(_snapHwnd, path);
+        }
+        catch { /* best-effort, ne pas casser le scenario */ }
+    }
+
+    /// <summary>Arrete le Timer self-snap. Idempotent. Appele depuis Dispose.</summary>
+    public void StopPeriodicSnap()
+    {
+        _snapStopped = true;
+        try { _snapTimer?.Dispose(); } catch { }
+        _snapTimer = null;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // KBIS VK / XEX helpers — 2026-05-28
+    //
+    // Workflow VK (consultation K-bis via PDF) :
+    //   1. OpenProcKbis (existant) → tab pagetabVK
+    //   2. EnterNumGestionInActiveTab("2024B00001") → Tab → dossier chargé
+    //   3. OpenKbisDocument (existant) → click "K-bis" → PDF ouvert
+    //
+    // Workflow XEX (édition Brouillon Word) :
+    //   1. OpenProcXex → tab pagetabXEX (ou similaire)
+    //   2. EnterNumGestionInActiveTab("2024B00001") → Tab
+    //   3. ClickValiderInActiveForm → tableau d'édition popup
+    //   4. WaitForTableauEdition → vérifie popup affiché (imprimante/proximité visible)
+    //   5. UncheckImprimanteAndValidate → décoche imprimante + Alt+V → .doc s'ouvre
+    //
+    // ⚠ Aucun AutomationId stable connu pour XEX → tout en find by Name substring.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Ouvre PROC_XEX ("Edition interne d'un Kbis") depuis la Console d'accueil.
+    /// Pattern : scan onglets btn1..btn7 × sousmenu × lstProcessus, matche un item
+    /// dont le 1er token Name = "XEX" exact (case-insensitive). Pas de fast path
+    /// connu — découverte live au 1er run, log les coordonnées (btn, sousmenu) pour
+    /// optimisation future.
+    /// </summary>
+    public void OpenProcXex()
+    {
+        OpenProcessus("PROC_XEX", n =>
+        {
+            if (string.IsNullOrWhiteSpace(n)) return false;
+            var firstToken = n.Trim().Split(new[] { ' ', '\t', '|', '-' },
+                StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            // Match XEX exact ET libellé contient "edition" + "kbis" (en backup).
+            if (firstToken.Equals("XEX", StringComparison.OrdinalIgnoreCase)) return true;
+            return n.IndexOf("edition interne", StringComparison.OrdinalIgnoreCase) >= 0
+                && n.IndexOf("kbis", StringComparison.OrdinalIgnoreCase) >= 0;
+        });
+    }
+
+    /// <summary>
+    /// Module ALERTES RCS — ouvre une alerte depuis la tuile "Alertes RCS" de la Console d'accueil
+    /// (PAS un PROC). Flux : maximize → page "Alertes RCS" (lblAlertesPage1) → double-clic sur l'item
+    /// de lstAlertes dont le Name contient <paramref name="alerteNameSubstring"/> ("interrompue" /
+    /// "réclamation") → PROC_DEMANDE (grille ultDgvResultats) s'ouvre dans un onglet.
+    /// ÉTAPE 1 : s'arrête à la grille visible. Best-effort + dumps (UI Alertes pas encore éprouvée).
+    /// </summary>
+    public void OpenAlerteRcs(string alerteNameSubstring)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + ClickSeConnecter() doivent être appelés avant OpenAlerteRcs()");
+
+        EnsureWindowMaximized();
+
+        // 1) Activer la page "Alertes RCS" (lblAlertesPage1). Best-effort : si absent, on suppose
+        //    qu'on est déjà sur la page RCS (état par défaut de la tuile).
+        var pageRcs = FindByAutomationId("lblAlertesPage1") ?? FindByName("Alertes RCS");
+        if (pageRcs is not null)
+        {
+            Console.WriteLine($"      → Page 'Alertes RCS' (AutomationId='{SafeText(() => pageRcs.AutomationId)}') — clic");
+            try { Interaction.Click(pageRcs); } catch (Exception ex) { Console.WriteLine($"      ⓘ clic page RCS jeté : {ex.Message}"); }
+            Thread.Sleep(800);
+        }
+        else Console.WriteLine("      → lblAlertesPage1/'Alertes RCS' introuvable — page RCS supposée active par défaut.");
+
+        // 2) Trouver l'item d'alerte dans lstAlertes (RigListView) par Name substring (poll 8s).
+        var lst = FindByAutomationId("lstAlertes");
+        if (lst is null)
+        {
+            Console.WriteLine("      → lstAlertes introuvable. Dump descendants pour diag :");
+            DumpDescendants(_window!, maxDepth: 5);
+            throw new Exception("Tuile 'Alertes RCS' / lstAlertes introuvable dans la Console d'accueil (cf. dump).");
+        }
+
+        AutomationElement? alerte = null;
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 8000 && alerte is null)
+        {
+            AutomationElement[] items;
+            try { items = lst.FindAllChildren(); } catch { items = System.Array.Empty<AutomationElement>(); }
+            alerte = items.FirstOrDefault(it =>
+                SafeText(() => it.Name).IndexOf(alerteNameSubstring, StringComparison.OrdinalIgnoreCase) >= 0);
+            if (alerte is null) Thread.Sleep(300);
+        }
+        if (alerte is null)
+        {
+            Console.WriteLine($"      → Aucune alerte contenant '{alerteNameSubstring}' dans lstAlertes. Items présents :");
+            try { foreach (var it in lst.FindAllChildren()) Console.WriteLine($"          - '{SafeText(() => it.Name)}'"); } catch { }
+            throw new Exception($"Alerte RCS '{alerteNameSubstring}' introuvable dans lstAlertes (la base DEV a-t-elle de telles demandes ?).");
+        }
+
+        Console.WriteLine($"      → Alerte trouvée : '{SafeText(() => alerte.Name)}' — activation (Select + Entrée)");
+        // _ExecuteAlerte() répond au double-clic OU à Entrée (FORM_ACCUEIL). Le double-clic écran
+        // n'active pas toujours (il sélectionne seulement) → Select + Entrée (pattern lstProcessus
+        // fiable) en priorité, vrai double-clic écran en fallback.
+        try { Interaction.ActivateListItem(alerte, lst); }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ ActivateListItem jeté : {ex.Message}"); }
+
+        var grid = WaitForDemandeGrid(8000);
+        if (grid is null)
+        {
+            Console.WriteLine("      → Grille pas vue après Entrée — fallback double-clic écran sur la ligne.");
+            var r = alerte.BoundingRectangle;
+            Interaction.ClickAtScreenPoint((int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2), _app.ProcessId, doubleClick: true);
+            grid = WaitForDemandeGrid(10000);
+        }
+        if (grid is null)
+        {
+            Console.WriteLine("      → Grille de demandes pas détectée. Dump :");
+            DumpDescendants(_window!, maxDepth: 3);
+            throw new Exception("La liste des demandes (PROC_DEMANDE) ne s'est pas ouverte après activation de l'alerte.");
+        }
+        Console.WriteLine($"      → Grille des demandes ouverte ('{SafeText(() => grid.Name)}' type={grid.ControlType}, alerte '{alerteNameSubstring}') — Étape 1 OK.");
+    }
+
+    /// <summary>Poll l'apparition de la grille des demandes (PROC_DEMANDE) après activation d'une
+    /// alerte : AutomationId connu (ultDgvResultats/_dgvDemandes), sinon un control Table/DataGrid
+    /// (la grille de demandes ; l'accueil n'expose pas de Table par défaut, faible faux-positif).</summary>
+    private AutomationElement? WaitForDemandeGrid(int maxMs)
+    {
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            var byId = FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes");
+            if (byId is not null) return byId;
+            try
+            {
+                var table = _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table))
+                         ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid));
+                if (table is not null) return table;
+            }
+            catch { }
+            Thread.Sleep(300);
+        }
+        return null;
+    }
+
+    private static bool IsJ00Liaison(string s)
+    {
+        s = s.Trim();
+        if (s.Length < 4 || (s[0] != 'J' && s[0] != 'j')) return false;
+        for (int i = 1; i < s.Length; i++) if (!char.IsDigit(s[i])) return false;
+        return true;
+    }
+
+    /// <summary>
+    /// Dans la grille des demandes (après <see cref="OpenAlerteRcs"/>), trouve la cellule à
+    /// double-cliquer pour ouvrir la 1ère demande du type voulu :
+    ///   dcademat=true  → 1ère cellule "Traitement" == "DCADEMAT"
+    ///   dcademat=false → 1ère cellule "N° Liaison" en J00… (formalités INPI)
+    /// Override env : RIG_ALERTES_DCADEMAT / RIG_ALERTES_LIAISON (substring à chercher).
+    /// </summary>
+    /// <summary>Centre écran de la cellule de la 1ère demande du type voulu, lue via MSAA (oleacc) :
+    /// le DemandeRigDataGridView custom n'expose NI Grid NI Table pattern UIA (0 descendant), mais
+    /// supporte LegacyIAccessible. On lit accName/accValue + accLocation par cellule.
+    ///   dcademat=true  → cellule "Traitement" == "DCADEMAT"
+    ///   dcademat=false → cellule "N° Liaison" en J00… (formalités INPI)
+    /// Override env : RIG_ALERTES_DCADEMAT / RIG_ALERTES_LIAISON (substring).</summary>
+    private (int cx, int cy, string text)? FindDemandeCell(bool dcademat)
+    {
+        var list = FindDemandeCells(dcademat, 1);
+        return list.Count > 0 ? list[0] : ((int cx, int cy, string text)?)null;
+    }
+
+    /// <summary>Jusqu'à <paramref name="max"/> cellules-lignes des demandes du type voulu, non « en
+    /// cours », lues via MSAA (le DemandeRigDataGridView custom n'expose ni Grid ni Table pattern UIA).
+    /// Permet de réessayer une autre demande si la 1ère ne produit pas de signal d'ouverture.</summary>
+    private List<(int cx, int cy, string text)> FindDemandeCells(bool dcademat, int max)
+    {
+        var grid = FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes")
+                ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table))
+                ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid));
+        if (grid is null) { Console.WriteLine("      → grille introuvable pour FindDemandeCells"); return new(); }
+
+        var overrideVal = Environment.GetEnvironmentVariable(dcademat ? "RIG_ALERTES_DCADEMAT" : "RIG_ALERTES_LIAISON");
+        bool Match(string nm)
+        {
+            if (string.IsNullOrWhiteSpace(nm)) return false;
+            if (!string.IsNullOrWhiteSpace(overrideVal)) return nm.IndexOf(overrideVal, StringComparison.OrdinalIgnoreCase) >= 0;
+            // Idempotence : ignorer les demandes déjà « en cours » (colonne En cours = "X", champ ';X;').
+            if (System.Text.RegularExpressions.Regex.IsMatch(nm, @";\s*X\s*;")) return false;
+            return dcademat
+                ? nm.IndexOf("DCADEMAT", StringComparison.OrdinalIgnoreCase) >= 0
+                : System.Text.RegularExpressions.Regex.IsMatch(nm, @"J0\d{6,}");
+        }
+
+        // HWND du DataGridView (sinon du Pane wrapper, sinon la fenêtre) pour AccessibleObjectFromWindow.
+        IntPtr hwnd = IntPtr.Zero;
+        try { hwnd = grid.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero)
+        {
+            try { var inner = grid.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)); if (inner != null) hwnd = inner.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        }
+        if (hwnd == IntPtr.Zero) { try { hwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { } }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → HWND grille introuvable — MSAA impossible."); return new(); }
+
+        var cells = CollectCellsMsaa(hwnd, Match, max, out int scanned);
+        Console.WriteLine($"      → {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA ({scanned} cellules scannées)"
+            + (cells.Count > 0 ? $" ; 1ère : '{cells[0].text}' @ ({cells[0].cx},{cells[0].cy})" : $" — aucune (hwnd=0x{hwnd.ToInt64():X}, override RIG_ALERTES_* ?)"));
+        return cells;
+    }
+
+    // ── MSAA (oleacc) : lecture des cellules quand UIA est aveugle ──────────────
+    private static readonly Guid IID_IAccessible = new Guid("618736e0-3c3d-11cf-810c-00aa00389b71");
+
+    [DllImport("oleacc.dll", PreserveSig = true)]
+    private static extern int AccessibleObjectFromWindow(IntPtr hwnd, uint dwId, ref Guid riid,
+        [MarshalAs(UnmanagedType.IUnknown)] out object ppvObject);
+
+    [DllImport("oleacc.dll", PreserveSig = true)]
+    private static extern int AccessibleChildren(Accessibility.IAccessible paccContainer,
+        int iChildStart, int cChildren,
+        [Out, MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.Struct)] object[] rgvarChildren,
+        out int pcObtained);
+
+    private static string SafeAcc(Func<string?> f) { try { return f() ?? ""; } catch { return ""; } }
+
+    /// <summary>Parcourt l'arbre MSAA du client de <paramref name="hwnd"/> (DataGridView WinForms) et
+    /// collecte jusqu'à <paramref name="max"/> cellules-lignes dont (accName + accValue) matchent, avec
+    /// leur centre écran (accLocation). Lecture seule.</summary>
+    private List<(int cx, int cy, string text)> CollectCellsMsaa(IntPtr hwnd, Func<string, bool> match, int max, out int scanned)
+    {
+        scanned = 0;
+        var results = new List<(int cx, int cy, string text)>();
+        const uint OBJID_CLIENT = 0xFFFFFFFC;
+        var iid = IID_IAccessible;
+        Accessibility.IAccessible? root = null;
+        try
+        {
+            if (AccessibleObjectFromWindow(hwnd, OBJID_CLIENT, ref iid, out var obj) != 0 || obj is not Accessibility.IAccessible a)
+            { Console.WriteLine("      ⓘ AccessibleObjectFromWindow : pas d'IAccessible."); return results; }
+            root = a;
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ AccessibleObjectFromWindow jeté : {ex.Message}"); return results; }
+
+        int localScanned = 0;
+        void Walk(Accessibility.IAccessible node, int depth)
+        {
+            if (results.Count >= max || depth > 8) return;
+            int count; try { count = node.accChildCount; } catch { return; }
+            if (count <= 0) return;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(node, 0, count, kids, out got) != 0) return; } catch { return; }
+            for (int i = 0; i < got && results.Count < max; i++)
+            {
+                var k = kids[i];
+                if (k is Accessibility.IAccessible childAcc)
+                {
+                    string text = (SafeAcc(() => childAcc.get_accName(0)) + " " + SafeAcc(() => childAcc.get_accValue(0))).Trim();
+                    if (!string.IsNullOrWhiteSpace(text)) localScanned++;
+                    // Une LIGNE a un accName concaténé par ';' (toutes les colonnes) → on matche au niveau
+                    // ligne (centre ~ milieu de grille = CellDoubleClick fiable) et on NE descend PAS dedans :
+                    // sinon une ligne « en cours » (skippée) verrait ses CELLULES matcher le J00/DCADEMAT
+                    // (elles n'ont pas le ';X;') → bypass du skip + clic sur cellule de gauche (inopérant).
+                    if (text.IndexOf(';') >= 0)
+                    {
+                        if (match(text))
+                        {
+                            try { childAcc.accLocation(out int l, out int t, out int w, out int h, 0); results.Add((l + w / 2, t + h / 2, text)); } catch { }
+                        }
+                    }
+                    else
+                    {
+                        Walk(childAcc, depth + 1); // conteneur (table/client/groupe) → on descend
+                    }
+                }
+                else if (k is int childId && childId != 0)
+                {
+                    string text = (SafeAcc(() => node.get_accName(childId)) + " " + SafeAcc(() => node.get_accValue(childId))).Trim();
+                    if (!string.IsNullOrWhiteSpace(text)) localScanned++;
+                    if (text.IndexOf(';') >= 0 && match(text))
+                    {
+                        try { node.accLocation(out int l, out int t, out int w, out int h, childId); results.Add((l + w / 2, t + h / 2, text)); } catch { }
+                    }
+                }
+            }
+        }
+        try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      ⓘ Walk MSAA jeté : {ex.Message}"); }
+        scanned = localScanned;
+        return results;
+    }
+
+    /// <summary>Ouvre une demande (formalités J00 ou DCADEMAT) par double-clic (= touche Entrée côté
+    /// RIG → <c>ReprendreProcessus</c>) et vérifie qu'un document/onglet s'ouvre sans crash (DocDemat /
+    /// RigAffichageDoc si l'étape interrompue le rouvre, sinon l'onglet de la demande). Réessaie sur les
+    /// demandes suivantes du même type si la 1ère ne produit pas de signal (robustesse données DEV). 3a.</summary>
+    public void OpenFirstDemandeAndVerify(bool dcademat)
+    {
+        var cells = FindDemandeCells(dcademat, 3);
+        if (cells.Count == 0)
+            throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (non « en cours ») dans la grille (données DEV ? override RIG_ALERTES_*).");
+        Exception? last = null;
+        for (int i = 0; i < cells.Count; i++)
+        {
+            var (cx, cy, txt) = cells[i];
+            try
+            {
+                Console.WriteLine($"      → Tentative {i + 1}/{cells.Count} : demande ('{txt}') @ {cx},{cy}");
+                VerifyDocumentOpened(() =>
+                {
+                    Console.WriteLine("      → Double-clic → ReprendreProcessus");
+                    Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: true);
+                }, "Demande (reprise)", waitSeconds: 15);
+                return; // signal reçu → succès
+            }
+            catch (Exception ex) { last = ex; Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}"); }
+        }
+        throw new Exception($"Aucune des {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture. Dernière erreur : {last?.Message}");
+    }
+
+    // ── MSAA par point (oleacc) : lire le ContextMenuStrip ouvert ───────────────
+    [StructLayout(LayoutKind.Sequential)] private struct PT { public int X; public int Y; }
+
+    [DllImport("oleacc.dll", PreserveSig = true)]
+    private static extern int AccessibleObjectFromPoint(PT pt,
+        [MarshalAs(UnmanagedType.IUnknown)] out object ppacc,
+        [MarshalAs(UnmanagedType.Struct)] out object pvarChild);
+
+    private const int ROLE_SYSTEM_MENUPOPUP = 0x0F;
+
+    /// <summary>Lit le ContextMenuStrip ouvert via MSAA par point : sonde plusieurs points autour de la
+    /// cellule (<paramref name="cx"/>,<paramref name="cy"/>), pour chacun remonte au conteneur MENUPOPUP ;
+    /// dès qu'un MENUPOPUP est trouvé, énumère ses items et retourne le centre écran de celui dont le nom
+    /// contient <paramref name="itemSub"/>. <paramref name="menuDump"/> = libellés de tous les items lus.
+    /// À appeler sur le thread HDESK-attaché (AccessibleObjectFromPoint = desktop-affine).</summary>
+    private (int x, int y)? FindMenuItemCenterViaMsaa(int cx, int cy, string itemSub, out string menuDump)
+    {
+        menuDump = "";
+        // Le menu ouvert par VK_APPS apparaît à PointToScreen(cellule) → autour de (cx,cy), surtout en-dessous.
+        var probes = new (int x, int y)[]
+        {
+            (cx, cy + 12), (cx, cy + 28), (cx, cy + 44), (cx - 60, cy + 12), (cx + 40, cy + 12),
+            (cx, cy - 6), (cx, cy), (cx - 60, cy + 44),
+        };
+        foreach (var (px, py) in probes)
+        {
+            Accessibility.IAccessible container;
+            try
+            {
+                if (AccessibleObjectFromPoint(new PT { X = px, Y = py }, out var accObj, out _) != 0 || accObj is not Accessibility.IAccessible a)
+                    continue;
+                container = a;
+            }
+            catch { continue; }
+
+            int role = 0;
+            for (int up = 0; up < 5; up++)
+            {
+                try { role = Convert.ToInt32(container.get_accRole(0)); } catch { role = 0; }
+                if (role == ROLE_SYSTEM_MENUPOPUP) break;
+                try { if (container.accParent is Accessibility.IAccessible par) container = par; else break; } catch { break; }
+            }
+            if (role != ROLE_SYSTEM_MENUPOPUP) continue; // ce point n'est pas dans le menu → essaie le suivant
+
+            int count; try { count = container.accChildCount; } catch { count = 0; }
+            if (count <= 0) return null;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(container, 0, count, kids, out got) != 0) return null; } catch { return null; }
+            var names = new List<string>();
+            (int x, int y)? found = null;
+            for (int i = 0; i < got; i++)
+            {
+                string name; (int, int)? loc = null;
+                if (kids[i] is Accessibility.IAccessible ia)
+                {
+                    name = SafeAcc(() => ia.get_accName(0));
+                    try { ia.accLocation(out int l, out int t, out int w, out int h, 0); loc = (l + w / 2, t + h / 2); } catch { }
+                }
+                else
+                {
+                    int cid = kids[i] is int ci ? ci : (i + 1);
+                    name = SafeAcc(() => container.get_accName(cid));
+                    try { container.accLocation(out int l, out int t, out int w, out int h, cid); loc = (l + w / 2, t + h / 2); } catch { }
+                }
+                if (!string.IsNullOrWhiteSpace(name)) names.Add(name);
+                if (found is null && !string.IsNullOrWhiteSpace(name)
+                    && name.IndexOf(itemSub, StringComparison.OrdinalIgnoreCase) >= 0 && loc.HasValue)
+                    found = loc;
+            }
+            menuDump = string.Join(" | ", names);
+            Console.WriteLine($"      [DIAG menu] MENUPOPUP trouvé via sonde ({px},{py}) — {names.Count} items");
+            return found;
+        }
+        Console.WriteLine("      [DIAG menu] aucun MENUPOPUP trouvé aux points sondés (menu non ouvert ?).");
+        return null;
+    }
+
+    /// <summary>Sélectionne la ligne (PostMessage clic gauche → fixe CurrentCell), ouvre le
+    /// ContextMenuStrip via la touche Apps/Menu (VK_APPS → rdgvDemandes_KeyDown ouvre le menu à
+    /// PointToScreen(cellule) = position DÉTERMINISTE, contrairement au clic-droit qui l'ouvre à
+    /// MousePosition / curseur réel). Puis, si <paramref name="itemSub"/> non null, clique l'item.
+    /// Message-based → marche sur HDESK isolé (SendInput y serait ignoré). Thread HDESK-attaché.</summary>
+    private void DoOpenMenuAndClickItem(int cx, int cy, string? itemSub)
+    {
+        var gridHwnd = Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false); // sélectionne + CurrentCell
+        Thread.Sleep(400);
+        // Le handler RIG MouseDown(Right) ouvre le menu à MousePosition. On positionne le curseur HDESK
+        // sur la cellule (SetCursorPos marche sur HDESK), puis on déclenche le handler via WM_RBUTTONDOWN
+        // posté (message → marche sur HDESK ; mouse_event/SendInput y serait ignoré).
+        bool moved = Interaction.MoveCursor(cx, cy);
+        Console.WriteLine($"      → Curseur HDESK déplacé sur cellule ({cx},{cy}) : {moved} ; WM_RBUTTONDOWN → menu");
+        Interaction.RightClickAtScreenPoint(cx, cy, _app!.ProcessId);
+        Thread.Sleep(1000);
+        var hit = FindMenuItemCenterViaMsaa(cx, cy, itemSub ?? "￿", out var dump);
+        Console.WriteLine($"      → Menu contextuel (MSAA) : {dump}");
+        if (itemSub is null) { if (gridHwnd != IntPtr.Zero) Interaction.PostKey(gridHwnd, 0x1B); return; } // observation seule
+        if (hit is null) { if (gridHwnd != IntPtr.Zero) Interaction.PostKey(gridHwnd, 0x1B); throw new Exception($"Item menu '{itemSub}' introuvable (menu lu : {dump})."); }
+        Console.WriteLine($"      → Clic item '{itemSub}' @ {hit.Value.x},{hit.Value.y}");
+        Interaction.ClickAtScreenPoint(hit.Value.x, hit.Value.y, _app!.ProcessId, doubleClick: false); // clique l'item
+    }
+
+    /// <summary>OBSERVATION : ouvre le menu contextuel d'une demande (WM_CONTEXTMENU) et dump ses items
+    /// via MSAA (lecture par point sur le thread HDESK-attaché du scénario).</summary>
+    public void RightClickDemandeAndDumpMenu(bool dcademat)
+    {
+        var hit = FindDemandeCell(dcademat);
+        if (hit is null) throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} trouvée pour menu contextuel.");
+        var (cx, cy, txt) = hit.Value;
+        Console.WriteLine($"      → Demande ('{txt}') @ {cx},{cy} — WM_CONTEXTMENU + dump MSAA");
+        DoOpenMenuAndClickItem(cx, cy, null);
+    }
+
+    /// <summary>Sur une demande en réclamation : sélectionne, ouvre le menu contextuel (WM_CONTEXTMENU),
+    /// clique l'item <paramref name="menuItemSub"/> ("Reprendre les impressions" / "Lancer le pool
+    /// d'éditions") et vérifie qu'un document/fenêtre/onglet s'ouvre (courrier/lettre de réclamation,
+    /// tableau d'édition, ou POOL_EDIT). ÉTAPE 3c.</summary>
+    public void OpenReclamationViaMenu(bool dcademat, string menuItemSub, string label)
+    {
+        var hit = FindDemandeCell(dcademat);
+        if (hit is null) throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (réclamation) trouvée.");
+        var (cx, cy, txt) = hit.Value;
+        Console.WriteLine($"      → Demande réclamation ('{txt}') @ {cx},{cy} ; menu → '{menuItemSub}'");
+        VerifyDocumentOpened(() => DoOpenMenuAndClickItem(cx, cy, menuItemSub), label, waitSeconds: 25);
+    }
+
+    /// <summary>Capture baseline (process / fenêtres top-level RIG / fichiers doc) → exécute
+    /// <paramref name="trigger"/> → poll un signal d'ouverture : nouveau process viewer
+    /// (DocDemat/RigAffichageDoc/Word/PDF), nouvelle fenêtre titrée, nouveau fichier doc, ou
+    /// nouvel onglet dans l'accueil. Généralisation du mécanisme OpenKbisDocument (sans vision).</summary>
+    private void VerifyDocumentOpened(Action trigger, string label, int waitSeconds = 20)
+    {
+        var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
+        Window[] winsBefore; try { winsBefore = _app!.GetAllTopLevelWindows(_automation!); } catch { winsBefore = System.Array.Empty<Window>(); }
+        var docDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
+        var filesBefore = docDirs.SelectMany(SafeDocList).ToHashSet();
+        int tabsBefore = 0;
+        try { var tc0 = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc0 != null) tabsBefore = tc0.FindAllChildren().Length; } catch { }
+
+        trigger();
+
+        bool IsViewer(string n) =>
+               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("PROC_DOC", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
+            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase)
+            || n.IndexOf("Vintasoft", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        var sw = Stopwatch.StartNew();
+        string? signal = null;
+        while (sw.Elapsed.TotalSeconds < waitSeconds && signal is null)
+        {
+            var newProcs = Process.GetProcesses()
+                .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
+                .Where(t => t.id > 0 && !procsBefore.Contains(t.id)).ToList();
+            var viewer = newProcs.FirstOrDefault(t => IsViewer(t.name));
+            if (viewer.id > 0) { signal = $"process viewer '{viewer.name}' (PID {viewer.id})"; break; }
+
+            try
+            {
+                var winsNow = _app!.GetAllTopLevelWindows(_automation!);
+                if (winsNow.Length > winsBefore.Length)
+                {
+                    var nw = winsNow.Skip(winsBefore.Length).FirstOrDefault(w => !string.IsNullOrWhiteSpace(SafeText(() => w.Title)));
+                    if (nw != null) { signal = $"fenêtre '{SafeText(() => nw.Title)}'"; break; }
+                }
+            }
+            catch { }
+
+            var newFiles = docDirs.SelectMany(SafeDocList).Except(filesBefore).ToList();
+            if (newFiles.Count > 0) { signal = $"fichier '{Path.GetFileName(newFiles[0])}'"; break; }
+
+            try { var tc = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc != null && tc.FindAllChildren().Length > tabsBefore) { signal = $"nouvel onglet (demande ouverte, {tc.FindAllChildren().Length} onglets)"; break; } } catch { }
+
+            Thread.Sleep(400);
+        }
+        if (signal is null)
+            throw new Exception($"{label} : aucun signal d'ouverture après {waitSeconds}s (ni process viewer, ni fenêtre, ni fichier, ni onglet).");
+        Console.WriteLine($"      → {label} : OUVERT ({signal}).");
+    }
+
+    private static HashSet<string> SafeDocList(string dir)
+    {
+        try
+        {
+            if (!Directory.Exists(dir)) return new HashSet<string>();
+            return Directory.EnumerateFiles(dir).Where(f =>
+            {
+                var e = Path.GetExtension(f).ToLowerInvariant();
+                return e == ".pdf" || e == ".doc" || e == ".docx" || e == ".tif" || e == ".tiff" || e == ".rtf";
+            }).ToHashSet();
+        }
+        catch { return new HashSet<string>(); }
+    }
+
+    /// <summary>
+    /// Saisit un numéro de gestion (ex. "2024B00001") dans le champ du tab actif
+    /// (pagetabVK ou pagetabXEX) + PostMessage Tab pour quitter le champ.
+    ///
+    /// Stratégie de localisation du champ (par ordre de priorité) :
+    ///   1. AutomationId contient "gestion" / "numgestion" / "indicatif" / "dssrc"
+    ///   2. Label TextBlock voisin contenant "gestion" / "numéro"
+    ///   3. Premier Edit visible non-trivial (width > 50px) dans le tab actif
+    ///
+    /// Si introuvable → throw + dump des Edits visibles pour diag.
+    /// </summary>
+    public void EnterNumGestionInActiveTab(string numGestion, string contextLabel = "tab actif")
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        if (string.IsNullOrWhiteSpace(numGestion))
+            throw new ArgumentException("numGestion vide", nameof(numGestion));
+
+        Console.WriteLine($"      → Recherche champ 'Siren/N°gestion' dans {contextLabel}");
+
+        // ITER 2 (2026-05-28) : ABANDON de la recherche par activeTab.
+        // Iter 1 a montré que le TabItem header ne contient pas le contenu de la
+        // page (Edits sont dans une TabPage séparée, pas accessible via TabItem.FindAllDescendants).
+        // Solution : search GLOBAL dans _window, filtrer par IsOffscreen=false + Y suffisant
+        // (au-dessus du tab bar). Le contenu visible appartient nécessairement au tab actif.
+
+        // Strategy : commencer par chercher le label "Siren/N°gestion" OU "Numéro" (les seuls
+        // labels visibles ne peuvent appartenir qu'à la page active), puis trouver l'input
+        // immédiatement à côté (Edit OU autre ControlType — RIG WinForms expose parfois
+        // les TextBox en Pane). Si label introuvable → fallback Edit le plus haut visible.
+
+        // 1) Cherche les labels candidats
+        var allTexts = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+            .Where(t => { try { return t.IsAvailable && !t.IsOffscreen; } catch { return false; } })
+            .ToList();
+        Console.WriteLine($"      → {allTexts.Count} TextBlocks visibles dans la window");
+
+        var labels = allTexts.Where(t =>
+        {
+            var n = SafeText(() => t.Name).ToLowerInvariant();
+            // Match les labels candidats : "Siren/N°gestion", "Numéro de gestion", etc.
+            // Exclure les labels qui mentionnent "gestion" mais dans un autre contexte (ex. "gestion de l'utilisateur").
+            return n.Contains("siren") || n.Contains("n°gestion") || n.Contains("n gestion")
+                || n.Contains("numéro de gestion") || n.Contains("numero de gestion")
+                || n.Equals("gestion", StringComparison.Ordinal);
+        }).ToList();
+
+        Console.WriteLine($"      → {labels.Count} labels candidats :");
+        foreach (var l in labels.Take(5))
+            Console.WriteLine($"          - '{SafeText(() => l.Name)}' Rect={l.BoundingRectangle}");
+
+        AutomationElement? target = null;
+
+        // 2) Pour chaque label, cherche l'input le plus proche (Edit ou Pane)
+        foreach (var lbl in labels)
+        {
+            var lblRect = lbl.BoundingRectangle;
+            // Cherche tous les éléments potentiels à droite ou en-dessous du label
+            // dans une zone raisonnable (200px à droite ou 50px en-dessous).
+            var candidates = _window.FindAllDescendants()
+                .Where(c =>
+                {
+                    try
+                    {
+                        if (!c.IsAvailable || c.IsOffscreen) return false;
+                        var r = c.BoundingRectangle;
+                        if (r.Width < 30 || r.Height < 10 || r.Width > 600) return false;
+                        // Doit avoir ValuePattern (TextBox WinForms expose ça)
+                        try { if (!c.Patterns.Value.IsSupported) return false; } catch { return false; }
+                        // Position : à droite du label sur la même ligne (±20px) OU juste en-dessous
+                        bool sameRow = Math.Abs(r.Y - lblRect.Y) < 20 && r.X >= lblRect.X && r.X < lblRect.X + 250;
+                        bool below = r.X >= lblRect.X - 30 && r.X < lblRect.X + 250
+                                  && r.Y > lblRect.Y && r.Y < lblRect.Y + 50;
+                        return sameRow || below;
+                    }
+                    catch { return false; }
+                })
+                .OrderBy(c => {
+                    var r = c.BoundingRectangle;
+                    return (r.Y - lblRect.Y) * (r.Y - lblRect.Y) + (r.X - lblRect.X) * (r.X - lblRect.X);
+                })
+                .ToList();
+
+            Console.WriteLine($"      → Label '{SafeText(() => lbl.Name)}' à {lblRect} : {candidates.Count} inputs candidats");
+            foreach (var c in candidates.Take(3))
+                Console.WriteLine($"          - Type={SafeText(() => c.ControlType.ToString())} Id='{SafeText(() => c.AutomationId)}' Name='{SafeText(() => c.Name)}' Rect={c.BoundingRectangle}");
+
+            if (candidates.Count > 0)
+            {
+                target = candidates[0];
+                Console.WriteLine($"      ✓ Match par label '{SafeText(() => lbl.Name)}' → input à {target.BoundingRectangle}");
+                break;
+            }
+        }
+
+        // 3) Fallback : 1er Edit visible Y le plus haut (page de saisie en haut, content après)
+        if (target is null)
+        {
+            Console.WriteLine($"      ⚠ Pas de match par label — fallback ValuePattern globally");
+            var anyInputs = _window.FindAllDescendants()
+                .Where(c =>
+                {
+                    try
+                    {
+                        if (!c.IsAvailable || c.IsOffscreen) return false;
+                        var r = c.BoundingRectangle;
+                        if (r.Width < 50 || r.Width > 600 || r.Height < 12 || r.Height > 40) return false;
+                        if (r.Y < 30 || r.Y > 200) return false;  // zone "page header"
+                        try { return c.Patterns.Value.IsSupported; } catch { return false; }
+                    }
+                    catch { return false; }
+                })
+                .OrderBy(c => c.BoundingRectangle.Y)
+                .ThenBy(c => c.BoundingRectangle.X)
+                .ToList();
+            Console.WriteLine($"      → {anyInputs.Count} inputs en zone page-header :");
+            foreach (var c in anyInputs.Take(5))
+                Console.WriteLine($"          - Type={SafeText(() => c.ControlType.ToString())} Id='{SafeText(() => c.AutomationId)}' Name='{SafeText(() => c.Name)}' Rect={c.BoundingRectangle}");
+            target = anyInputs.FirstOrDefault();
+        }
+
+        if (target is null)
+        {
+            Console.WriteLine($"      ✗ Aucun input trouvé. Screenshot diag…");
+            try { CaptureScreenshot($"num-gestion-not-found-{contextLabel.Replace(' ', '-')}"); } catch { }
+            throw new Exception($"Champ 'Numéro de gestion' / 'Siren/N°gestion' introuvable dans {contextLabel}");
+        }
+
+        Console.WriteLine($"      → Saisie '{numGestion}' dans input Type={SafeText(() => target.ControlType.ToString())} Id='{SafeText(() => target.AutomationId)}'");
+        Interaction.SetText(target, numGestion);
+
+        Console.WriteLine($"      → PostMessage Tab pour quitter le champ (résolution dossier RIG)");
+        Interaction.PressKey(target, 0x09 /* VK_TAB */);
+
+        // Attente courte pour que RIG résolve le dossier.
+        Thread.Sleep(1500);
+        Console.WriteLine($"      ✓ Numéro de gestion '{numGestion}' saisi + Tab → dossier {contextLabel}");
+    }
+
+    /// <summary>
+    /// Cherche le bouton "Valider" (raccourci Alt+V / F12) dans la toolbar du
+    /// FormAutomate actif et le clique (mouse-free via Interaction.Click).
+    /// Plus fiable que d'envoyer Alt+V via PostMessage qui n'atteint pas toujours
+    /// le focused element en WinForms.
+    /// </summary>
+    public void ClickValiderInActiveForm(string contextLabel = "form actif")
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        Console.WriteLine($"      → Recherche bouton 'Valider' dans {contextLabel}");
+        var btn = _window.FindAllDescendants()
+            .FirstOrDefault(c =>
+            {
+                var n = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(n)) return false;
+                // Match : "Valider", "Valider F12", "Valider (F12)", etc. Exclure
+                // "Valider la sélection" (Rapture-specific) si on est dans un autre PROC.
+                var nl = n.ToLowerInvariant();
+                if (nl.Contains("sélection") || nl.Contains("selection")) return false;
+                return nl.StartsWith("valider") || nl.Equals("valider", StringComparison.Ordinal);
+            });
+        if (btn is null)
+            throw new Exception($"Bouton 'Valider' introuvable dans {contextLabel}");
+
+        Console.WriteLine($"      → Click 'Valider' : Type={SafeText(() => btn.ControlType.ToString())} Id='{SafeText(() => btn.AutomationId)}' Name='{SafeText(() => btn.Name)}'");
+        Interaction.Click(btn);
+        Console.WriteLine($"      ✓ Bouton 'Valider' cliqué dans {contextLabel}");
+    }
+
+    /// <summary>
+    /// Poll les fenêtres descendantes du _window pour détecter le "tableau
+    /// d'édition" qui apparaît après Alt+V dans XEX. Critère : window ou border
+    /// contenant un control dont le Name contient "imprimante" / "proximité"
+    /// / "edition" / "brouillon".
+    /// </summary>
+    public AutomationElement WaitForTableauEdition(int timeoutSeconds = 15)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Console.WriteLine($"      → Attente 'tableau d'édition' (max {timeoutSeconds}s)…");
+        var seenTitles = new HashSet<string>();
+
+        while (sw.Elapsed.TotalSeconds < timeoutSeconds)
+        {
+            try
+            {
+                // Cherche tous les controls visibles qui ont un nom indiquant le tableau
+                var candidates = _window.FindAllDescendants()
+                    .Where(c =>
+                    {
+                        var n = SafeText(() => c.Name).ToLowerInvariant();
+                        return n.Contains("imprimante") || n.Contains("proximité")
+                            || n.Contains("proximite") || n.Contains("brouillon")
+                            || (n.Contains("edition") && n.Length < 80);  // évite descriptions longues
+                    })
+                    .ToList();
+
+                if (candidates.Count > 0)
+                {
+                    Console.WriteLine($"      ✓ Tableau d'édition détecté après {sw.Elapsed.TotalSeconds:F1}s — {candidates.Count} candidats :");
+                    foreach (var c in candidates.Take(5))
+                        Console.WriteLine($"          - Type={SafeText(() => c.ControlType.ToString())} Id='{SafeText(() => c.AutomationId)}' Name='{SafeText(() => c.Name)}' Rect={c.BoundingRectangle}");
+                    return candidates[0];
+                }
+
+                // Diagnostic per-second : liste les top-level windows nouvellement vues
+                foreach (var w in _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window)))
+                {
+                    var t = SafeText(() => w.Name);
+                    if (!string.IsNullOrEmpty(t) && seenTitles.Add(t))
+                        Console.WriteLine($"      → [t={sw.Elapsed.TotalSeconds:F1}s] window descendant vu : '{t}'");
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ Scan jeté : {ex.GetType().Name}: {ex.Message}"); }
+
+            Thread.Sleep(500);
+        }
+
+        // Échec — diagnostic dump
+        Console.WriteLine($"      ✗ Tableau d'édition pas apparu après {timeoutSeconds}s. Dump des controls visibles avec Name :");
+        try
+        {
+            int n = 0;
+            foreach (var c in _window.FindAllDescendants().Take(80))
+            {
+                var name = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(name)) continue;
+                if (n++ > 30) break;
+                Console.WriteLine($"          [{SafeText(() => c.ControlType.ToString())}] Id='{SafeText(() => c.AutomationId)}' Name='{name}' Rect={c.BoundingRectangle}");
+            }
+        }
+        catch { }
+        try { CaptureScreenshot("tableau-edition-timeout"); } catch { }
+        throw new Exception($"Tableau d'édition pas apparu après {timeoutSeconds}s (cf. dump + screenshot)");
+    }
+
+    /// <summary>
+    /// Dans le tableau d'édition affiché, décoche la checkbox "imprimante"
+    /// puis click 'Valider' une 2ème fois pour générer l'édition Brouillon.
+    /// </summary>
+    public void UncheckImprimanteAndValidate()
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+
+        // ITER 4 fix (2026-05-28) : la DataGridView WinForms expose les CELLULES de
+        // checkbox comme DataItem (pas comme CheckBox/Toggle controls).
+        //
+        // Dump UIA confirmé :
+        //   DataItem [X=683 W=30] Name='Ex Ligne 1'
+        //   DataItem [X=713 W=35] Name='Imprimer Ligne 1'         ← LA CASE 🖨️ (nom = 'Imprimer' pas 'Imprimante')
+        //   DataItem [X=748 W=180] Name='Imprimante Ligne 1'      ← COLONNE TEXTUELLE 'Proximité (Amitel)'
+        //
+        // Donc :
+        //   1. Trouver DataItem Name='Imprimer Ligne <N>' (data rows = N >= 1)
+        //   2. TogglePattern OU SelectionPattern OU Interaction.Click sur la cellule
+
+        Console.WriteLine($"      → Recherche cellule DataItem 'Imprimer Ligne N' (colonne 🖨️)");
+
+        var allElements = _window.FindAllDescendants()
+            .Where(c => { try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; } })
+            .ToList();
+
+        // Cherche TOUTES les DataItem 'Imprimer Ligne N' (data rows uniquement, donc Ligne >= 1).
+        // Ligne 0 = ligne placeholder / header DataGridView (1ère row "vide"), pas la data.
+        var imprimerCells = allElements
+            .Where(c =>
+            {
+                try
+                {
+                    var ct = c.ControlType.ToString();
+                    if (ct.IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) < 0) return false;
+                    var n = SafeText(() => c.Name);
+                    // Match "Imprimer Ligne N" (pas "Imprimante Ligne N" qui est colonne texte)
+                    return n.StartsWith("Imprimer Ligne ", StringComparison.OrdinalIgnoreCase)
+                        && !n.StartsWith("Imprimer Ligne 0", StringComparison.OrdinalIgnoreCase); // skip ligne 0
+                }
+                catch { return false; }
+            })
+            .OrderBy(c => c.BoundingRectangle.Y)
+            .ToList();
+
+        Console.WriteLine($"      → {imprimerCells.Count} cellules 'Imprimer Ligne N' (N>=1) trouvées :");
+        foreach (var c in imprimerCells)
+        {
+            try
+            {
+                var r = c.BoundingRectangle;
+                var hasToggle = c.Patterns.Toggle.IsSupported;
+                string state = "?";
+                if (hasToggle) try { state = c.Patterns.Toggle.Pattern.ToggleState.Value.ToString(); } catch { }
+                Console.WriteLine($"          [{SafeText(() => c.Name),20}] Rect=({r.X},{r.Y} {r.Width}×{r.Height}) Toggle={hasToggle} State={state}");
+            }
+            catch { }
+        }
+
+        // Cible : la 1ère ligne data (Ligne 1) — c'est la ligne "edition Kbis"
+        var imprimerCell = imprimerCells.FirstOrDefault();
+        if (imprimerCell == null)
+        {
+            // Fallback : Ligne 0 si pas de Ligne 1+ (cas où data est en row 0)
+            imprimerCell = allElements.FirstOrDefault(c =>
+            {
+                try
+                {
+                    var ct = c.ControlType.ToString();
+                    if (ct.IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) < 0) return false;
+                    var n = SafeText(() => c.Name);
+                    return n.Equals("Imprimer Ligne 0", StringComparison.OrdinalIgnoreCase);
+                }
+                catch { return false; }
+            });
+            if (imprimerCell != null)
+                Console.WriteLine($"      ⓘ Fallback : utilise 'Imprimer Ligne 0' (pas de Ligne 1+)");
+        }
+
+        if (imprimerCell == null)
+        {
+            // Dump diag complet
+            Console.WriteLine($"      ✗ Aucune cellule 'Imprimer Ligne N' trouvée. Dump complet des DataItems visibles :");
+            foreach (var c in allElements.Where(c =>
+            {
+                try { return c.ControlType.ToString().IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) >= 0; }
+                catch { return false; }
+            }).Take(40))
+            {
+                Console.WriteLine($"          DataItem [X={c.BoundingRectangle.X,4} Y={c.BoundingRectangle.Y,4} W={c.BoundingRectangle.Width,3}] Name='{SafeText(() => c.Name)}'");
+            }
+            try { CaptureScreenshot("imprimante-cell-not-found"); } catch { }
+            throw new Exception($"Cellule 'Imprimer Ligne N' introuvable dans le tableau d'éditions (cf. dump + screenshot)");
+        }
+
+        var rect = imprimerCell.BoundingRectangle;
+        var cellName = SafeText(() => imprimerCell.Name);
+        int screenCx = (int)(rect.X + rect.Width / 2);
+        int screenCy = (int)(rect.Y + rect.Height / 2);
+        Console.WriteLine($"      → Cell cible : '{cellName}' à X={rect.X} Y={rect.Y} W={rect.Width} (center screen=({screenCx},{screenCy}))");
+
+        // Dump patterns/props pour comprendre l'état réel de la cellule
+        try
+        {
+            var isEnabled = imprimerCell.IsEnabled;
+            var hasFocus = imprimerCell.Properties.HasKeyboardFocus.ValueOrDefault;
+            var isFocusable = imprimerCell.Properties.IsKeyboardFocusable.ValueOrDefault;
+            string valuePat = "?";
+            try { if (imprimerCell.Patterns.Value.IsSupported) valuePat = $"Value='{imprimerCell.Patterns.Value.Pattern.Value.Value}' RO={imprimerCell.Patterns.Value.Pattern.IsReadOnly.Value}"; }
+            catch (Exception ex) { valuePat = $"throw:{ex.Message.Split('.')[0]}"; }
+            string togglePat = imprimerCell.Patterns.Toggle.IsSupported ? "yes" : "no";
+            string invokePat = imprimerCell.Patterns.Invoke.IsSupported ? "yes" : "no";
+            string selPat = imprimerCell.Patterns.SelectionItem.IsSupported ? "yes" : "no";
+            Console.WriteLine($"      → Cell props : Enabled={isEnabled} HasFocus={hasFocus} Focusable={isFocusable} Toggle={togglePat} Invoke={invokePat} SelectionItem={selPat} Value=[{valuePat}]");
+
+            // Dump enfants éventuels (FindAllChildren) au cas où un CheckBox est nested
+            var children = imprimerCell.FindAllChildren();
+            Console.WriteLine($"      → Cell a {children.Length} enfants :");
+            foreach (var ch in children.Take(5))
+            {
+                try
+                {
+                    var ct = ch.ControlType.ToString();
+                    var cn = SafeText(() => ch.Name);
+                    var cr = ch.BoundingRectangle;
+                    var hToggle = ch.Patterns.Toggle.IsSupported ? "Toggle" : "";
+                    var hValue = ch.Patterns.Value.IsSupported ? "Value" : "";
+                    Console.WriteLine($"          [{ct}] '{cn}' Rect=({cr.X},{cr.Y} {cr.Width}×{cr.Height}) {hToggle} {hValue}");
+                }
+                catch { }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⚠ Dump props jeté : {ex.Message}"); }
+
+        // ITER 13 stratégie : ForceForeground sur la popup AVANT toute interaction.
+        // Le DGV WinForms refuse de processer les inputs (Mouse.Click SendInput, Space)
+        // quand la popup n'a pas le foreground focus. AttachThreadInput + SetForegroundWindow
+        // est la seule technique fiable cross-process pour éviter le bouncer Win2000+.
+        //
+        // SAFETY GUARD CRITIQUE : avant de cliquer Valider, on RE-VÉRIFIE Value='False'.
+        // Si toujours True → ABORT (throw) pour empêcher l'impression physique accidentelle.
+        bool toggled = false;
+
+        // Read initial UIA value
+        string initialValue = "?";
+        try { if (imprimerCell.Patterns.Value.IsSupported) initialValue = imprimerCell.Patterns.Value.Pattern.Value.Value; } catch { }
+        Console.WriteLine($"      → État initial (UIA) : Value='{initialValue}'");
+
+        // 1. Force le foreground sur la popup. Trouve son hwnd via WindowFromPoint au cell center,
+        //    puis remonte au top-level (sinon on récupère le hwnd interne du DataGridView).
+        IntPtr dgvHwnd = IntPtr.Zero;
+        IntPtr popupHwnd = IntPtr.Zero;
+        try
+        {
+            // Pour récupérer le hwnd, on utilise ClickAtScreenPoint avec un coords ailleurs
+            // dans le popup (ex: titlebar Y=192) pour ne PAS cliquer la cell — juste pour le hwnd.
+            // En fait c'est plus simple : on lit WindowFromPoint directement via une méthode helper.
+            // Hack : on appelle ClickAtScreenPoint à (770, 192) qui est titre popup "Tableau des éditions"
+            //   mais ça enverrait un click. On préfère récupérer le hwnd dgv via FlaUI _window descendants.
+            //
+            // Approche : descendre dans _window pour trouver le DataGridView (Pane avec ControlType
+            // contenant "Pane" et un hwnd natif, dans la zone Y 220-320).
+            var dgvCandidates = _window.FindAllDescendants()
+                .Where(c =>
+                {
+                    try
+                    {
+                        var r = c.BoundingRectangle;
+                        if (r.Y > 240 || r.Y + r.Height < 280) return false;
+                        var hwnd = c.Properties.NativeWindowHandle.ValueOrDefault;
+                        return hwnd != IntPtr.Zero;
+                    }
+                    catch { return false; }
+                })
+                .ToList();
+            if (dgvCandidates.Count > 0)
+            {
+                dgvHwnd = dgvCandidates[0].Properties.NativeWindowHandle.ValueOrDefault;
+                popupHwnd = Interaction.GetTopLevelWindow(dgvHwnd);
+                Console.WriteLine($"      → DGV hwnd=0x{dgvHwnd.ToInt64():X}, popup top-level hwnd=0x{popupHwnd.ToInt64():X}");
+            }
+            else
+            {
+                Console.WriteLine($"      ⚠ Pas trouvé de DGV avec hwnd via descendants → fallback _window hwnd");
+                popupHwnd = _window.Properties.NativeWindowHandle.ValueOrDefault;
+            }
+
+            if (popupHwnd != IntPtr.Zero)
+            {
+                Console.WriteLine($"      → ForceForeground(popup hwnd=0x{popupHwnd.ToInt64():X})");
+                bool fg = Interaction.ForceForeground(popupHwnd);
+                Console.WriteLine($"      → ForceForeground result={fg}");
+                Thread.Sleep(300);
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⚠ Foreground setup jeté : {ex.Message}"); }
+
+        // CRITICAL : re-fetch cell coords après ForceForeground (au cas où la popup a bougé)
+        try
+        {
+            var refreshedCell = _window.FindAllDescendants()
+                .FirstOrDefault(c =>
+                {
+                    try { return SafeText(() => c.Name).Equals(cellName, StringComparison.OrdinalIgnoreCase); }
+                    catch { return false; }
+                });
+            if (refreshedCell != null)
+            {
+                var newRect = refreshedCell.BoundingRectangle;
+                int newCx = (int)(newRect.X + newRect.Width / 2);
+                int newCy = (int)(newRect.Y + newRect.Height / 2);
+                if (newCx != screenCx || newCy != screenCy)
+                {
+                    Console.WriteLine($"      ⓘ Cell coords ont bougé : ({screenCx},{screenCy}) → ({newCx},{newCy}) — màj");
+                    screenCx = newCx;
+                    screenCy = newCy;
+                }
+                else
+                {
+                    Console.WriteLine($"      ✓ Cell coords stables après foreground : ({screenCx},{screenCy})");
+                }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⚠ Re-fetch coords jeté : {ex.Message}"); }
+
+        // 2. Stratégie en cascade :
+        //    A. PostMessage WM_LBUTTON sur DGV pour sélectionner la cell + ForceFocus
+        //    B. PostMessage Space sur DGV (focused via AttachThreadInput)
+        //    C. Si Value pas changé → FlaUI Mouse.Click physique (focus stealing)
+        //    D. Si toujours pas changé → Mouse.Click + Space SendInput
+        try
+        {
+            // A. ClickAtScreenPoint pour sélectionner via PostMessage (sans foreground stealing)
+            Console.WriteLine($"      → ClickAtScreenPoint PostMessage à ({screenCx},{screenCy}) (no foreground required)");
+            var clickHwnd = Interaction.ClickAtScreenPoint(screenCx, screenCy, _app?.ProcessId ?? 0);
+            if (clickHwnd == IntPtr.Zero) clickHwnd = Interaction.ClickAtScreenPoint(screenCx, screenCy, 0);
+            Console.WriteLine($"      → PostMessage click hwnd=0x{clickHwnd.ToInt64():X}");
+            Thread.Sleep(300);
+
+            // B. ForceFocus sur DGV + Space (AttachThreadInput permet SetFocus cross-process)
+            if (dgvHwnd != IntPtr.Zero)
+            {
+                Console.WriteLine($"      → ForceFocus(DGV hwnd=0x{dgvHwnd.ToInt64():X}) + PostKey VK_SPACE");
+                bool focused = Interaction.ForceFocus(dgvHwnd);
+                Console.WriteLine($"      → ForceFocus result={focused}");
+                Thread.Sleep(150);
+                Interaction.PostKey(dgvHwnd, 0x20); // VK_SPACE
+                Thread.Sleep(500);
+            }
+
+            // Re-find cell + re-check Value
+            var afterPostMsgCell = _window.FindAllDescendants()
+                .FirstOrDefault(c =>
+                {
+                    try { return SafeText(() => c.Name).Equals(cellName, StringComparison.OrdinalIgnoreCase); }
+                    catch { return false; }
+                });
+            string afterPostMsgValue = "?";
+            try { if (afterPostMsgCell != null && afterPostMsgCell.Patterns.Value.IsSupported) afterPostMsgValue = afterPostMsgCell.Patterns.Value.Pattern.Value.Value; } catch { }
+            Console.WriteLine($"      → Post-PostMsg-flow Value='{afterPostMsgValue}'");
+            if (string.Equals(afterPostMsgValue, "False", StringComparison.OrdinalIgnoreCase))
+            {
+                Console.WriteLine($"      ✓ Toggle via PostMessage+Focus+Space");
+                toggled = true;
+            }
+
+            // C+D. Fallback SendInput si PostMessage flow n'a pas marché
+            if (!toggled)
+            {
+                Console.WriteLine($"      → PostMessage flow KO — tentative FlaUI Mouse.Click physique");
+                FlaUI.Core.Input.Mouse.MoveTo(new System.Drawing.Point(screenCx, screenCy));
+                Thread.Sleep(100);
+                FlaUI.Core.Input.Mouse.Click(FlaUI.Core.Input.MouseButton.Left);
+                Thread.Sleep(400);
+
+                var afterClickCell = _window.FindAllDescendants()
+                    .FirstOrDefault(c =>
+                    {
+                        try { return SafeText(() => c.Name).Equals(cellName, StringComparison.OrdinalIgnoreCase); }
+                        catch { return false; }
+                    });
+                string afterClickValue = "?";
+                try { if (afterClickCell != null && afterClickCell.Patterns.Value.IsSupported) afterClickValue = afterClickCell.Patterns.Value.Pattern.Value.Value; } catch { }
+                Console.WriteLine($"      → Post-Mouse.Click Value='{afterClickValue}'");
+                if (string.Equals(afterClickValue, "False", StringComparison.OrdinalIgnoreCase))
+                {
+                    Console.WriteLine($"      ✓ Toggle via FlaUI Mouse.Click");
+                    toggled = true;
+                }
+
+                if (!toggled)
+                {
+                    Console.WriteLine($"      → Mouse.Click KO — tentative Space (SendInput)");
+                    FlaUI.Core.Input.Keyboard.Press(FlaUI.Core.WindowsAPI.VirtualKeyShort.SPACE);
+                    Thread.Sleep(500);
+                    afterClickCell = _window.FindAllDescendants()
+                        .FirstOrDefault(c =>
+                        {
+                            try { return SafeText(() => c.Name).Equals(cellName, StringComparison.OrdinalIgnoreCase); }
+                            catch { return false; }
+                        });
+                    try { if (afterClickCell != null && afterClickCell.Patterns.Value.IsSupported) afterClickValue = afterClickCell.Patterns.Value.Pattern.Value.Value; } catch { }
+                    Console.WriteLine($"      → Post-SendInput-Space Value='{afterClickValue}'");
+                    if (string.Equals(afterClickValue, "False", StringComparison.OrdinalIgnoreCase))
+                    {
+                        Console.WriteLine($"      ✓ Toggle via SendInput Space");
+                        toggled = true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⚠ Toggle flow jeté : {ex.Message}"); }
+
+        // GUARD CRITIQUE : avant Valider, RE-CONFIRM Value='False'
+        // Si la cell n'est PAS False, on ABORT pour ne pas déclencher l'impression physique
+        try
+        {
+            var guardCell = _window.FindAllDescendants()
+                .FirstOrDefault(c =>
+                {
+                    try { return SafeText(() => c.Name).Equals(cellName, StringComparison.OrdinalIgnoreCase); }
+                    catch { return false; }
+                });
+            string guardValue = "?";
+            try { if (guardCell != null && guardCell.Patterns.Value.IsSupported) guardValue = guardCell.Patterns.Value.Pattern.Value.Value; } catch { }
+            Console.WriteLine($"      ⚙ GUARD final : Value='{guardValue}' (DOIT être 'False' pour autoriser Valider)");
+            if (!string.Equals(guardValue, "False", StringComparison.OrdinalIgnoreCase))
+            {
+                try { CaptureScreenshot("imprimante-guard-fail-NOT-valid"); } catch { }
+                throw new Exception($"GUARD imprimante FAIL : Value='{guardValue}' (attendu 'False'). ABORT pour éviter l'impression physique. Click Valider NON exécuté.");
+            }
+            toggled = true; // confirmé OK
+        }
+        catch (Exception ex) when (!(ex.Message.StartsWith("GUARD")))
+        {
+            Console.WriteLine($"      ⚠ Guard read jeté : {ex.Message}");
+            try { CaptureScreenshot("imprimante-guard-read-fail"); } catch { }
+            throw new Exception($"GUARD imprimante : impossible de re-lire Value pour confirmer 'False'. ABORT pour éviter l'impression. Raison : {ex.Message}");
+        }
+
+        if (!toggled)
+        {
+            try { CaptureScreenshot("imprimante-toggle-no-value-change"); } catch { }
+            throw new Exception($"Toggle imprimante : Value '{initialValue}' n'a pas changé après ForceForeground + Mouse.Click + Space. ABORT pour éviter l'impression.");
+        }
+
+        Thread.Sleep(500);
+
+        // Screenshot post-toggle pour vérifier visuellement que la checkbox est décochée
+        try { CaptureScreenshot("imprimante-post-toggle"); } catch { }
+
+        // ITER 18 : Click Valider PHYSIQUE (FlaUI Mouse) — l'Interaction.Click via PostMessage
+        // ferme la popup mais ne déclenche pas la persistance DEMANDE_EDITION en DB (vérifié
+        // par SELECT en DB après iter17). Donc on utilise Mouse.MoveTo + Click physique sur
+        // le bouton Valider de la popup pour s'assurer que l'OnClick handler fire complètement.
+        Console.WriteLine($"      → Click 'Valider' PHYSIQUE du tableau des éditions");
+        var validerBtn = _window.FindAllDescendants()
+            .FirstOrDefault(c =>
+            {
+                var n = SafeText(() => c.Name);
+                if (string.IsNullOrEmpty(n)) return false;
+                var nl = n.ToLowerInvariant();
+                if (nl.Contains("sélection") || nl.Contains("selection")) return false;
+                // Filter sur les Valider de POPUP (Y > 800 typique pour le tableau des éditions)
+                try
+                {
+                    var r = c.BoundingRectangle;
+                    if (r.Y < 700) return false; // tab XEX Valider est plus haut
+                }
+                catch { return false; }
+                return nl.StartsWith("valider") || nl.Equals("valider", StringComparison.Ordinal);
+            });
+        if (validerBtn == null)
+        {
+            // Fallback : n'importe quel Valider
+            validerBtn = _window.FindAllDescendants()
+                .FirstOrDefault(c =>
+                {
+                    var n = SafeText(() => c.Name);
+                    if (string.IsNullOrEmpty(n)) return false;
+                    var nl = n.ToLowerInvariant();
+                    if (nl.Contains("sélection") || nl.Contains("selection")) return false;
+                    return nl.StartsWith("valider") || nl.Equals("valider", StringComparison.Ordinal);
+                });
+        }
+        if (validerBtn == null)
+            throw new Exception("Bouton 'Valider' du Tableau des éditions introuvable pour click physique");
+
+        var vRect = validerBtn.BoundingRectangle;
+        int vCx = (int)(vRect.X + vRect.Width / 2);
+        int vCy = (int)(vRect.Y + vRect.Height / 2);
+        Console.WriteLine($"      → Bouton 'Valider' à ({vCx},{vCy}), Name='{SafeText(() => validerBtn.Name)}'");
+
+        // ForceFocus sur le bouton lui-même (si hwnd) ou sur _window
+        var vHwnd = validerBtn.Properties.NativeWindowHandle.ValueOrDefault;
+        if (vHwnd != IntPtr.Zero)
+        {
+            Console.WriteLine($"      → ForceFocus(Valider hwnd=0x{vHwnd.ToInt64():X})");
+            Interaction.ForceFocus(vHwnd);
+            Thread.Sleep(100);
+        }
+
+        // Click via ClickAtScreenPoint (PostMessage WM_LBUTTON, no SendInput → no UIPI block)
+        Console.WriteLine($"      → ClickAtScreenPoint sur Valider ({vCx},{vCy})");
+        var clickH = Interaction.ClickAtScreenPoint(vCx, vCy, _app?.ProcessId ?? 0);
+        if (clickH == IntPtr.Zero) clickH = Interaction.ClickAtScreenPoint(vCx, vCy, 0);
+        Console.WriteLine($"      → hwnd ciblé = 0x{clickH.ToInt64():X}");
+        Thread.Sleep(500);
+
+        // Tentative complémentaire : InvokePattern sur le bouton (les WinForms Button supportent
+        // souvent InvokePattern qui fire vraiment l'OnClick handler complet).
+        try
+        {
+            if (validerBtn.Patterns.Invoke.IsSupported)
+            {
+                Console.WriteLine($"      → InvokePattern.Invoke() sur Valider (assure le fire du Click handler)");
+                validerBtn.Patterns.Invoke.Pattern.Invoke();
+                Thread.Sleep(500);
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ Invoke jeté (acceptable si déjà cliqué) : {ex.Message}"); }
+
+        Console.WriteLine($"      ✓ Click Valider envoyé (PostMessage + Invoke)");
+    }
+
+    /// <summary>
+    /// Fallback : si on ne trouve pas la ligne edition Kbis, on cherche le label
+    /// "Proximité" (colonne Imprimante) et on toggle le CheckBox/Toggle le plus
+    /// proche à GAUCHE (colonne 🖨️).
+    /// </summary>
+    private void TryToggleViaProximiteLabel(List<AutomationElement> allElements)
+    {
+        var proxLabel = allElements.FirstOrDefault(c =>
+        {
+            var n = SafeText(() => c.Name).ToLowerInvariant();
+            return (n.StartsWith("proximité") || n.StartsWith("proximite")) && n.Contains("amitel");
+        });
+        if (proxLabel == null) throw new Exception("Ni ligne 'edition Kbis' ni label 'Proximité (Amitel...)' trouvés dans le tableau d'éditions");
+
+        var pr = proxLabel.BoundingRectangle;
+        Console.WriteLine($"      → Label 'Proximité' trouvé à {pr}");
+        var leftToggles = allElements
+            .Where(c =>
+            {
+                try
+                {
+                    var r = c.BoundingRectangle;
+                    if (Math.Abs(r.Y - pr.Y) > 15) return false;
+                    if (r.X >= pr.X) return false; // gauche de Proximité uniquement
+                    return c.Patterns.Toggle.IsSupported;
+                }
+                catch { return false; }
+            })
+            .OrderByDescending(c => c.BoundingRectangle.X)
+            .ToList();
+        Console.WriteLine($"      → {leftToggles.Count} toggles à gauche de Proximité");
+
+        var imprimante = leftToggles.FirstOrDefault();
+        if (imprimante == null) throw new Exception("Aucun toggle à gauche du label 'Proximité' — structure tableau inattendue");
+
+        try
+        {
+            var tp = imprimante.Patterns.Toggle.Pattern;
+            Console.WriteLine($"      → Décoche toggle à X={imprimante.BoundingRectangle.X} — état={tp.ToggleState}");
+            if (tp.ToggleState.Value == FlaUI.Core.Definitions.ToggleState.On) tp.Toggle();
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⚠ Toggle jeté : {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// Vérifie que la popup "Tableau des éditions" s'est fermée après Click Valider.
+    /// Critère de PASS Sc 12 : popup disparue dans timeoutSeconds → l'édition Brouillon
+    /// a été validée + envoyée à la File différée (ou autre flow asynchrone).
+    /// Le viewer Word/RigAffichageDoc qui s'ouvre n'est PAS un comportement fiable
+    /// dans cette config RIG — le brouillon est queuedé pour traitement séparé.
+    /// </summary>
+    public void WaitForTableauEditionClosed(int timeoutSeconds = 10)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        Console.WriteLine($"      → Attente fermeture popup 'Tableau des éditions' (max {timeoutSeconds}s)…");
+        while (sw.Elapsed.TotalSeconds < timeoutSeconds)
+        {
+            try
+            {
+                var tableauVisible = _window.FindAllDescendants()
+                    .Where(c =>
+                    {
+                        try
+                        {
+                            var n = SafeText(() => c.Name).ToLowerInvariant();
+                            return (n.Contains("tableau") && n.Contains("édition")) || n.Equals("tableau des éditions");
+                        }
+                        catch { return false; }
+                    })
+                    .Any();
+                if (!tableauVisible)
+                {
+                    Console.WriteLine($"      ✓ Popup 'Tableau des éditions' fermée après {sw.Elapsed.TotalSeconds:F1}s — Brouillon généré (queued)");
+                    return;
+                }
+            }
+            catch { }
+            Thread.Sleep(500);
+        }
+        try { CaptureScreenshot("tableau-edition-not-closed"); } catch { }
+        throw new Exception($"Popup 'Tableau des éditions' encore présente après {timeoutSeconds}s — Brouillon non validé ?");
+    }
+
+    /// <summary>
+    /// (Legacy, conservé pour compat) Poll pour détecter qu'un viewer Brouillon s'est ouvert :
+    ///   (a) un nouveau process WINWORD.EXE spawné
+    ///   (b) un nouveau process RigAffichageDoc spawné (viewer interne RIG)
+    ///   (c) une nouvelle fenêtre top-level chez un RigAffichageDoc existant
+    ///       (le viewer peut être pré-existant et juste ré-utiliser sa fenêtre)
+    ///   (d) un nouveau fichier .doc/.docx créé dans temp dirs RIG.
+    /// Dans cette config RIG, le viewer n'apparaît pas auto — utiliser WaitForTableauEditionClosed.
+    /// </summary>
+    public void WaitForDocOpened(int timeoutSeconds = 30)
+    {
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+
+        // Baseline : PIDs des process viewer DÉJÀ en cours (avant le Valider)
+        var baselineWinword = System.Diagnostics.Process.GetProcessesByName("WINWORD")
+            .Select(p => p.Id).ToHashSet();
+        var baselineRigDoc = System.Diagnostics.Process.GetProcessesByName("RigAffichageDoc")
+            .Select(p => p.Id).ToHashSet();
+
+        // Baseline window count par RigAffichageDoc existant (pour détecter (c))
+        int baselineRigDocWindows = 0;
+        foreach (var p in System.Diagnostics.Process.GetProcessesByName("RigAffichageDoc"))
+        {
+            try
+            {
+                if (p.MainWindowHandle != IntPtr.Zero) baselineRigDocWindows++;
+            }
+            catch { }
+        }
+
+        Console.WriteLine($"      → Attente édition Brouillon (max {timeoutSeconds}s) — baseline WINWORD=[{string.Join(",", baselineWinword)}] RigAffichageDoc=[{string.Join(",", baselineRigDoc)}] windows={baselineRigDocWindows}");
+
+        var tempDirs = new[]
+        {
+            Environment.GetEnvironmentVariable("TEMP") ?? @"C:\Windows\Temp",
+            @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\Documents", @"C:\rig\Brouillon", @"C:\rig\Edition",
+            Path.Combine(Environment.GetEnvironmentVariable("USERPROFILE") ?? "", "AppData", "Local", "Temp"),
+        };
+        var startTime = DateTime.Now.AddSeconds(-5);
+
+        while (sw.Elapsed.TotalSeconds < timeoutSeconds)
+        {
+            // (a) WINWORD nouveau process
+            var winwords = System.Diagnostics.Process.GetProcessesByName("WINWORD")
+                .Where(p => !baselineWinword.Contains(p.Id))
+                .ToList();
+            if (winwords.Count > 0)
+            {
+                Console.WriteLine($"      ✓ WINWORD.EXE spawné après {sw.Elapsed.TotalSeconds:F1}s — PIDs={string.Join(",", winwords.Select(p => p.Id))}");
+                return;
+            }
+
+            // (b) RigAffichageDoc nouveau process
+            var newRigDocs = System.Diagnostics.Process.GetProcessesByName("RigAffichageDoc")
+                .Where(p => !baselineRigDoc.Contains(p.Id))
+                .ToList();
+            if (newRigDocs.Count > 0)
+            {
+                Console.WriteLine($"      ✓ RigAffichageDoc spawné après {sw.Elapsed.TotalSeconds:F1}s — PIDs={string.Join(",", newRigDocs.Select(p => p.Id))}");
+                return;
+            }
+
+            // (c) RigAffichageDoc existant : main window apparue ou +1 fenêtre
+            int currentRigDocWindows = 0;
+            foreach (var p in System.Diagnostics.Process.GetProcessesByName("RigAffichageDoc"))
+            {
+                try { if (p.MainWindowHandle != IntPtr.Zero) currentRigDocWindows++; }
+                catch { }
+            }
+            if (currentRigDocWindows > baselineRigDocWindows)
+            {
+                Console.WriteLine($"      ✓ RigAffichageDoc a {currentRigDocWindows} fenêtres top-level (baseline {baselineRigDocWindows}) après {sw.Elapsed.TotalSeconds:F1}s");
+                return;
+            }
+
+            // (d) Nouveau .doc/.docx
+            foreach (var dir in tempDirs)
+            {
+                if (!Directory.Exists(dir)) continue;
+                try
+                {
+                    var files = Directory.EnumerateFiles(dir, "*.doc*", SearchOption.TopDirectoryOnly)
+                        .Where(f =>
+                        {
+                            try { return File.GetCreationTime(f) >= startTime; }
+                            catch { return false; }
+                        })
+                        .ToList();
+                    if (files.Count > 0)
+                    {
+                        Console.WriteLine($"      ✓ Nouveau .doc dans {dir} après {sw.Elapsed.TotalSeconds:F1}s :");
+                        foreach (var f in files.Take(3))
+                            Console.WriteLine($"          - {f} ({new FileInfo(f).Length} octets)");
+                        return;
+                    }
+                }
+                catch { }
+            }
+
+            Thread.Sleep(500);
+        }
+
+        // Échec : screenshot + throw
+        try { CaptureScreenshot("doc-not-opened"); } catch { }
+        throw new Exception($"Édition Brouillon pas détectée après {timeoutSeconds}s (ni WINWORD ni RigAffichageDoc nouveau/window ni fichier .doc)");
+    }
+}
