@@ -72,8 +72,8 @@ public sealed class AlertesLegacyScenarioAdapter : INotifyPropertyChanged, IScen
     {
         ["int-form"] = new(Common) { ("INT-FORM : Ouvrir alerte", "Alerte 'Demandes interrompues' + grille"), ("INT-FORM : Double-clic demande", "Demande formalités (J00) rouverte") },
         ["int-dca"]  = new(Common) { ("INT-DCA : Ouvrir alerte",  "Alerte 'Demandes interrompues' + grille"), ("INT-DCA : Double-clic demande", "Demande DCADEMAT + document rouverts") },
-        ["rec-form"] = new(Common) { ("REC-FORM : Ouvrir alerte", "Alerte 'réclamations > 15 j' + grille") },
-        ["rec-dca"]  = new(Common) { ("REC-DCA : Ouvrir alerte",  "Alerte 'réclamations > 15 j' + grille") },
+        ["rec-form"] = new(Common) { ("REC-FORM : Ouvrir alerte", "Alerte 'réclamations > 15 j' + grille"), ("REC-FORM : Ouvrir 1re demande", "Demande formalités (J00) rouverte"), ("REC-FORM : Clic-droit", "Courrier de réclamation (sans imprimer)") },
+        ["rec-dca"]  = new(Common) { ("REC-DCA : Ouvrir alerte",  "Alerte 'réclamations > 15 j' + grille"), ("REC-DCA : Ouvrir 1re demande", "Demande DCADEMAT rouverte"), ("REC-DCA : Clic-droit", "Lettre de réclamation (sans imprimer)") },
     };
 
     private List<(string prefix, string label)> ExpectedSteps =>

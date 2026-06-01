@@ -483,10 +483,16 @@ internal static class Program
         {
             TryStep("REC-FORM : Ouvrir alerte 'réclamations > N j' (grille visible)",
                 () => driver.OpenAlerteRcs("réclamation"));
-            // Étape 3c — clic-droit "Reprendre les impressions" → courrier de réclamation : NON automatisable
-            // sur HDESK isolé (RIG ouvre le menu à MousePosition/curseur réel ; SetCursorPos=False + SendInput
-            // ignorés sur bureau non-input ; WM_CONTEXTMENU/VK_APPS ne déclenchent pas le menu custom).
-            // Code prêt (OpenReclamationViaMenu) pour un futur run sur bureau INPUT (mode A). Voir rapport.
+            TryStep("REC-FORM : Ouvrir 1re demande formalités J00 (reprise)",
+                () => driver.OpenFirstDemandeAndVerify(dcademat: false));
+            // Étape 3c — clic-droit demande → "Reprendre les impressions" → courrier de réclamation.
+            // ⚠ NE PAS IMPRIMER : on clique seulement l'item de menu et on OBSERVE l'aperçu (aucun bouton
+            // Imprimer touché). Le menu est tenté via 4 API distinctes (VK_APPS / RealMouseClick HDESK /
+            // WM_CONTEXTMENU / accDoDefaultAction) ; le menu S'OUVRE en pratique via VK_APPS (item lu +
+            // cliqué). L'aperçu lui-même ne peint pas sur HDESK (Mode B) → step FAIL "mur (b)" explicite,
+            // sans impression (cf. OpenReclamationViaMenuMultiTry).
+            TryStep("REC-FORM : Clic-droit → 'Reprendre les impressions' → courrier de réclamation affiché (sans imprimer)",
+                () => driver.OpenReclamationViaMenuMultiTry(dcademat: false, menuItemSub: "Reprendre les impressions", label: "Courrier de réclamation (formalités)"));
         });
 
     private static int RunLegacyAlertesRecDca(string[] args) => RunLegacyKbisScenario(
@@ -496,8 +502,12 @@ internal static class Program
         {
             TryStep("REC-DCA : Ouvrir alerte 'réclamations > N j' (grille visible)",
                 () => driver.OpenAlerteRcs("réclamation"));
-            // Étape 3c (menu contextuel "Lancer le pool d'éditions" → Lettre de réclamation) :
-            // bloqué — voir RightClickDemandeAndDumpMenu (menu non ouvrable via PostMessage, UIA hang).
+            TryStep("REC-DCA : Ouvrir 1re demande DCADEMAT (reprise)",
+                () => driver.OpenFirstDemandeAndVerify(dcademat: true));
+            // Étape 3c — clic-droit demande → "Lancer le pool d'éditions" → Lettre de réclamation.
+            // ⚠ NE PAS IMPRIMER (idem REC-FORM). Menu tenté via 4 API distinctes ; mur HDESK explicite si KO.
+            TryStep("REC-DCA : Clic-droit → 'Lancer le pool d'éditions' → Lettre de réclamation affichée (sans imprimer)",
+                () => driver.OpenReclamationViaMenuMultiTry(dcademat: true, menuItemSub: "Lancer le pool", label: "Lettre de réclamation (DCADEMAT)"));
         });
 
     // ════════════════════════════════════════════════════════════════════════

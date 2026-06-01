@@ -3340,7 +3340,10 @@ public sealed class LegacyDriver : IDisposable
         var sw = Stopwatch.StartNew();
         while (sw.ElapsedMilliseconds < maxMs)
         {
-            var byId = FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes");
+            // Ordre : ultDgvResultats (rapide) → Table/DataGrid par ControlType (rapide) → _dgvDemandes
+            // EN DERNIER (lookup ~100s quand absent, car FindFirstDescendant walk tout l'arbre d'un
+            // onglet PROC ouvert) : on ne le tente que si les voies rapides ont échoué.
+            var byId = FindByAutomationId("ultDgvResultats");
             if (byId is not null) return byId;
             try
             {
@@ -3351,7 +3354,8 @@ public sealed class LegacyDriver : IDisposable
             catch { }
             Thread.Sleep(300);
         }
-        return null;
+        // Voies rapides épuisées sur tout le timeout → un ultime essai sur l'AutomationId lent.
+        return FindByAutomationId("_dgvDemandes");
     }
 
     private static bool IsJ00Liaison(string s)
@@ -3386,9 +3390,12 @@ public sealed class LegacyDriver : IDisposable
     /// Permet de réessayer une autre demande si la 1ère ne produit pas de signal d'ouverture.</summary>
     private List<(int cx, int cy, string text)> FindDemandeCells(bool dcademat, int max)
     {
-        var grid = FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes")
-                ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table))
-                ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid));
+        // Ordre : ultDgvResultats (rapide) → Table/DataGrid (rapide) → _dgvDemandes EN DERNIER
+        // (lookup ~100s quand absent → walk de tout l'arbre d'un onglet PROC ouvert). On ne paie
+        // ce coût que si les voies rapides échouent (grille réellement absente).
+        AutomationElement? grid = FindByAutomationId("ultDgvResultats");
+        if (grid is null) { try { grid = _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)) ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid)); } catch { } }
+        if (grid is null) grid = FindByAutomationId("_dgvDemandes");
         if (grid is null) { Console.WriteLine("      → grille introuvable pour FindDemandeCells"); return new(); }
 
         var overrideVal = Environment.GetEnvironmentVariable(dcademat ? "RIG_ALERTES_DCADEMAT" : "RIG_ALERTES_LIAISON");
@@ -3637,6 +3644,432 @@ public sealed class LegacyDriver : IDisposable
         var (cx, cy, txt) = hit.Value;
         Console.WriteLine($"      → Demande ('{txt}') @ {cx},{cy} — WM_CONTEXTMENU + dump MSAA");
         DoOpenMenuAndClickItem(cx, cy, null);
+    }
+
+    // ── Capture diagnostique HDESK (PrintWindow) : console RIG + tout popup éventuel ────────────
+    // ⚠ BitBlt du DC desktop (GetDC(NULL)) est NOIR sur un HDESK CreateDesktop non composé (testé) :
+    // pas de surface peinte au niveau desktop. SEUL PrintWindow par-hwnd rend du contenu sur HDESK
+    // (prouvé par le self-snap). On capture donc la console RIG (preuve de la grille) ET, s'il existe,
+    // tout hwnd popup/menu top-level du process RIG (un ContextMenuStrip OUVERT serait ainsi capturé ;
+    // son absence dans la capture + l'absence MSAA = double preuve qu'aucun menu ne s'est ouvert).
+    [DllImport("user32.dll")] private static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+    [DllImport("user32.dll")] private static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll", SetLastError = true)] private static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint pid);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder lpClassName, int nMaxCount);
+    private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    /// <summary>Capture diagnostique (PrintWindow, HDESK-compatible) : la console RIG + tout popup
+    /// visible du même process (menu / aperçu). Best-effort, ne jette jamais. Retourne le chemin du
+    /// PNG de la console (preuve principale de la grille).</summary>
+    public string? CaptureFullVirtualScreen(string label)
+    {
+        if (string.IsNullOrEmpty(_snapDir)) { Console.WriteLine("      ⓘ CaptureFullVirtualScreen : _snapDir null (self-snap pas démarré)."); return null; }
+        var safe = string.Join("_", (label ?? "diag").Split(System.IO.Path.GetInvalidFileNameChars()));
+        var stamp = DateTime.Now.ToString("HHmmss-fff");
+        string? mainPath = null;
+
+        // 1) La console RIG (hwnd caché par le self-snap, sinon hwnd de _window).
+        IntPtr mainHwnd = _snapHwnd;
+        if (mainHwnd == IntPtr.Zero) { try { mainHwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { } }
+        if (mainHwnd != IntPtr.Zero)
+        {
+            try
+            {
+                mainPath = System.IO.Path.Combine(_snapDir!, $"diag-{safe}-{stamp}.png");
+                Interaction.CaptureWindowByHwnd(mainHwnd, mainPath);
+                Console.WriteLine($"      📸 Diag console RIG (PrintWindow) : {mainPath}");
+            }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ CaptureFullVirtualScreen (console) jeté : {ex.GetType().Name}: {ex.Message}"); }
+        }
+
+        // 2) Tout popup/menu top-level du même process (preuve d'un menu ouvert, le cas échéant).
+        try
+        {
+            int rigPid = _app?.ProcessId ?? 0;
+            if (rigPid > 0)
+            {
+                int popupSeq = 0;
+                EnumWindows((h, _) =>
+                {
+                    try
+                    {
+                        if (!IsWindowVisible(h)) return true;
+                        GetWindowThreadProcessId(h, out uint wpid);
+                        if (wpid != (uint)rigPid) return true;
+                        if (h == mainHwnd) return true;
+                        var sbc = new System.Text.StringBuilder(256);
+                        GetClassName(h, sbc, sbc.Capacity);
+                        var cls = sbc.ToString();
+                        // ContextMenuStrip WinForms = classe "WindowsForms10.Window.*" sans titre ; les
+                        // vrais menus natifs = "#32768". On capture tout popup non-principal du process.
+                        var pPath = System.IO.Path.Combine(_snapDir!, $"diag-{safe}-popup{++popupSeq}-{cls.Replace('.', '_')}-{stamp}.png");
+                        try { Interaction.CaptureWindowByHwnd(h, pPath); Console.WriteLine($"      📸 Diag POPUP process RIG (cls='{cls}') : {pPath}"); } catch { }
+                    }
+                    catch { }
+                    return true;
+                }, IntPtr.Zero);
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ CaptureFullVirtualScreen (enum popups) : {ex.Message}"); }
+
+        return mainPath;
+    }
+
+    /// <summary>Sonde MSAA autour de (cx,cy) pour savoir si un ContextMenuStrip (MENUPOPUP) est
+    /// actuellement ouvert. Retourne true + le dump des items s'il l'est. Lecture seule, idempotent
+    /// (réutilise <see cref="FindMenuItemCenterViaMsaa"/> avec un itemSub introuvable).</summary>
+    private bool IsContextMenuOpen(int cx, int cy, out string dump)
+    {
+        // U+FFFF = sentinelle qu'aucun item ne contient → on ne récupère que le dump + le fait
+        // qu'un MENUPOPUP a été trouvé (dump non vide ⇔ menu ouvert).
+        FindMenuItemCenterViaMsaa(cx, cy, "￿", out dump);
+        return !string.IsNullOrEmpty(dump);
+    }
+
+    // ── Détection robuste du ContextMenuStrip RIG par ÉNUMÉRATION de fenêtres (pas par point) ───
+    // OBSERVATION clé (run 3, 2026-06-01) : le menu S'OUVRE bien (capture PrintWindow du popup =
+    // "Reprendre les impressions" etc.), mais FindMenuItemCenterViaMsaa (sonde par point autour de
+    // la cellule) ne le voyait pas : le ContextMenuStrip WinForms est un hwnd TOP-LEVEL distinct,
+    // classe "WindowsForms10.Window.*", positionné ailleurs que les points sondés. On le retrouve
+    // donc par EnumWindows (visible + même process + classe WinForms + non-principal + non SysShadow)
+    // et on lit ses items via AccessibleObjectFromWindow sur CE hwnd.
+    [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+    [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+
+    /// <summary>Énumère les fenêtres pour trouver le hwnd du ContextMenuStrip ouvert : visible, du
+    /// process RIG, classe "WindowsForms10.Window.*" (le ToolStripDropDown WinForms), distinct de la
+    /// console principale et d'une ombre (SysShadow). Retourne IntPtr.Zero si aucun.</summary>
+    private IntPtr FindMenuPopupHwnd()
+    {
+        IntPtr found = IntPtr.Zero;
+        int rigPid = _app?.ProcessId ?? 0;
+        if (rigPid <= 0) return IntPtr.Zero;
+        IntPtr mainHwnd = _snapHwnd;
+        if (mainHwnd == IntPtr.Zero) { try { mainHwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { } }
+        try
+        {
+            EnumWindows((h, _) =>
+            {
+                try
+                {
+                    if (!IsWindowVisible(h)) return true;
+                    GetWindowThreadProcessId(h, out uint wpid);
+                    if (wpid != (uint)rigPid) return true;
+                    if (h == mainHwnd) return true;
+                    var sb = new System.Text.StringBuilder(256);
+                    GetClassName(h, sb, sb.Capacity);
+                    var cls = sb.ToString();
+                    if (cls.IndexOf("WindowsForms", StringComparison.OrdinalIgnoreCase) < 0) return true; // ni SysShadow ni #32768 wrapper
+                    // Heuristique : un menu a une certaine hauteur (plusieurs items). On exige >40px.
+                    if (GetWindowRect(h, out var r))
+                    {
+                        int hgt = r.Bottom - r.Top, wid = r.Right - r.Left;
+                        if (hgt < 40 || wid < 30) return true;
+                    }
+                    found = h;
+                    return false; // stop : 1er popup WinForms trouvé
+                }
+                catch { }
+                return true;
+            }, IntPtr.Zero);
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ FindMenuPopupHwnd jeté : {ex.Message}"); }
+        return found;
+    }
+
+    /// <summary>Lit les items du ContextMenuStrip via MSAA sur le hwnd du popup
+    /// (AccessibleObjectFromWindow + OBJID_CLIENT). Retourne le centre écran de l'item dont le nom
+    /// contient <paramref name="itemSub"/> et remplit <paramref name="dump"/> (tous les libellés lus).
+    /// itemSub = U+FFFF (introuvable) → sert juste à récupérer le dump (détection présence menu).</summary>
+    private (int x, int y)? ReadMenuItemFromHwnd(IntPtr menuHwnd, string itemSub, out string dump)
+    {
+        dump = "";
+        if (menuHwnd == IntPtr.Zero) return null;
+        const uint OBJID_CLIENT = 0xFFFFFFFC;
+        var iid = IID_IAccessible;
+        Accessibility.IAccessible? root;
+        try
+        {
+            if (AccessibleObjectFromWindow(menuHwnd, OBJID_CLIENT, ref iid, out var obj) != 0 || obj is not Accessibility.IAccessible a)
+            { Console.WriteLine("      ⓘ ReadMenuItemFromHwnd : pas d'IAccessible sur le hwnd menu."); return null; }
+            root = a;
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ ReadMenuItemFromHwnd AccessibleObjectFromWindow jeté : {ex.Message}"); return null; }
+
+        var names = new List<string>();
+        (int x, int y)? found = null;
+        void Walk(Accessibility.IAccessible node, int depth)
+        {
+            if (depth > 6) return;
+            int count; try { count = node.accChildCount; } catch { return; }
+            if (count <= 0) return;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(node, 0, count, kids, out got) != 0) return; } catch { return; }
+            for (int i = 0; i < got; i++)
+            {
+                var k = kids[i];
+                Accessibility.IAccessible? childAcc = k as Accessibility.IAccessible;
+                int childId = k is int ci ? ci : 0;
+                string name; int role; (int x, int y)? loc = null;
+                if (childAcc != null)
+                {
+                    name = SafeAcc(() => childAcc.get_accName(0));
+                    try { role = Convert.ToInt32(childAcc.get_accRole(0)); } catch { role = 0; }
+                    try { childAcc.accLocation(out int l, out int t, out int w, out int h, 0); if (w > 0 && h > 0) loc = (l + w / 2, t + h / 2); } catch { }
+                }
+                else
+                {
+                    name = SafeAcc(() => node.get_accName(childId));
+                    try { role = Convert.ToInt32(node.get_accRole(childId)); } catch { role = 0; }
+                    try { node.accLocation(out int l, out int t, out int w, out int h, childId); if (w > 0 && h > 0) loc = (l + w / 2, t + h / 2); } catch { }
+                }
+                const int ROLE_SYSTEM_MENUITEM = 0x0C;
+                if (!string.IsNullOrWhiteSpace(name) && (role == ROLE_SYSTEM_MENUITEM || loc.HasValue))
+                    names.Add(name);
+                if (found is null && !string.IsNullOrWhiteSpace(name)
+                    && name.IndexOf(itemSub, StringComparison.OrdinalIgnoreCase) >= 0 && loc.HasValue)
+                    found = loc;
+                // descendre dans les conteneurs (le ToolStrip enveloppe ses items)
+                if (childAcc != null && loc is null) Walk(childAcc, depth + 1);
+            }
+        }
+        try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      ⓘ ReadMenuItemFromHwnd Walk jeté : {ex.Message}"); }
+        dump = string.Join(" | ", names);
+        return found;
+    }
+
+    /// <summary>
+    /// Tente d'ouvrir le ContextMenuStrip de la demande à (cx,cy) via PLUSIEURS API distinctes, en
+    /// s'arrêtant dès que le hwnd du popup menu (WinForms top-level) est détecté par ÉNUMÉRATION
+    /// (<see cref="FindMenuPopupHwnd"/>) — PAS par sonde de point (qui ratait le menu, cf. run 3).
+    /// Capture un diag (PrintWindow, HDESK-compatible) après chaque tentative.
+    /// Méthodes essayées, dans l'ordre de fiabilité observée :
+    ///   (1) VK_APPS posté sur le hwnd grille (rdgvDemandes_KeyDown ouvre le menu) — ✓ marche en HDESK
+    ///   (2) WM_CONTEXTMENU posté avec coords écran (PostContextMenuAtScreenPoint)
+    ///   (3) MSAA accDoDefaultAction sur la cellule (action accessible par défaut)
+    ///   (4) RealMouseClick bouton droit = SetCursorPos + mouse_event (injection ; HDESK ISOLÉ attaché
+    ///       UNIQUEMENT — c'est notre desktop ici — sinon volerait la souris user)
+    /// Sélectionne d'abord la ligne (clic gauche posté). Retourne true si le menu a été détecté ;
+    /// <paramref name="menuHwnd"/> = hwnd du popup, <paramref name="dump"/> = items lus,
+    /// <paramref name="method"/> = méthode gagnante.</summary>
+    private bool TryOpenMenuMultiApi(int cx, int cy, out IntPtr menuHwnd, out string dump, out string method)
+    {
+        dump = ""; method = "(aucune)"; menuHwnd = IntPtr.Zero;
+        // 1) Sélection de la ligne (fixe CurrentCell — le menu custom RIG dépend de la sélection).
+        var gridHwnd = Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false);
+        if (gridHwnd == IntPtr.Zero)
+            try { gridHwnd = (FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes"))?.Properties.NativeWindowHandle.ValueOrDefault ?? IntPtr.Zero; } catch { }
+        Thread.Sleep(400);
+
+        void EscapeIfOpen() { try { if (gridHwnd != IntPtr.Zero) Interaction.PostKey(gridHwnd, 0x1B); } catch { } Thread.Sleep(200); }
+
+        // Détection : le menu est un hwnd WinForms top-level → on l'attend par énumération (poll court),
+        // puis on lit ses items via MSAA sur ce hwnd. itemSub="￿" = juste récupérer le dump. Les out
+        // params ne pouvant être capturés dans une fonction locale, on passe par des locals + ref.
+        IntPtr foundHwnd = IntPtr.Zero; string foundDump = "";
+        bool DetectMenu()
+        {
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 1500)
+            {
+                var h = FindMenuPopupHwnd();
+                if (h != IntPtr.Zero)
+                {
+                    ReadMenuItemFromHwnd(h, "￿", out var d);
+                    if (!string.IsNullOrEmpty(d)) { foundHwnd = h; foundDump = d; return true; }
+                }
+                Thread.Sleep(200);
+            }
+            return false;
+        }
+
+        // ── Tentative 1 : VK_APPS (touche Menu/Application) sur la grille — la plus fiable en HDESK ──
+        // ⚠ Flaky : VK_APPS exige le focus clavier sur la grille (non garanti sur HDESK non-input).
+        // On ré-affirme focus + CurrentCell (re-clic cellule) et on poste VK_APPS 2× avec détection
+        // entre les deux (push la fiabilité ~3/4 → quasi-systématique observée).
+        const int VK_APPS = 0x5D;
+        Console.WriteLine($"      → [menu try 1/4] VK_APPS (×2, focus ré-affirmé) sur grille hwnd=0x{gridHwnd.ToInt64():X}");
+        for (int attempt = 0; attempt < 2; attempt++)
+        {
+            Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false); // re-fixe CurrentCell
+            Thread.Sleep(150);
+            if (gridHwnd != IntPtr.Zero) { Interaction.ForceFocus(gridHwnd); Interaction.MoveCursor(cx, cy); Interaction.PostKey(gridHwnd, VK_APPS); }
+            else { Console.WriteLine("        ⓘ pas de hwnd grille → VK_APPS non envoyé."); break; }
+            if (attempt == 0) CaptureFullVirtualScreen("menu-try1-VK_APPS");
+            if (DetectMenu()) { menuHwnd = foundHwnd; dump = foundDump; method = "VK_APPS"; return true; }
+        }
+        EscapeIfOpen();
+
+        // ── Tentative 2 : VRAIE injection souris bouton droit (HDESK isolé attaché) — la plus physique ──
+        // C'est le chemin le plus proche d'un vrai utilisateur : SetCursorPos + mouse_event sur le HDESK
+        // attaché. Le handler rdgvDemandes_MouseDown(Right) ouvre alors le ContextMenuStrip à MousePosition.
+        if (Headless)
+        {
+            Console.WriteLine($"      → [menu try 2/4] RealMouseClick (bouton droit, injection réelle) @ ({cx},{cy}) — HDESK isolé");
+            Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false); // sélection préalable
+            Thread.Sleep(150);
+            Interaction.RealMouseClick(cx, cy, rightButton: true);
+            CaptureFullVirtualScreen("menu-try2-RealMouseClick");
+            if (DetectMenu()) { menuHwnd = foundHwnd; dump = foundDump; method = "RealMouseClick(HDESK)"; return true; }
+            EscapeIfOpen();
+        }
+        else Console.WriteLine("      → [menu try 2/4] RealMouseClick SKIP (non-headless : injection volerait la souris user).");
+
+        // ── Tentative 3 : WM_CONTEXTMENU (coords écran explicites) ──────────────────────────────
+        Console.WriteLine($"      → [menu try 3/4] WM_CONTEXTMENU posté @ écran ({cx},{cy}) sur grille hwnd=0x{gridHwnd.ToInt64():X}");
+        Interaction.MoveCursor(cx, cy);
+        Interaction.PostContextMenuAtScreenPoint(cx, cy, _app!.ProcessId);
+        CaptureFullVirtualScreen("menu-try3-WM_CONTEXTMENU");
+        if (DetectMenu()) { menuHwnd = foundHwnd; dump = foundDump; method = "WM_CONTEXTMENU"; return true; }
+        EscapeIfOpen();
+
+        // ── Tentative 4 : MSAA accDoDefaultAction sur la cellule (action par défaut accessible) ──
+        Console.WriteLine($"      → [menu try 4/4] MSAA accDoDefaultAction sur la cellule @ ({cx},{cy})");
+        TryAccDefaultActionAtPoint(cx, cy);
+        CaptureFullVirtualScreen("menu-try4-accDoDefaultAction");
+        if (DetectMenu()) { menuHwnd = foundHwnd; dump = foundDump; method = "accDoDefaultAction"; return true; }
+        EscapeIfOpen();
+
+        dump = ""; menuHwnd = IntPtr.Zero;
+        return false;
+    }
+
+    /// <summary>MSAA : récupère l'IAccessible au point écran (AccessibleObjectFromPoint) et appelle
+    /// accDoDefaultAction sur lui ET son parent (la cellule comme la ligne peuvent porter l'action).
+    /// Best-effort, ne jette pas. À appeler sur le thread HDESK-attaché (desktop-affine).</summary>
+    private void TryAccDefaultActionAtPoint(int px, int py)
+    {
+        try
+        {
+            if (AccessibleObjectFromPoint(new PT { X = px, Y = py }, out var accObj, out var childIdObj) != 0
+                || accObj is not Accessibility.IAccessible acc)
+            { Console.WriteLine("        ⓘ accDoDefaultAction : pas d'IAccessible au point."); return; }
+            object child = childIdObj ?? (object)0;
+            string defAct = SafeAcc(() => acc.get_accDefaultAction(child));
+            Console.WriteLine($"        ⓘ accDefaultAction='{defAct}' (childId={child})");
+            try { acc.accDoDefaultAction(child); } catch (Exception ex) { Console.WriteLine($"        ⓘ accDoDefaultAction(child) jeté : {ex.Message}"); }
+            try { acc.accDoDefaultAction(0); } catch { }
+            try { if (acc.accParent is Accessibility.IAccessible par) par.accDoDefaultAction(0); } catch { }
+        }
+        catch (Exception ex) { Console.WriteLine($"        ⓘ TryAccDefaultActionAtPoint jeté : {ex.Message}"); }
+    }
+
+    /// <summary>Ré-active l'onglet '&amp;Demandes' (la grille des demandes) s'il existe et n'est pas
+    /// déjà actif : un double-clic sur une ligne ouvre la demande dans un NOUVEL onglet par-dessus, ce
+    /// qui masque la grille (ses AutomationId ne sont alors plus dans l'arbre actif). Best-effort.</summary>
+    private void ActivateDemandesGridTab()
+    {
+        try
+        {
+            var tabControl = FindByAutomationId("tabControl");
+            if (tabControl is null) { Console.WriteLine("      ⓘ ActivateDemandesGridTab : tabControl introuvable."); return; }
+            var tabs = tabControl.FindAllChildren();
+            var demandesTab = tabs.FirstOrDefault(t => SafeText(() => t.Name).IndexOf("demande", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (demandesTab is null)
+            {
+                Console.WriteLine($"      ⓘ ActivateDemandesGridTab : onglet 'Demandes' absent (onglets : {string.Join(", ", tabs.Select(t => "'" + SafeText(() => t.Name) + "'"))}).");
+                return;
+            }
+            Console.WriteLine($"      → Ré-activation onglet grille '{SafeText(() => demandesTab.Name)}'");
+            try { Interaction.Select(demandesTab); } catch (Exception ex) { Console.WriteLine($"        ⓘ Select onglet Demandes jeté : {ex.Message}"); }
+            // Poll : attend que la grille soit de nouveau dans l'arbre actif (max 4s).
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 4000)
+            {
+                if ((FindByAutomationId("ultDgvResultats") ?? FindByAutomationId("_dgvDemandes")
+                     ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table))) is not null) break;
+                Thread.Sleep(250);
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ ActivateDemandesGridTab jeté : {ex.Message}"); }
+    }
+
+    /// <summary>
+    /// ÉTAPE 3c (multi-API) — sur une demande en réclamation : ouvre le menu contextuel en essayant
+    /// successivement WM_CONTEXTMENU / VK_APPS / accDoDefaultAction / RealMouseClick (cf.
+    /// <see cref="TryOpenMenuMultiApi"/>). Si AUCUN menu ne s'ouvre → throw "mur HDESK" descriptif
+    /// (preuve : diag plein écran capturés + dump MSAA vide). Si le menu s'ouvre → clique l'item
+    /// <paramref name="menuItemSub"/> ("Reprendre les impressions" / "Lancer le pool d'éditions")
+    /// puis vérifie qu'un courrier/lettre/onglet s'ouvre — SANS jamais déclencher d'impression
+    /// (on observe seulement l'apparition d'un viewer/fenêtre/onglet, on ne clique aucun bouton Imprimer).
+    /// </summary>
+    public void OpenReclamationViaMenuMultiTry(bool dcademat, string menuItemSub, string label)
+    {
+        // Le clic-droit s'opère sur la LIGNE dans la grille des demandes (onglet '&Demandes').
+        // Si l'étape précédente (OpenFirstDemandeAndVerify) a ouvert la demande dans un NOUVEL
+        // onglet par-dessus, la grille n'est plus l'onglet actif → on y revient explicitement.
+        ActivateDemandesGridTab();
+        var hit = FindDemandeCell(dcademat);
+        if (hit is null) throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (réclamation) trouvée dans la grille.");
+        var (cx, cy, txt) = hit.Value;
+        Console.WriteLine($"      → Demande réclamation ('{txt}') @ {cx},{cy} ; tentative menu multi-API → item '{menuItemSub}'");
+
+        bool opened = TryOpenMenuMultiApi(cx, cy, out var menuHwnd, out var dump, out var method);
+        if (!opened)
+        {
+            // Mur HDESK CONFIRMÉ : aucune des 4 API n'a matérialisé le ContextMenuStrip custom.
+            CaptureFullVirtualScreen("menu-MUR-HDESK-aucun-menu");
+            throw new Exception(
+                "Menu contextuel de la demande NON ouvert (cette fois) en HDESK non-interactif. "
+                + "API tentées sans effet : (1) VK_APPS posté ×2 + focus, (2) RealMouseClick (injection "
+                + "réelle bouton droit sur HDESK attaché), (3) WM_CONTEXTMENU posté, (4) MSAA "
+                + "accDoDefaultAction. Aucun hwnd popup WinForms détecté par énumération. "
+                + "⚠ NOTE : l'ouverture du menu est FLAKY sur HDESK (focus clavier/souris non garanti sur "
+                + "desktop non-input) — elle réussit la plupart du temps via VK_APPS ; cet échec est "
+                + "intermittent, pas un mur dur. Diag capturés (diag-menu-try*.png).");
+        }
+
+        // Menu OUVERT (hwnd popup détecté) — on lit l'item cible sur CE hwnd et on le clique.
+        Console.WriteLine($"      → ✓ Menu contextuel OUVERT via '{method}' (hwnd=0x{menuHwnd.ToInt64():X}). Items : {dump}");
+        // Preuve : capture le popup menu lui-même (PrintWindow sur son hwnd, HDESK-compatible).
+        try { var mp = System.IO.Path.Combine(_snapDir!, $"diag-menu-OUVERT-{method}-{DateTime.Now:HHmmss-fff}.png"); Interaction.CaptureWindowByHwnd(menuHwnd, mp); Console.WriteLine($"      📸 Menu contextuel capturé : {mp}"); } catch { }
+
+        var menuHit = ReadMenuItemFromHwnd(menuHwnd, menuItemSub, out var dump2);
+        if (menuHit is null)
+        {
+            CaptureFullVirtualScreen("menu-item-introuvable");
+            try { Interaction.RealKeyPress(0x1B); } catch { } // ferme le menu
+            throw new Exception($"Menu ouvert via '{method}' mais item '{menuItemSub}' introuvable. Items lus : {dump2}.");
+        }
+        Console.WriteLine($"      → Item '{menuItemSub}' trouvé @ {menuHit.Value.x},{menuHit.Value.y} (menu via {method})");
+
+        // ⚠ NE PAS IMPRIMER : on clique UNIQUEMENT l'item de menu, puis VerifyDocumentOpened OBSERVE
+        // l'apparition d'un viewer/fenêtre/onglet (le courrier/lettre = aperçu avant impression). On ne
+        // touche AUCUN bouton « Imprimer » ni boîte d'impression. Si un aperçu s'affiche → succès ;
+        // sinon → throw (mur composition DWM sur HDESK, cf. partie (b) ci-dessous).
+        // Le clic d'un item de menu popup transitoire se fait par VRAIE injection souris (sur le HDESK
+        // isolé attaché) : un WM_LBUTTON posté à un ToolStripDropDown éphémère est non fiable.
+        try
+        {
+            VerifyDocumentOpened(() =>
+            {
+                if (Headless)
+                    Interaction.RealMouseClick(menuHit.Value.x, menuHit.Value.y, rightButton: false);
+                else
+                    Interaction.ClickAtScreenPoint(menuHit.Value.x, menuHit.Value.y, _app!.ProcessId, doubleClick: false);
+            }, label, waitSeconds: 25);
+        }
+        catch (Exception ex)
+        {
+            // L'item a bien été cliqué (menu + item OK), mais aucun aperçu détectable n'est apparu.
+            // En HDESK (Mode B) c'est le MUR (b) attendu : l'aperçu avant impression passe par un
+            // chemin de composition (type AcroPDF/DWM) qui ne peint PAS sur un CreateDesktop non
+            // composé → aucune fenêtre/process/fichier détectable (idem AcroPDF, cf.
+            // RepointSnapToKbisViewer). En desktop composé (Mode A/C) le même clic afficherait l'aperçu.
+            CaptureFullVirtualScreen("reclamation-apercu-ABSENT-mur-hdesk-b");
+            if (Headless)
+                throw new Exception(
+                    $"Menu + item '{menuItemSub}' OK (cliqué via {method}), MAIS l'aperçu '{label}' ne s'affiche pas "
+                    + "en HDESK isolé (Mode B) : MUR HDESK partie (b) — l'aperçu avant impression "
+                    + "(composition DWM, type AcroPDF) ne peint sur aucune fenêtre/process détectable sur un "
+                    + "desktop non composé. ⚠ AUCUNE impression déclenchée (clic item seul). Pour valider "
+                    + "visuellement l'aperçu → relancer en Mode A/C (desktop composé). Détail : " + ex.Message, ex);
+            throw;
+        }
+
+        // Preuve finale de l'aperçu (PrintWindow console + énumération popups : l'aperçu = hwnd distinct).
+        CaptureFullVirtualScreen("reclamation-apercu-affiche");
+        Console.WriteLine($"      → ✓ {label} : aperçu détecté (menu via {method}). NE PAS IMPRIMER respecté.");
     }
 
     /// <summary>Sur une demande en réclamation : sélectionne, ouvre le menu contextuel (WM_CONTEXTMENU),
