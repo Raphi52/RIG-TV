@@ -207,6 +207,65 @@ public class LegacyParsingTests
     public void ContainsMotifMarker_absent_ou_args_vides_retourne_false(string text, string marker)
         => Assert.False(LegacyParsing.ContainsMotifMarker(text, marker));
 
+    // ── IsDossierLocked : ecran DCADEMAT verrouille par un autre user ──
+    // CONTEXTE run live (screenshot) : demande ouverte au hasard -> ecran sans formulaire, juste un
+    // message rouge "Une demande est en cours sur ce dossier - D... par <user>" + bouton "Quitter".
+
+    [Theory]
+    // CAS REEL du screenshot run live (message complet, user RIGAPP23/julien.fontrier).
+    [InlineData("Une demande est en cours sur ce dossier — D2608200352 du 14/08/2026 DCADEMAT par RIGAPP23/julien.fontrier")]
+    [InlineData("Une demande est en cours sur ce dossier - D2608200352 DCADEMAT par RIGAPP23/julien.fontrier  Quitter")]
+    [InlineData("une demande est en cours sur ce dossier")]              // insensible a la casse
+    [InlineData("...bruit avant... demande est en cours sur ce dossier ...bruit apres...")] // sous-chaine dans texte agrege
+    // texte agrege de fragments UIA (le message rouge est souvent splite en plusieurs Text) :
+    [InlineData("Une demande est en cours sur ce dossier D2608200352 du 14/08/2026 DCADEMAT par RIGAPP23 julien.fontrier Quitter")]
+    public void IsDossierLocked_message_de_verrou_reconnu(string text)
+        => Assert.True(LegacyParsing.IsDossierLocked(text));
+
+    [Theory]
+    [InlineData("Configurer le dépôt")]                 // ecran exploitable normal
+    [InlineData("Traitement en cours...")]              // overlay de chargement, PAS un verrou
+    [InlineData("Veuillez patienter...")]
+    [InlineData("Il y a déjà une demande de modification en cours sur ce dossier")] // K-bis (autre message) : "en cours sur ce dossier" mais PAS "demande est en cours sur ce dossier"
+    [InlineData("une demande en cours")]                 // trop court / ambigu -> pas le verrou
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsDossierLocked_non_verrou_rejete(string text)
+        => Assert.False(LegacyParsing.IsDossierLocked(text));
+
+    // ── IsLoadingOverlay : overlay "Veuillez patienter / Traitement en cours" ──
+
+    [Theory]
+    [InlineData("Veuillez patienter...")]
+    [InlineData("Traitement en cours...")]
+    [InlineData("VEUILLEZ PATIENTER")]                   // insensible a la casse
+    [InlineData("traitement en cours")]
+    [InlineData("...  Veuillez patienter ...  Traitement en cours ...")] // les deux dans le texte agrege
+    [InlineData("Demande DCADEMAT — Traitement en cours, merci de patienter")] // sous-chaine
+    public void IsLoadingOverlay_overlay_reconnu(string text)
+        => Assert.True(LegacyParsing.IsLoadingOverlay(text));
+
+    [Theory]
+    [InlineData("Configurer le dépôt")]                 // formulaire pret -> plus d'overlay
+    [InlineData("Une demande est en cours sur ce dossier — D2608200352")] // verrou, pas un overlay
+    [InlineData("Réclamation / Refus")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsLoadingOverlay_hors_overlay_rejete(string text)
+        => Assert.False(LegacyParsing.IsLoadingOverlay(text));
+
+    [Fact]
+    public void IsDossierLocked_et_IsLoadingOverlay_sont_disjoints_sur_les_cas_reels()
+    {
+        // garantit que le verrou n'est PAS pris pour un chargement et vice-versa (les 2 branches du fix).
+        string verrou = "Une demande est en cours sur ce dossier — D2608200352 par RIGAPP23/julien.fontrier";
+        string overlay = "Veuillez patienter... Traitement en cours...";
+        Assert.True(LegacyParsing.IsDossierLocked(verrou));
+        Assert.False(LegacyParsing.IsLoadingOverlay(verrou));
+        Assert.True(LegacyParsing.IsLoadingOverlay(overlay));
+        Assert.False(LegacyParsing.IsDossierLocked(overlay));
+    }
+
     // ── MotifAlreadySelected : le combo affiche-t-il deja le motif voulu ? (combo RCS lazy) ──
 
     [Theory]

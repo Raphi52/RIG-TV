@@ -19,6 +19,8 @@ namespace Rig.Wpf.Kbis.SmokeRunner;
 ///   - <see cref="Truncate"/>                : tronque + ellipse pour le dump MSAA
 ///   - <see cref="AppendMotifMarker"/>       : ajoute un marqueur en fin de texte de motif (scenario reclamation)
 ///   - <see cref="ContainsMotifMarker"/>     : detecte le marqueur dans un texte (verif courrier de reclamation)
+///   - <see cref="IsDossierLocked"/>         : l'ecran affiche-t-il le verrou "une demande est en cours sur ce dossier" ?
+///   - <see cref="IsLoadingOverlay"/>        : l'ecran affiche-t-il l'overlay "Veuillez patienter / Traitement en cours" ?
 ///   - <see cref="MotifAlreadySelected"/>    : la valeur courante du combo motif correspond-elle deja au motif voulu ?
 ///   - <see cref="IsCellYVisible"/>          : le centre Y ecran d'une cellule est-il dans la bande visible de la grille ?
 ///   - <see cref="WheelNotchesToReveal"/>    : crans de molette (signes) pour amener une cellule offscreen dans la vue
@@ -125,6 +127,46 @@ public static class LegacyParsing
     {
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(marker)) return false;
         return text.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// true si <paramref name="screenText"/> (texte AGREGE de l'ecran DCADEMAT, ex concatenation des
+    /// Name des controls Text/Pane UIA) indique une demande VERROUILLEE par un autre utilisateur.
+    ///
+    /// CONTEXTE (run live, screenshot) : ouvrir au hasard une demande de l'alerte DCADEMAT tombe parfois
+    /// sur une demande deja ouverte/lockee par un autre user. L'ecran n'affiche alors AUCUN formulaire
+    /// (pas de "Configurer le depot", pas de combo motif), seulement un message rouge du type :
+    ///   "Une demande est en cours sur ce dossier - D2608200352 du ... DCADEMAT par RIGAPP23/julien.fontrier"
+    /// + un bouton "Quitter". La demande n'est donc PAS exploitable : il faut la fermer et en essayer une autre.
+    ///
+    /// Detection volontairement LARGE (le message UIA est souvent fragmente en plusieurs Text — on matche
+    /// sur le texte agrege, insensible a la casse) : le marqueur central et stable est
+    /// "demande est en cours sur ce dossier" (capte aussi "Une demande est en cours sur ce dossier").
+    /// On NE matche PAS le simple "en cours" seul (trop ambigu : "Traitement en cours" = overlay de
+    /// chargement, cf. <see cref="IsLoadingOverlay"/>, pas un verrou). null/vide -> false.
+    /// Pur : (texte ecran) -> bool, aucun effet de bord.
+    /// </summary>
+    public static bool IsDossierLocked(string? screenText)
+    {
+        if (string.IsNullOrEmpty(screenText)) return false;
+        return screenText.IndexOf("demande est en cours sur ce dossier", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// true si <paramref name="screenText"/> (texte agrege de l'ecran) indique que RIG est encore en train
+    /// de CHARGER : overlay/voile "Veuillez patienter..." ou "Traitement en cours...". Pendant cet etat,
+    /// chercher le combo/les champs du formulaire est premature (ils n'existent pas encore) -> l'appelant
+    /// doit attendre la disparition de l'overlay avant de poursuivre.
+    ///
+    /// Detection large (insensible a la casse, sur texte agrege) sur les 2 libelles connus :
+    /// "veuillez patienter" OU "traitement en cours". null/vide -> false.
+    /// Pur : (texte ecran) -> bool, aucun effet de bord.
+    /// </summary>
+    public static bool IsLoadingOverlay(string? screenText)
+    {
+        if (string.IsNullOrEmpty(screenText)) return false;
+        return screenText.IndexOf("veuillez patienter", StringComparison.OrdinalIgnoreCase) >= 0
+            || screenText.IndexOf("traitement en cours", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 
     /// <summary>

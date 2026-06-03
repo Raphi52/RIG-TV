@@ -272,6 +272,7 @@ public sealed class LegacyDriver : IDisposable
     private const int VK_RETURN_KEY = 0x0D;
     private const int VK_HOME_KEY   = 0x24;
     private const int VK_DOWN_KEY   = 0x28;
+    private const int VK_ESCAPE_KEY = 0x1B;   // fallback « Quitter » sur l'écran d'une demande verrouillée
     // accSelect flags (oleacc) : prend le focus + remplace la selection -> un DataGridView WinForms
     // scrolle alors automatiquement la ligne selectionnee dans la zone visible.
     private const int SELFLAG_TAKEFOCUS     = 0x1;
@@ -3753,7 +3754,11 @@ public sealed class LegacyDriver : IDisposable
             throw new Exception("Grille des demandes introuvable (hwnd nul) — impossible d'ouvrir une demande.");
 
         var Match = BuildDemandeMatch(dcademat);
-        var hits = CollectDemandeCellsMsaaRich(gridHwnd, Match, 3);
+        // On collecte JUSQU'À 8 demandes (au lieu de 3) : les données DEV au hasard contiennent souvent des
+        // demandes VERROUILLÉES par un autre user (écran sans formulaire, juste « Une demande est en cours sur
+        // ce dossier » + bouton Quitter). On en saute jusqu'à 8 pour avoir une chance d'en trouver une exploitable.
+        const int maxAttempts = 8;
+        var hits = CollectDemandeCellsMsaaRich(gridHwnd, Match, maxAttempts);
         Console.WriteLine($"      → {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA (rich)"
             + (hits.Count > 0 ? $" ; 1ère : '{LegacyParsing.Truncate(hits[0].Text, 50)}' @ ({hits[0].Cx},{hits[0].Cy}) rowIndex={hits[0].RowIndex}" : ""));
         if (hits.Count == 0)
@@ -3761,6 +3766,8 @@ public sealed class LegacyDriver : IDisposable
 
         var (top, bottom) = GetGridVisibleBand(gridHwnd);
         Exception? last = null;
+        int lockedCount = 0;       // demandes ouvertes MAIS verrouillées par un autre user (sautées)
+        int noSignalCount = 0;     // demandes sans signal d'ouverture (sélection/Entrée KO)
         for (int i = 0; i < hits.Count; i++)
         {
             var hit = hits[i];
@@ -3769,11 +3776,217 @@ public sealed class LegacyDriver : IDisposable
                 Console.WriteLine($"      → Tentative {i + 1}/{hits.Count} : demande ('{LegacyParsing.Truncate(hit.Text, 50)}') Y={hit.Cy} rowIndex={hit.RowIndex}");
                 var trigger = BuildOpenDemandeTrigger(gridHwnd, hit, top, bottom);
                 VerifyDocumentOpened(trigger, "Demande (reprise)", waitSeconds: 15);
-                return; // signal reçu → succès
+
+                // ── Signal d'ouverture reçu, MAIS la demande peut être VERROUILLÉE (lockée par un autre user) :
+                //    l'écran DCADEMAT n'affiche alors aucun formulaire, juste un message rouge « Une demande est
+                //    en cours sur ce dossier — D… par <user> » + bouton « Quitter » (cf. run live, screenshot).
+                //    On détecte le verrou ; si présent → on ferme (Quitter) et on essaie la demande SUIVANTE.
+                if (IsDemandeLockedOnScreen(out string lockMsg))
+                {
+                    lockedCount++;
+                    Console.WriteLine($"      ⚠ Tentative {i + 1} : demande VERROUILLÉE par un autre user — « {LegacyParsing.Truncate(lockMsg, 90)} ». "
+                        + "On clique « Quitter » et on essaie la demande suivante.");
+                    QuitterDemandeVerrouillee();
+                    last = new Exception($"demande verrouillée ({LegacyParsing.Truncate(lockMsg, 90)})");
+                    continue;
+                }
+
+                Console.WriteLine($"      ✓ Demande ouverte et exploitable (non verrouillée) à la tentative {i + 1}/{hits.Count}.");
+                return; // signal reçu + non verrouillée → succès
             }
-            catch (Exception ex) { last = ex; Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}"); }
+            catch (Exception ex) { last = ex; noSignalCount++; Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}"); }
         }
-        throw new Exception($"Aucune des {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture (sélection MSAA + Entrée + fallback clavier tous tentés). Dernière erreur : {last?.Message}");
+
+        // Skip propre (pas d'exception « brute » : message orienté cause/donnée, capté par TryStep comme un Fail lisible).
+        if (lockedCount > 0 && lockedCount + noSignalCount >= hits.Count)
+        {
+            try { CaptureScreenshot("open-demande-toutes-verrouillees"); } catch { }
+            throw new Exception($"Toutes les {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} essayées sont "
+                + $"verrouillées ou non exploitables (données DEV) : {lockedCount} verrouillée(s) par un autre user "
+                + $"(« Une demande est en cours sur ce dossier »), {noSignalCount} sans signal d'ouverture. "
+                + "Aucune demande exploitable parmi l'échantillon au hasard — relancer (autres données) ou override "
+                + "RIG_ALERTES_* vers un dossier non verrouillé.");
+        }
+        throw new Exception($"Aucune des {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture "
+            + $"(sélection MSAA + Entrée + fallback clavier tous tentés ; {lockedCount} verrouillée(s) sautée(s)). Dernière erreur : {last?.Message}");
+    }
+
+    /// <summary>
+    /// true si l'écran DCADEMAT actuellement affiché est celui d'une demande VERROUILLÉE par un autre
+    /// utilisateur : pas de formulaire (Configurer le dépôt / Réclamation / combo absents), seulement un
+    /// message rouge « Une demande est en cours sur ce dossier — D… du … DCADEMAT par &lt;user&gt; » +
+    /// bouton « Quitter ». accSelect a bien OUVERT la demande, mais elle est lockée.
+    ///
+    /// Le message UIA est souvent FRAGMENTÉ en plusieurs Text/Pane → on AGRÈGE le Name de tous les
+    /// descendants Text/Pane (+ valeur Edit) puis on délègue à la logique pure
+    /// <see cref="LegacyParsing.IsDossierLocked"/> (testée xUnit) sur le texte joint. Lecture seule.
+    /// Retourne aussi (out) le 1er fragment qui contient le marqueur, pour le log.
+    /// </summary>
+    private bool IsDemandeLockedOnScreen(out string lockMessage)
+    {
+        lockMessage = "";
+        if (_window is null) return false;
+        var sb = new System.Text.StringBuilder();
+        string? firstFragment = null;
+        try
+        {
+            foreach (var c in _window.FindAllDescendants())
+            {
+                ControlType ct;
+                try { ct = c.ControlType; } catch { continue; }
+                if (ct != ControlType.Text && ct != ControlType.Pane && ct != ControlType.Edit) continue;
+                var n = SafeText(() => c.Name);
+                if (n.Length > 0)
+                {
+                    sb.Append(n).Append(' ');
+                    if (firstFragment is null && n.IndexOf("en cours sur ce dossier", StringComparison.OrdinalIgnoreCase) >= 0)
+                        firstFragment = n;
+                }
+                // Certains messages passent par la valeur d'un Edit (ValuePattern).
+                if (ct == ControlType.Edit)
+                {
+                    try { if (c.Patterns.Value.IsSupported) { var v = SafeText(() => c.Patterns.Value.Pattern.Value.Value); if (v.Length > 0) sb.Append(v).Append(' '); } } catch { }
+                }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ IsDemandeLockedOnScreen scan jeté : {ex.GetType().Name}"); }
+
+        string agg = sb.ToString();
+        if (LegacyParsing.IsDossierLocked(agg))   // logique pure testée xUnit (robuste à la fragmentation : texte agrégé)
+        {
+            // Préfère le fragment exact pour le log ; sinon, une fenêtre autour du marqueur sur le texte agrégé.
+            lockMessage = firstFragment ?? ExtractLockSnippet(agg);
+            return true;
+        }
+        return false;
+    }
+
+    /// <summary>Extrait un extrait lisible (~110 chars) autour du marqueur de verrou dans le texte agrégé,
+    /// pour le log quand le message est fragmenté (pas de Text unique contenant toute la phrase).</summary>
+    private static string ExtractLockSnippet(string agg)
+    {
+        int idx = agg.IndexOf("Une demande est en cours", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) idx = agg.IndexOf("demande est en cours sur ce dossier", StringComparison.OrdinalIgnoreCase);
+        if (idx < 0) return LegacyParsing.Truncate(agg, 110);
+        return LegacyParsing.Truncate(agg.Substring(idx), 110);
+    }
+
+    /// <summary>Ferme l'onglet/écran d'une demande VERROUILLÉE en cliquant le bouton « Quitter » (le seul
+    /// contrôle actionnable de cet écran). On cible d'abord un Button/Pane dont le Name == « Quitter »
+    /// (variantes « &amp;Quitter », « Quitter (Échap) »), sinon AutomationId contenant « quitter ». Best-effort :
+    /// si introuvable, on tente VK_ESCAPE sur la fenêtre (Quitter est souvent mappé sur Échap). NON bloquant :
+    /// on logue et on continue (l'appelant réessaiera de toute façon la demande suivante).</summary>
+    private void QuitterDemandeVerrouillee()
+    {
+        if (_window is null) return;
+        AutomationElement? quitBtn = null;
+        try
+        {
+            quitBtn = _window.FindAllDescendants()
+                .Where(c => { try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; } })
+                .FirstOrDefault(c =>
+                {
+                    ControlType ct; try { ct = c.ControlType; } catch { return false; }
+                    if (ct != ControlType.Button && ct != ControlType.Pane) return false;
+                    var n = SafeText(() => c.Name).Replace("&", "");
+                    if (string.IsNullOrEmpty(n)) return false;
+                    var nl = n.ToLowerInvariant();
+                    // « Quitter » exact ou en tête (évite « Ne pas quitter » / longues phrases).
+                    return nl == "quitter" || nl.StartsWith("quitter ") || nl.StartsWith("quitter(");
+                });
+            if (quitBtn is null)
+            {
+                var byId = _window.FindAllDescendants()
+                    .FirstOrDefault(c => { var id = SafeText(() => c.AutomationId).ToLowerInvariant(); return id.Contains("quitter") || id.Contains("btnquitter") || id.Contains("cmdquitter"); });
+                if (byId is not null) quitBtn = byId;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ Recherche bouton « Quitter » jetée : {ex.GetType().Name}"); }
+
+        if (quitBtn is not null)
+        {
+            Console.WriteLine($"      → Click « Quitter » : Type={SafeText(() => quitBtn.ControlType.ToString())} Id='{SafeText(() => quitBtn.AutomationId)}' Name='{SafeText(() => quitBtn.Name)}'");
+            try { Interaction.Click(quitBtn); }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ Click « Quitter » a jeté : {ex.Message} — fallback Échap."); TryEscapeOnWindow(); }
+        }
+        else
+        {
+            Console.WriteLine("      → Bouton « Quitter » introuvable — fallback VK_ESCAPE sur la fenêtre (Quitter ≈ Échap).");
+            TryEscapeOnWindow();
+        }
+
+        // Laisser RIG fermer l'onglet/écran avant de réessayer la demande suivante (poll court, pas de sleep fixe long) :
+        // on attend que le marqueur de verrou DISPARAISSE de l'écran (max ~4s).
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 4000 && IsDemandeLockedOnScreen(out _)) Thread.Sleep(250);
+        Console.WriteLine(sw.ElapsedMilliseconds < 4000
+            ? "      ✓ Écran de demande verrouillée fermé (marqueur de verrou disparu)."
+            : "      → ⚠ Marqueur de verrou toujours présent après « Quitter » (4s) — on tente quand même la demande suivante.");
+    }
+
+    /// <summary>Poste VK_ESCAPE sur le hwnd de la fenêtre RIG (focus-free) — fallback pour fermer l'écran de
+    /// demande verrouillée quand le bouton « Quitter » n'est pas localisable.</summary>
+    private void TryEscapeOnWindow()
+    {
+        try
+        {
+            IntPtr h = IntPtr.Zero;
+            try { if (_window is not null && _window.Properties.NativeWindowHandle.IsSupported) h = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+            if (h != IntPtr.Zero) { Interaction.ForceFocus(h); Interaction.PostKey(h, VK_ESCAPE_KEY); }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ Fallback Échap jeté : {ex.GetType().Name}"); }
+    }
+
+    /// <summary>
+    /// Attend que l'overlay de CHARGEMENT « Veuillez patienter… / Traitement en cours… » DISPARAISSE de
+    /// l'écran avant de poursuivre (poll court, plafond <paramref name="maxMs"/>, sleeps 250ms). Tant qu'un
+    /// Text/Pane UIA contient un libellé d'attente (cf. <see cref="LegacyParsing.IsLoadingOverlay"/>, logique
+    /// pure testée xUnit, appliquée au texte AGRÉGÉ des descendants → robuste à la fragmentation UIA), on
+    /// attend. Non bloquant : si l'overlay est toujours là au plafond, on logue et on rend la main (l'appelant
+    /// tentera quand même de localiser ses contrôles ; sa propre vérif tranchera). Lecture seule.
+    /// </summary>
+    private void WaitForLoadingOverlayToClear(int maxMs = 15000)
+    {
+        if (_window is null) return;
+        var sw = Stopwatch.StartNew();
+        bool sawOverlay = false;
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            if (!IsLoadingOverlayOnScreen()) break;
+            sawOverlay = true;
+            Thread.Sleep(250);
+        }
+        if (!sawOverlay)
+            Console.WriteLine("      → (1b) Pas d'overlay « Veuillez patienter / Traitement en cours » — écran prêt.");
+        else if (sw.ElapsedMilliseconds < maxMs)
+            Console.WriteLine($"      ✓ (1b) Overlay de chargement disparu après {sw.ElapsedMilliseconds}ms — on cherche le combo.");
+        else
+            Console.WriteLine($"      → ⚠ (1b) Overlay « Veuillez patienter / Traitement en cours » toujours présent après {maxMs}ms — "
+                + "on continue quand même (la recherche du combo / sa vérif tranchera).");
+    }
+
+    /// <summary>true si l'écran affiche actuellement l'overlay de chargement (« Veuillez patienter » /
+    /// « Traitement en cours »). Agrège le Name des descendants Text/Pane puis délègue à la logique pure
+    /// <see cref="LegacyParsing.IsLoadingOverlay"/>. Lecture seule.</summary>
+    private bool IsLoadingOverlayOnScreen()
+    {
+        if (_window is null) return false;
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            foreach (var c in _window.FindAllDescendants())
+            {
+                ControlType ct;
+                try { ct = c.ControlType; } catch { continue; }
+                if (ct != ControlType.Text && ct != ControlType.Pane) continue;
+                var n = SafeText(() => c.Name);
+                if (n.Length > 0) sb.Append(n).Append(' ');
+                // Court-circuit : dès qu'un fragment seul matche, inutile de tout agréger.
+                if (LegacyParsing.IsLoadingOverlay(n)) return true;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ IsLoadingOverlayOnScreen scan jeté : {ex.GetType().Name}"); }
+        return LegacyParsing.IsLoadingOverlay(sb.ToString());
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -3979,6 +4192,13 @@ public sealed class LegacyDriver : IDisposable
         {
             Console.WriteLine($"      → (1) ⓘ Cochage case DCA ignoré (non bloquant pour la réclamation) : {ex.GetType().Name}: {ex.Message}");
         }
+
+        // ── (1b) Attendre la fin du CHARGEMENT avant de chercher le combo ────────────────────────────
+        // Run live : juste après l'ouverture, l'écran affiche parfois encore un overlay « Veuillez patienter /
+        // Traitement en cours ». Chercher le combo « Type de motif » à ce moment = prématuré (il n'existe pas
+        // encore) → FindTypeMotifCombo retombe sur un mauvais combo ou échoue. On attend que l'overlay
+        // DISPARAISSE (poll court, max ~15s) avant de poursuivre.
+        WaitForLoadingOverlayToClear(maxMs: 15000);
 
         // ── (2) Aller à l'étape "Réclamation / Refus" + (3) localiser le combo "Type de motif" ────────
         var combo = FindTypeMotifCombo();
