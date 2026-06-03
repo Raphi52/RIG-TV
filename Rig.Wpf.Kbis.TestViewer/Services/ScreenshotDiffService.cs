@@ -16,6 +16,13 @@
 // de la fenêtre TestViewer (recap dans le log box). Compare au dHash de
 // l'itération précédente — si Hamming distance grosse, c'est qu'une popup
 // ou un état UI inattendu est apparu.
+//
+// ML LOOP S5.x — surcharges REGION (crop) : ComputeDHash(path, Rectangle) /
+// ComputeDHashFromRegion(Bitmap, Rectangle). Hashent uniquement le rectangle
+// de la fenêtre TestViewer au lieu du plein écran, pour ignorer le bruit
+// (wallpaper, taskbar, curseur, notifications) qui faisait diverger deux
+// captures pourtant identiques. La méthode plein écran ComputeDHash(path)
+// reste inchangée pour compat.
 
 using System;
 using System.Drawing;
@@ -32,20 +39,96 @@ namespace Rig.Wpf.Kbis.TestViewer.Services;
 /// </summary>
 public static class ScreenshotDiffService
 {
+    // 9 colonnes x 8 lignes pour pouvoir calculer 8 differences par ligne.
+    private const int DHashW = 9;
+    private const int DHashH = 8;
+
     /// <summary>
-    /// Calcule le dHash 64-bit d'une image PNG. Lance une exception si le
-    /// fichier n'existe pas ou n'est pas une image valide.
+    /// Calcule le dHash 64-bit d'une image PNG (plein cadre). Lance une
+    /// exception si le fichier n'existe pas ou n'est pas une image valide.
     /// </summary>
     public static ulong ComputeDHash(string pngPath)
     {
+        using var src = LoadBitmap(pngPath);
+        return ComputeDHashCore(src);
+    }
+
+    /// <summary>
+    /// ML LOOP S5.x — dHash sur une REGION (crop) d'une image PNG plutot que
+    /// le plein cadre. Permet de ne hasher que le rectangle de la fenetre
+    /// TestViewer et d'ignorer le bruit (wallpaper, taskbar, curseur souris,
+    /// notifications) qui fait diverger deux captures pourtant identiques.
+    ///
+    /// <paramref name="crop"/> est exprime en coordonnees PIXEL de l'image
+    /// (origine haut-gauche). Le rectangle est clampe aux bornes de l'image :
+    /// une zone qui deborde est tronquee a la partie visible. Si l'intersection
+    /// avec l'image est vide (ou la region est degeneree), une
+    /// <see cref="ArgumentException"/> est levee.
+    /// </summary>
+    public static ulong ComputeDHash(string pngPath, Rectangle crop)
+    {
+        using var src = LoadBitmap(pngPath);
+        return ComputeDHashFromRegion(src, crop);
+    }
+
+    /// <summary>
+    /// ML LOOP S5.x — dHash d'un <see cref="Bitmap"/> deja en memoire (plein
+    /// cadre). Surcharge PURE / testable : on fournit le bitmap, aucune capture
+    /// d'ecran ni I/O disque. Le bitmap n'est PAS dispose (propriete de l'appelant).
+    /// </summary>
+    public static ulong ComputeDHash(Bitmap bitmap)
+    {
+        if (bitmap == null) throw new ArgumentNullException(nameof(bitmap));
+        return ComputeDHashCore(bitmap);
+    }
+
+    /// <summary>
+    /// ML LOOP S5.x — dHash de la REGION <paramref name="crop"/> d'un
+    /// <see cref="Bitmap"/> deja en memoire. Surcharge PURE / testable.
+    /// Le rectangle est clampe aux bornes du bitmap (cf.
+    /// <see cref="ComputeDHash(string, Rectangle)"/>). Le bitmap source n'est
+    /// PAS dispose (propriete de l'appelant).
+    /// </summary>
+    public static ulong ComputeDHashFromRegion(Bitmap src, Rectangle crop)
+    {
+        if (src == null) throw new ArgumentNullException(nameof(src));
+
+        var bounds = new Rectangle(0, 0, src.Width, src.Height);
+        var clamped = Rectangle.Intersect(bounds, crop);
+        if (clamped.Width <= 0 || clamped.Height <= 0)
+            throw new ArgumentException(
+                $"Region de crop vide apres clamp (demande={crop}, image={bounds}).",
+                nameof(crop));
+
+        // Si la region clampee == image entiere, pas la peine de cloner.
+        if (clamped == bounds)
+            return ComputeDHashCore(src);
+
+        using var region = src.Clone(clamped, src.PixelFormat);
+        return ComputeDHashCore(region);
+    }
+
+    /// <summary>
+    /// Charge un PNG depuis le disque en validant existence / format.
+    /// Le bitmap retourne doit etre dispose par l'appelant.
+    /// </summary>
+    private static Bitmap LoadBitmap(string pngPath)
+    {
         if (string.IsNullOrEmpty(pngPath)) throw new ArgumentNullException(nameof(pngPath));
         if (!File.Exists(pngPath)) throw new FileNotFoundException("PNG introuvable", pngPath);
+        return (Bitmap)Image.FromFile(pngPath);
+    }
 
-        // 9 colonnes × 8 lignes pour pouvoir calculer 8 différences par ligne
-        const int W = 9;
-        const int H = 8;
+    /// <summary>
+    /// Coeur de l'algorithme dHash : resize 9x8 grayscale puis 64 differences
+    /// horizontales. Partage entre toutes les surcharges (fichier / bitmap /
+    /// region) pour garantir un hash identique quel que soit le point d'entree.
+    /// </summary>
+    private static ulong ComputeDHashCore(Bitmap src)
+    {
+        const int W = DHashW;
+        const int H = DHashH;
 
-        using var src = (Bitmap)Image.FromFile(pngPath);
         using var resized = new Bitmap(W, H, PixelFormat.Format24bppRgb);
         using (var g = Graphics.FromImage(resized))
         {
@@ -65,7 +148,7 @@ public static class ScreenshotDiffService
             }
         }
 
-        // Build 64-bit hash : 8 lignes × 8 différences
+        // Build 64-bit hash : 8 lignes x 8 differences
         ulong hash = 0;
         int bit = 63;
         for (int y = 0; y < H; y++)
