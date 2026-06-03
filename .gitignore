@@ -13,3 +13,6 @@ Thumbs.db
 
 # Logs / temp locaux
 *.log
+
+# Scratchpad d'itération agent + logs de run RIG (jamais commités, cf. CLAUDE.md)
+Audit/

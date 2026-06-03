@@ -156,4 +156,55 @@ public class KbisTextChecksTests
     [InlineData(null, true)]
     public void MatchesDemandeType_vide_retourne_false(string row, bool wantDca)
         => Assert.False(KbisTextChecks.MatchesDemandeType(row, wantDca));
+
+    // ── DCADEMAT "Configurer le dépôt" : n° dépôt / facture / demande ────────
+    // Échantillon = texte agrégé d'une ligne Exercices après Valider (case DCA cochée).
+    private const string ExerciceRowSample =
+        "DCA;01/01/2025;31/12/2025;DCA B2026/000052;26-000389;D2611200138;Déposé";
+
+    [Fact]
+    public void FindNumDemande_extrait_le_numero_prefixe_D()
+        => Assert.Equal("D2611200138", KbisTextChecks.FindNumDemande(ExerciceRowSample));
+
+    [Fact]
+    public void FindNumDemande_colle_au_libelle_reste_trouve()
+        => Assert.Equal("D2611200138", KbisTextChecks.FindNumDemande("n° de demandeD2611200138 Déposé"));
+
+    [Theory]
+    [InlineData("DCA;2025;DCA B2026/000052;26-000389;(pas encore validé)")] // pas de n° demande
+    [InlineData("aucun numero ici")]
+    [InlineData("")]
+    [InlineData(null)]
+    public void FindNumDemande_absent_retourne_null(string text)
+        => Assert.Null(KbisTextChecks.FindNumDemande(text));
+
+    [Fact]
+    public void FindNumDepot_extrait_le_numero_de_depot()
+        => Assert.Equal("DCA B2026/000052", KbisTextChecks.FindNumDepot(ExerciceRowSample));
+
+    [Fact]
+    public void FindNumDepot_tolere_espace_colle()
+        => Assert.Equal("DCAB2026/000052", KbisTextChecks.FindNumDepot("dépôtDCAB2026/000052facture"));
+
+    [Fact]
+    public void FindNumFacture_extrait_le_numero_de_facture()
+        => Assert.Equal("26-000389", KbisTextChecks.FindNumFacture(ExerciceRowSample));
+
+    [Theory]
+    [InlineData("01/01/2025;31/12/2025")] // dates, pas une facture AA-NNNNNN
+    [InlineData("")]
+    [InlineData(null)]
+    public void FindNumFacture_absent_retourne_null(string text)
+        => Assert.Null(KbisTextChecks.FindNumFacture(text));
+
+    [Fact]
+    public void HasDepotSuccess_ligne_validee_est_un_succes()
+        => Assert.True(KbisTextChecks.HasDepotSuccess(ExerciceRowSample));
+
+    [Theory]
+    [InlineData("DCA;01/01/2025;31/12/2025;;;;")] // ligne pas encore validée (colonnes n° vides)
+    [InlineData("")]
+    [InlineData(null)]
+    public void HasDepotSuccess_ligne_non_validee_est_faux(string text)
+        => Assert.False(KbisTextChecks.HasDepotSuccess(text));
 }
