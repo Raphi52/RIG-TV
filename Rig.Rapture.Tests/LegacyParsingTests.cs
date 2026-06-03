@@ -237,4 +237,127 @@ public class LegacyParsingTests
     [InlineData("INPMANQ - Pièce manquante", null)]
     public void MotifAlreadySelected_non_correspondant_ou_args_vides_retourne_false(string current, string motif)
         => Assert.False(LegacyParsing.MotifAlreadySelected(current, motif));
+
+    // ── IsCellYVisible : le centre Y ecran d'une cellule est-il dans la bande visible ? ──
+    // CONTEXTE bug run live : cellules MSAA a Y=1585 / Y=4511 sur un ecran/grille de 1080 ->
+    // hors zone visible -> le double-clic tapait dans le vide. On rend la cellule visible AVANT.
+
+    [Theory]
+    [InlineData(540, 0, 1080)]    // pile au milieu d'une grille 0..1080
+    [InlineData(10, 0, 1080)]     // pres du haut mais > marge (4)
+    [InlineData(1070, 0, 1080)]   // pres du bas mais < bas - marge
+    [InlineData(200, 100, 900)]   // grille qui ne part pas de 0 (sous une barre d'outils)
+    public void IsCellYVisible_dans_la_bande_retourne_true(int cellCy, int top, int bottom)
+        => Assert.True(LegacyParsing.IsCellYVisible(cellCy, top, bottom));
+
+    [Theory]
+    [InlineData(1585, 0, 1080)]   // CAS REEL run live : Y=1585 sur ecran 1080 -> offscreen bas
+    [InlineData(4511, 0, 1080)]   // CAS REEL run live : Y=4511 -> tres en dessous
+    [InlineData(-50, 0, 1080)]    // au-dessus de la grille (scrolled past top)
+    [InlineData(2, 0, 1080)]      // dans la marge haute (< top + 4) -> pas fiable
+    [InlineData(1079, 0, 1080)]   // dans la marge basse (> bottom - 4)
+    [InlineData(950, 100, 900)]   // sous le bas de la grille (mais aurait ete < hauteur ecran)
+    public void IsCellYVisible_hors_bande_ou_dans_la_marge_retourne_false(int cellCy, int top, int bottom)
+        => Assert.False(LegacyParsing.IsCellYVisible(cellCy, top, bottom));
+
+    [Fact]
+    public void IsCellYVisible_bande_degeneree_retourne_false()
+        // grille plus petite que 2*marge -> aucune position fiable.
+        => Assert.False(LegacyParsing.IsCellYVisible(500, 500, 505));
+
+    [Fact]
+    public void IsCellYVisible_marge_personnalisee_elargit_la_zone_interdite()
+    {
+        // marge 100 : un Y a 50px du haut devient non fiable.
+        Assert.False(LegacyParsing.IsCellYVisible(150, 100, 900, margin: 100));
+        Assert.True(LegacyParsing.IsCellYVisible(500, 100, 900, margin: 100));
+    }
+
+    // ── WheelNotchesToReveal : crans de molette (signes) pour ramener une cellule dans la vue ──
+    // Convention : notch NEGATIF = molette bas = contenu monte (Y diminuent) ;
+    //              notch POSITIF = molette haut = contenu descend (Y augmentent).
+
+    [Fact]
+    public void WheelNotchesToReveal_cellule_sous_la_zone_donne_des_notches_negatifs()
+    {
+        // CAS REEL : cellule a Y=1585, grille 0..1080 (centre 540), rowHeight 22, 3 lignes/cran.
+        // Elle est SOUS le centre -> il faut faire MONTER le contenu -> notches negatifs.
+        int n = LegacyParsing.WheelNotchesToReveal(1585, 0, 1080, rowHeight: 22);
+        Assert.True(n < 0, $"attendu negatif, obtenu {n}");
+    }
+
+    [Fact]
+    public void WheelNotchesToReveal_cellule_tres_basse_donne_plus_de_notches()
+    {
+        // Y=4511 est bien plus bas que Y=1585 -> amplitude (valeur absolue) strictement superieure.
+        int proche = LegacyParsing.WheelNotchesToReveal(1585, 0, 1080, rowHeight: 22);
+        int loin = LegacyParsing.WheelNotchesToReveal(4511, 0, 1080, rowHeight: 22);
+        Assert.True(System.Math.Abs(loin) > System.Math.Abs(proche),
+            $"|{loin}| devrait depasser |{proche}|");
+    }
+
+    [Fact]
+    public void WheelNotchesToReveal_cellule_au_dessus_donne_des_notches_positifs()
+    {
+        // cellule au-dessus du centre (Y=-100) -> faire DESCENDRE le contenu -> notches positifs.
+        int n = LegacyParsing.WheelNotchesToReveal(-100, 0, 1080, rowHeight: 22);
+        Assert.True(n > 0, $"attendu positif, obtenu {n}");
+    }
+
+    [Fact]
+    public void WheelNotchesToReveal_deja_centree_retourne_zero()
+        // cellule pile au centre (540) -> rien a scroller.
+        => Assert.Equal(0, LegacyParsing.WheelNotchesToReveal(540, 0, 1080, rowHeight: 22));
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(-5)]
+    public void WheelNotchesToReveal_rowHeight_non_positif_ne_jette_pas(int rowHeight)
+    {
+        // garde-fou division par zero : traite rowHeight<=0 comme 1, retourne un resultat fini.
+        var ex = Record.Exception(() => LegacyParsing.WheelNotchesToReveal(2000, 0, 1080, rowHeight));
+        Assert.Null(ex);
+    }
+
+    [Fact]
+    public void WheelNotchesToReveal_bande_degeneree_retourne_zero()
+        => Assert.Equal(0, LegacyParsing.WheelNotchesToReveal(2000, 500, 500, rowHeight: 22));
+
+    [Fact]
+    public void WheelNotchesToReveal_progression_garantie_meme_si_petit_ecart()
+    {
+        // cellule juste sous le bas (delta > 0.5 cran mais < 1 cran) -> au moins 1 notch (anti-blocage
+        // quand l'appelant boucle : doit progresser a chaque appel).
+        // grille 0..100 (centre 50), rowHeight 10, 3 lignes/cran = 30px/cran. Cellule a 70 -> delta -20px
+        // (|20| > 15 = pxPerNotch/2) -> au moins -1.
+        int n = LegacyParsing.WheelNotchesToReveal(70, 0, 100, rowHeight: 10);
+        Assert.Equal(-1, n);
+    }
+
+    // ── ParseLigneIndex : index 0-based pour le fallback clavier (Home + Down x index + Entree) ──
+    // CONTEXTE : quand accSelect ne ramene pas la ligne dans la vue, on navigue au clavier. Le Name
+    // MSAA de la LIGNE d'un DataGridView est "Ligne N" (FR) ou "Row N" (EN), N 1-based.
+
+    [Theory]
+    [InlineData("Ligne 1", 0)]       // 1re ligne : 0 Down apres Home
+    [InlineData("Ligne 3", 2)]       // 2 Down apres Home
+    [InlineData("Ligne 243", 242)]   // CAS REEL run live : demande tout en bas (position 242)
+    [InlineData("Row 1", 0)]         // locale EN
+    [InlineData("Row 5", 4)]
+    [InlineData("ligne 7", 6)]       // insensible a la casse
+    [InlineData("DCA Ligne 4", 3)]   // motif present meme avec un prefixe (ancre lache)
+    [InlineData("Ligne  10", 9)]     // plusieurs espaces entre le mot et le nombre
+    public void ParseLigneIndex_extrait_l_index_0_based(string name, int expected)
+        => Assert.Equal(expected, LegacyParsing.ParseLigneIndex(name));
+
+    [Theory]
+    [InlineData("Ligne 0")]                       // placeholder/header -> pas une ligne data
+    [InlineData("Row 0")]
+    [InlineData("D2613500028;DCADEMAT;;;")]       // Name concatene des colonnes (pas de "Ligne N")
+    [InlineData("Cellule Traitement")]            // autre nom sans motif
+    [InlineData("Lignes 5")]                       // "Lignes" (pluriel) suivi d'un nombre -> pas le motif exact attendu...
+    [InlineData("")]
+    [InlineData(null)]
+    public void ParseLigneIndex_sans_motif_ou_ligne_0_retourne_moins_un(string name)
+        => Assert.Equal(-1, LegacyParsing.ParseLigneIndex(name));
 }

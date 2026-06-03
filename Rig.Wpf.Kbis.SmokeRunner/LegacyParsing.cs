@@ -20,6 +20,8 @@ namespace Rig.Wpf.Kbis.SmokeRunner;
 ///   - <see cref="AppendMotifMarker"/>       : ajoute un marqueur en fin de texte de motif (scenario reclamation)
 ///   - <see cref="ContainsMotifMarker"/>     : detecte le marqueur dans un texte (verif courrier de reclamation)
 ///   - <see cref="MotifAlreadySelected"/>    : la valeur courante du combo motif correspond-elle deja au motif voulu ?
+///   - <see cref="IsCellYVisible"/>          : le centre Y ecran d'une cellule est-il dans la bande visible de la grille ?
+///   - <see cref="WheelNotchesToReveal"/>    : crans de molette (signes) pour amener une cellule offscreen dans la vue
 /// </summary>
 public static class LegacyParsing
 {
@@ -150,5 +152,98 @@ public static class LegacyParsing
         return cur.Equals(want, StringComparison.OrdinalIgnoreCase)
             || cur.StartsWith(want, StringComparison.OrdinalIgnoreCase)
             || cur.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// true si le centre Y ecran <paramref name="cellCy"/> d'une cellule/ligne est DANS la bande
+    /// VISIBLE [<paramref name="viewTop"/> + marge ; <paramref name="viewBottom"/> - marge].
+    ///
+    /// CONTEXTE (bug run live) : les coordonnees MSAA (accLocation) d'une cellule DataGridView sont
+    /// ABSOLUES ecran. Pour une demande en BAS d'une grille scrollable, le Y peut depasser la hauteur
+    /// d'ecran (ex Y=4511 sur un ecran de 1080) -> un double-clic a ce point tape HORS de la zone
+    /// visible -> rien ne s'ouvre. On verifie donc la visibilite AVANT de cliquer.
+    ///
+    /// <paramref name="margin"/> : zone de securite haut/bas (defaut 4px) — une ligne dont le centre
+    /// tombe pile sur le bord de la grille (en-tete colonne, derniere ligne mi-coupee) n'est pas
+    /// fiablement cliquable. viewTop/viewBottom sont typiquement le haut/bas du rectangle ecran de la
+    /// GRILLE (pas de tout l'ecran) pour ne pas considerer "visible" une ligne qui tombe sous la grille
+    /// mais au-dessus du bas d'ecran. La bande doit etre non vide (viewBottom-viewTop > 2*margin),
+    /// sinon -> false (grille degeneree).
+    /// Pur : entiers -> bool, aucun effet de bord.
+    /// </summary>
+    public static bool IsCellYVisible(int cellCy, int viewTop, int viewBottom, int margin = 4)
+    {
+        if (margin < 0) margin = 0;
+        int lo = viewTop + margin;
+        int hi = viewBottom - margin;
+        if (hi <= lo) return false;
+        return cellCy >= lo && cellCy <= hi;
+    }
+
+    /// <summary>
+    /// Nombre SIGNE de crans de molette (notches) a envoyer a la grille pour amener le centre Y ecran
+    /// <paramref name="cellCy"/> au MILIEU de la bande visible [<paramref name="viewTop"/> ;
+    /// <paramref name="viewBottom"/>]. Convention molette Windows :
+    ///   - notch POSITIF  = molette vers le HAUT  = contenu descend (les Y des lignes AUGMENTENT) ;
+    ///   - notch NEGATIF  = molette vers le BAS   = contenu monte   (les Y des lignes DIMINUENT).
+    /// Une cellule SOUS la zone (cellCy &gt; centre) doit donc remonter -> notches NEGATIFS ;
+    /// une cellule AU-DESSUS (cellCy &lt; centre) doit descendre -> notches POSITIFS.
+    ///
+    /// On estime le deplacement par cran a <paramref name="rowsPerNotch"/> * <paramref name="rowHeight"/>
+    /// pixels (un cran de molette WinForms fait defiler SystemInformation.MouseWheelScrollLines lignes,
+    /// 3 par defaut). Le resultat est arrondi au cran le plus proche. cellCy deja dans la bande (delta
+    /// faible) -> 0 (rien a scroller). Garde-fous : rowHeight/rowsPerNotch &lt;= 0 -> traite comme 1
+    /// (evite la division par zero). Bande degeneree (viewBottom &lt;= viewTop) -> 0.
+    /// Le signe et l'amplitude sont PURS ; l'appelant boucle (re-lit les coords apres chaque envoi,
+    /// car l'estimation par cran est approximative) jusqu'a <see cref="IsCellYVisible"/>.
+    /// </summary>
+    public static int WheelNotchesToReveal(int cellCy, int viewTop, int viewBottom, int rowHeight, int rowsPerNotch = 3)
+    {
+        if (viewBottom <= viewTop) return 0;
+        if (rowHeight <= 0) rowHeight = 1;
+        if (rowsPerNotch <= 0) rowsPerNotch = 1;
+        int center = (viewTop + viewBottom) / 2;
+        int deltaPx = center - cellCy;          // >0 : la cellule est AU-DESSUS du centre -> descendre (notch +)
+        int pxPerNotch = rowsPerNotch * rowHeight;
+        // Arrondi au cran le plus proche (et au moins 1 cran si on est hors-bande mais < 1 cran d'erreur,
+        // pour garantir une progression a chaque appel quand l'appelant boucle).
+        int notches = (int)Math.Round((double)deltaPx / pxPerNotch, MidpointRounding.AwayFromZero);
+        if (notches == 0 && Math.Abs(deltaPx) > pxPerNotch / 2) notches = deltaPx > 0 ? 1 : -1;
+        return notches;
+    }
+
+    /// <summary>
+    /// Regex (compilee) qui capture l'index 1-based d'une ligne de DataGridView dans son Name MSAA.
+    /// Un DataGridView WinForms nomme ses lignes accessibles "Ligne N" (locale FR) ou "Row N" (EN),
+    /// N etant 1-based (N=1 = 1re ligne data). Le Name d'une LIGNE des demandes (concatenation ';' des
+    /// colonnes) ne contient PAS ce motif ; c'est l'enfant LIGNE (role ROW) qui le porte. On accepte
+    /// aussi "Ligne N" present n'importe ou dans le texte (ancre lache : certains DGV prefixent le Name).
+    /// </summary>
+    private static readonly Regex LigneIndexRegex =
+        new Regex(@"(?:Ligne|Row)\s+(\d+)", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    /// <summary>
+    /// Index 0-based d'une ligne de DataGridView a partir de son Name MSAA "Ligne N" / "Row N" (N 1-based).
+    /// Sert au FALLBACK clavier d'ouverture d'une demande : focus grille -&gt; Home (1re ligne) -&gt;
+    /// Down x (index 0-based) -&gt; Entree. Donc "Ligne 1" -&gt; 0 (deja sur la 1re ligne apres Home, 0 Down),
+    /// "Ligne 3" -&gt; 2 (2 Down apres Home).
+    ///
+    /// Conventions / garde-fous :
+    ///   - "Ligne 0" (ligne placeholder/header du DGV WinForms) -&gt; -1 (pas une vraie ligne data, cf.
+    ///     <see cref="IsDataRowName"/> qui exclut deja "Ligne 0") ;
+    ///   - Name sans motif "Ligne N"/"Row N" (ex Name concatene des colonnes ';') -&gt; -1 (l'appelant
+    ///     basculera sur un autre repli) ;
+    ///   - null/vide -&gt; -1 ;
+    ///   - N negatif impossible (le motif exige \d+), mais par securite tout resultat &lt; 1 -&gt; -1.
+    /// Pur : (Name) -&gt; index 0-based ou -1, aucun effet de bord.
+    /// </summary>
+    public static int ParseLigneIndex(string? name)
+    {
+        if (string.IsNullOrEmpty(name)) return -1;
+        var m = LigneIndexRegex.Match(name);
+        if (!m.Success) return -1;
+        if (!int.TryParse(m.Groups[1].Value, out var oneBased)) return -1;
+        if (oneBased < 1) return -1;            // "Ligne 0" = placeholder -> pas de ligne data
+        return oneBased - 1;                    // 0-based : nb de Down apres Home
     }
 }

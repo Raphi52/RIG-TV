@@ -262,6 +262,20 @@ public sealed class LegacyDriver : IDisposable
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint WM_SYSCOMMAND = 0x0112;
     private const int SC_MAXIMIZE = 0xF030;
+    // Molette : pour rendre une cellule DataGridView offscreen visible avant de double-cliquer
+    // (les coords MSAA sont absolues ecran -> une demande en bas de grille scrollable depasse l'ecran).
+    private const uint WM_MOUSEWHEEL = 0x020A;
+    private const int WHEEL_DELTA = 120;        // 1 cran de molette
+    private const int MK_LBUTTON_FLAG = 0x0001; // wParam low word (boutons enfonces) — aucun pour un scroll
+    // Touches clavier pour ouvrir une demande sans coordonnees (la selection MSAA accSelect scrolle la
+    // ligne dans la vue ; on l'ouvre ensuite par Entree, ou on navigue Home + Down x index en fallback).
+    private const int VK_RETURN_KEY = 0x0D;
+    private const int VK_HOME_KEY   = 0x24;
+    private const int VK_DOWN_KEY   = 0x28;
+    // accSelect flags (oleacc) : prend le focus + remplace la selection -> un DataGridView WinForms
+    // scrolle alors automatiquement la ligne selectionnee dans la zone visible.
+    private const int SELFLAG_TAKEFOCUS     = 0x1;
+    private const int SELFLAG_TAKESELECTION = 0x2;
 
     /// <summary>
     /// Cherche le bouton « Se connecter » (variantes : Connexion / OK), click, attend
@@ -3388,16 +3402,23 @@ public sealed class LegacyDriver : IDisposable
     /// Permet de réessayer une autre demande si la 1ère ne produit pas de signal d'ouverture.</summary>
     private List<(int cx, int cy, string text)> FindDemandeCells(bool dcademat, int max)
     {
-        // Ordre : ultDgvResultats (rapide) → Table/DataGrid (rapide) → _dgvDemandes EN DERNIER
-        // (lookup ~100s quand absent → walk de tout l'arbre d'un onglet PROC ouvert). On ne paie
-        // ce coût que si les voies rapides échouent (grille réellement absente).
-        AutomationElement? grid = FindByAutomationId("ultDgvResultats");
-        if (grid is null) { try { grid = _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)) ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid)); } catch { } }
-        if (grid is null) grid = FindByAutomationId("_dgvDemandes");
-        if (grid is null) { Console.WriteLine("      → grille introuvable pour FindDemandeCells"); return new(); }
+        IntPtr hwnd = ResolveDemandeGridHwnd();
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → grille introuvable pour FindDemandeCells"); return new(); }
 
+        var Match = BuildDemandeMatch(dcademat);
+        var cells = CollectCellsMsaa(hwnd, Match, max, out int scanned);
+        Console.WriteLine($"      → {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA ({scanned} cellules scannées)"
+            + (cells.Count > 0 ? $" ; 1ère : '{cells[0].text}' @ ({cells[0].cx},{cells[0].cy})" : $" — aucune (hwnd=0x{hwnd.ToInt64():X}, override RIG_ALERTES_* ?)"));
+        return cells;
+    }
+
+    /// <summary>Prédicat de sélection d'une demande (ligne du DataGridView) du type voulu, non « en
+    /// cours ». Extrait de <see cref="FindDemandeCells"/> pour être réutilisé par le scroll-into-view
+    /// (qui re-lit les cellules après chaque cran de molette pour retrouver la MÊME demande par son texte).</summary>
+    private static Func<string, bool> BuildDemandeMatch(bool dcademat)
+    {
         var overrideVal = Environment.GetEnvironmentVariable(dcademat ? "RIG_ALERTES_DCADEMAT" : "RIG_ALERTES_LIAISON");
-        bool Match(string nm)
+        return nm =>
         {
             if (string.IsNullOrWhiteSpace(nm)) return false;
             if (!string.IsNullOrWhiteSpace(overrideVal)) return nm.IndexOf(overrideVal, StringComparison.OrdinalIgnoreCase) >= 0;
@@ -3406,9 +3427,20 @@ public sealed class LegacyDriver : IDisposable
             return dcademat
                 ? nm.IndexOf("DCADEMAT", StringComparison.OrdinalIgnoreCase) >= 0
                 : System.Text.RegularExpressions.Regex.IsMatch(nm, @"J0\d{6,}");
-        }
+        };
+    }
 
-        // HWND du DataGridView (sinon du Pane wrapper, sinon la fenêtre) pour AccessibleObjectFromWindow.
+    /// <summary>HWND du DataGridView des demandes (ultDgvResultats / Table / _dgvDemandes), sinon du
+    /// Pane wrapper, sinon la fenêtre. Ordre rapide d'abord (ultDgvResultats) ; _dgvDemandes en dernier
+    /// (lookup lent quand absent). Sert à AccessibleObjectFromWindow (MSAA) ET au scroll molette.
+    /// IntPtr.Zero si rien d'exploitable. Extrait de <see cref="FindDemandeCells"/>.</summary>
+    private IntPtr ResolveDemandeGridHwnd()
+    {
+        AutomationElement? grid = FindByAutomationId("ultDgvResultats");
+        if (grid is null) { try { grid = _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)) ?? _window!.FindFirstDescendant(cf => cf.ByControlType(ControlType.DataGrid)); } catch { } }
+        if (grid is null) grid = FindByAutomationId("_dgvDemandes");
+        if (grid is null) return IntPtr.Zero;
+
         IntPtr hwnd = IntPtr.Zero;
         try { hwnd = grid.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
         if (hwnd == IntPtr.Zero)
@@ -3416,12 +3448,7 @@ public sealed class LegacyDriver : IDisposable
             try { var inner = grid.FindFirstDescendant(cf => cf.ByControlType(ControlType.Table)); if (inner != null) hwnd = inner.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
         }
         if (hwnd == IntPtr.Zero) { try { hwnd = _window!.Properties.NativeWindowHandle.ValueOrDefault; } catch { } }
-        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → HWND grille introuvable — MSAA impossible."); return new(); }
-
-        var cells = CollectCellsMsaa(hwnd, Match, max, out int scanned);
-        Console.WriteLine($"      → {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA ({scanned} cellules scannées)"
-            + (cells.Count > 0 ? $" ; 1ère : '{cells[0].text}' @ ({cells[0].cx},{cells[0].cy})" : $" — aucune (hwnd=0x{hwnd.ToInt64():X}, override RIG_ALERTES_* ?)"));
-        return cells;
+        return hwnd;
     }
 
     // ── MSAA (oleacc) : lecture des cellules quand UIA est aveugle ──────────────
@@ -3504,32 +3531,249 @@ public sealed class LegacyDriver : IDisposable
         return results;
     }
 
-    /// <summary>Ouvre une demande (formalités J00 ou DCADEMAT) par double-clic (= touche Entrée côté
-    /// RIG → <c>ReprendreProcessus</c>) et vérifie qu'un document/onglet s'ouvre sans crash (DocDemat /
-    /// RigAffichageDoc si l'étape interrompue le rouvre, sinon l'onglet de la demande). Réessaie sur les
-    /// demandes suivantes du même type si la 1ère ne produit pas de signal (robustesse données DEV). 3a.</summary>
+    /// <summary>Cellule-ligne de demande RETROUVÉE via MSAA avec, EN PLUS du centre écran et du texte
+    /// agrégé, le couple (<see cref="Node"/>, <see cref="ChildId"/>) IAccessible nécessaire pour appeler
+    /// <c>accSelect</c> (sélection native qui scrolle la ligne dans la vue) et RE-LIRE <c>accLocation</c>
+    /// après sélection, ainsi que l'index 0-based de ligne (<see cref="RowIndex"/>, parsé du Name MSAA
+    /// "Ligne N" si exposé, sinon -1) pour le fallback clavier Home + Down x index + Entrée.</summary>
+    private sealed class DemandeCellHit
+    {
+        public int Cx;
+        public int Cy;
+        public string Text = "";
+        public Accessibility.IAccessible Node = null!;   // IAccessible sur lequel appeler accSelect/accLocation
+        public object ChildId = (object)0;               // CHILDID_SELF (0) ou l'id enfant entier
+        public int RowIndex = -1;                         // 0-based (Down count apres Home), -1 si inconnu
+    }
+
+    /// <summary>Variante de <see cref="CollectCellsMsaa"/> qui CONSERVE l'IAccessible + childId de chaque
+    /// ligne matchée (pour <c>accSelect</c> + re-lecture <c>accLocation</c>) et l'index de ligne (Name MSAA
+    /// "Ligne N"). Même parcours/filtre (lignes au Name concaténé ';', skip des conteneurs) que
+    /// <see cref="CollectCellsMsaa"/> — on garde les deux pour ne pas changer la signature des nombreux
+    /// appelants de l'originale. Lecture seule (la sélection se fait dans l'appelant via accSelect).</summary>
+    private List<DemandeCellHit> CollectDemandeCellsMsaaRich(IntPtr hwnd, Func<string, bool> match, int max)
+    {
+        var results = new List<DemandeCellHit>();
+        if (hwnd == IntPtr.Zero) return results;
+        const uint OBJID_CLIENT = 0xFFFFFFFC;
+        var iid = IID_IAccessible;
+        Accessibility.IAccessible? root = null;
+        try
+        {
+            if (AccessibleObjectFromWindow(hwnd, OBJID_CLIENT, ref iid, out var obj) != 0 || obj is not Accessibility.IAccessible a)
+            { Console.WriteLine("      ⓘ AccessibleObjectFromWindow (rich) : pas d'IAccessible."); return results; }
+            root = a;
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ AccessibleObjectFromWindow (rich) jeté : {ex.Message}"); return results; }
+
+        void Walk(Accessibility.IAccessible node, int depth)
+        {
+            if (results.Count >= max || depth > 8) return;
+            int count; try { count = node.accChildCount; } catch { return; }
+            if (count <= 0) return;
+            var kids = new object[count]; int got;
+            try { if (AccessibleChildren(node, 0, count, kids, out got) != 0) return; } catch { return; }
+            for (int i = 0; i < got && results.Count < max; i++)
+            {
+                var k = kids[i];
+                if (k is Accessibility.IAccessible childAcc)
+                {
+                    string name = SafeAcc(() => childAcc.get_accName(0));
+                    string text = (name + " " + SafeAcc(() => childAcc.get_accValue(0))).Trim();
+                    if (text.IndexOf(';') >= 0)
+                    {
+                        if (match(text))
+                        {
+                            try
+                            {
+                                childAcc.accLocation(out int l, out int t, out int w, out int h, 0);
+                                results.Add(new DemandeCellHit { Cx = l + w / 2, Cy = t + h / 2, Text = text,
+                                    Node = childAcc, ChildId = (object)0, RowIndex = LegacyParsing.ParseLigneIndex(name) });
+                            }
+                            catch { }
+                        }
+                    }
+                    else
+                    {
+                        Walk(childAcc, depth + 1);
+                    }
+                }
+                else if (k is int childId && childId != 0)
+                {
+                    string name = SafeAcc(() => node.get_accName(childId));
+                    string text = (name + " " + SafeAcc(() => node.get_accValue(childId))).Trim();
+                    if (text.IndexOf(';') >= 0 && match(text))
+                    {
+                        try
+                        {
+                            node.accLocation(out int l, out int t, out int w, out int h, childId);
+                            results.Add(new DemandeCellHit { Cx = l + w / 2, Cy = t + h / 2, Text = text,
+                                Node = node, ChildId = (object)childId, RowIndex = LegacyParsing.ParseLigneIndex(name) });
+                        }
+                        catch { }
+                    }
+                }
+            }
+        }
+        try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      ⓘ Walk MSAA (rich) jeté : {ex.Message}"); }
+        return results;
+    }
+
+    /// <summary>
+    /// Bande visible [top,bottom] OÙ un clic sur une cellule de la grille est fiable : intersection du
+    /// rectangle ÉCRAN de la grille (<paramref name="gridHwnd"/>) et de l'écran courant (0..hauteur).
+    /// Si le hwnd grille n'a pas de rect exploitable, repli sur tout l'écran. Sert au scroll-into-view.
+    /// </summary>
+    private (int top, int bottom) GetGridVisibleBand(IntPtr gridHwnd)
+    {
+        int screenH;
+        try { screenH = GetSystemMetrics(1); } catch { screenH = 1080; }       // SM_CYSCREEN
+        if (screenH <= 0) screenH = 1080;
+        int top = 0, bottom = screenH;
+        if (gridHwnd != IntPtr.Zero && GetWindowRect(gridHwnd, out var r) && r.Bottom > r.Top)
+        {
+            top = Math.Max(0, r.Top);
+            bottom = Math.Min(screenH, r.Bottom);
+        }
+        if (bottom <= top) { top = 0; bottom = screenH; }                       // garde-fou rect degenere
+        return (top, bottom);
+    }
+
+    /// <summary>
+    /// SÉLECTIONNE nativement la ligne <paramref name="hit"/> via MSAA <c>accSelect</c>
+    /// (SELFLAG_TAKEFOCUS | SELFLAG_TAKESELECTION) : un DataGridView WinForms scrolle alors AUTOMATIQUEMENT
+    /// la ligne sélectionnée dans la zone visible (corrige le bug run live : les coords MSAA sont absolues
+    /// écran, une ligne en bas de grille a Y &gt; hauteur écran → l'ancien scroll molette WM_MOUSEWHEEL ne
+    /// faisait RIEN et le double-clic tapait dans le vide). Déclenche le trigger d'ouverture dans cet ordre :
+    ///   1. accSelect réussi → RE-LIRE accLocation ; si la ligne est maintenant dans la bande visible
+    ///      [<paramref name="top"/>,<paramref name="bottom"/>] → double-clic aux NOUVELLES coords ;
+    ///   2. sinon (ou re-lecture impossible) → Entrée (VK_RETURN) sur le hwnd grille : RIG ouvre la ligne
+    ///      SÉLECTIONNÉE (ReprendreProcessus se déclenche sur Entrée dans ce DGV) — pas besoin de coords ;
+    ///   3. fallback si accSelect échoue (HRESULT non nul → exception) OU n'a pas pu être tenté : navigation
+    ///      clavier Home + Down × <see cref="DemandeCellHit.RowIndex"/> + Entrée (index lu du Name "Ligne N").
+    /// Renvoie l'<see cref="Action"/> trigger à passer à <see cref="VerifyDocumentOpened"/> (qui mesure le
+    /// signal d'ouverture). Ne vérifie PAS lui-même l'ouverture — c'est l'appelant qui supervise.
+    /// </summary>
+    private Action BuildOpenDemandeTrigger(IntPtr gridHwnd, DemandeCellHit hit, int top, int bottom)
+    {
+        // (1) accSelect : sélection native qui scrolle la ligne dans la vue.
+        bool selected = false;
+        try
+        {
+            hit.Node.accSelect(SELFLAG_TAKEFOCUS | SELFLAG_TAKESELECTION, hit.ChildId);
+            selected = true;
+            Console.WriteLine($"      → accSelect(TAKEFOCUS|TAKESELECTION, childId={hit.ChildId}) OK → ligne sélectionnée (scroll natif DGV).");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      → ⚠ accSelect a jeté ({ex.GetType().Name}: {ex.Message}) → fallback navigation clavier.");
+        }
+
+        // (2) accSelect OK → re-lire accLocation : la ligne a-t-elle été ramenée dans la bande visible ?
+        if (selected)
+        {
+            // Laisser le DGV traiter le scroll induit par la sélection (poll court, pas de sleep fixe long).
+            int newCy = hit.Cy, newCx = hit.Cx; bool visible = false;
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < 1200)
+            {
+                try
+                {
+                    hit.Node.accLocation(out int l, out int t, out int w, out int h, hit.ChildId);
+                    newCx = l + w / 2; newCy = t + h / 2;
+                    if (LegacyParsing.IsCellYVisible(newCy, top, bottom)) { visible = true; break; }
+                }
+                catch { }
+                Thread.Sleep(120);
+            }
+
+            if (visible)
+            {
+                int cx = newCx, cy = newCy;
+                Console.WriteLine($"      → Ligne visible après accSelect (Y {hit.Cy} → {cy}, bande {top}-{bottom}) → double-clic aux nouvelles coords.");
+                return () => { Console.WriteLine("      → Double-clic → ReprendreProcessus"); Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: true); };
+            }
+
+            // (2b) Sélectionnée mais toujours hors bande (ou re-lecture KO) → ouvrir par Entrée la ligne sélectionnée.
+            Console.WriteLine($"      → Ligne sélectionnée mais hors bande visible (Y={newCy}, bande {top}-{bottom}) → Entrée sur la grille sélectionnée (ouvre la ligne sans coords).");
+            return () => PressEnterOnGrid(gridHwnd);
+        }
+
+        // (3) Fallback clavier : Home (1re ligne) + Down × index + Entrée. Index lu du Name MSAA "Ligne N".
+        int rowIndex = hit.RowIndex;
+        Console.WriteLine($"      → Fallback clavier : Home + Down × {(rowIndex >= 0 ? rowIndex.ToString() : "?")} + Entrée (index ligne = {(rowIndex >= 0 ? rowIndex.ToString() : "inconnu ('Ligne N' absent)")}).");
+        return () => OpenDemandeByKeyboard(gridHwnd, rowIndex);
+    }
+
+    /// <summary>Donne le focus clavier à la grille puis poste Entrée (VK_RETURN) : RIG ouvre la ligne
+    /// actuellement SÉLECTIONNÉE (ReprendreProcessus). Mouse-free / focus-free (ForceFocus = AttachThreadInput
+    /// + SetFocus, pas de SetForegroundWindow).</summary>
+    private void PressEnterOnGrid(IntPtr gridHwnd)
+    {
+        if (gridHwnd == IntPtr.Zero) { Console.WriteLine("      ⚠ Entrée non envoyée : hwnd grille nul."); return; }
+        Interaction.ForceFocus(gridHwnd);
+        Console.WriteLine("      → PostKey VK_RETURN sur la grille (ouvre la ligne sélectionnée).");
+        Interaction.PostKey(gridHwnd, VK_RETURN_KEY);
+    }
+
+    /// <summary>Fallback d'ouverture 100 % clavier quand accSelect a échoué : focus grille, Home (va sur la
+    /// 1re ligne data), Down × <paramref name="rowIndex0Based"/> pour atteindre la ligne cible, puis Entrée
+    /// (ReprendreProcessus). Si <paramref name="rowIndex0Based"/> &lt; 0 (Name "Ligne N" non exposé), on
+    /// tente quand même Home + Entrée (1re ligne) — best-effort, l'appelant supervise le signal d'ouverture
+    /// et réessaiera une autre demande si rien ne s'ouvre.</summary>
+    private void OpenDemandeByKeyboard(IntPtr gridHwnd, int rowIndex0Based)
+    {
+        if (gridHwnd == IntPtr.Zero) { Console.WriteLine("      ⚠ Fallback clavier impossible : hwnd grille nul."); return; }
+        Interaction.ForceFocus(gridHwnd);
+        Interaction.PostKey(gridHwnd, VK_HOME_KEY);          // 1re ligne data
+        Thread.Sleep(80);
+        int downs = rowIndex0Based > 0 ? rowIndex0Based : 0;
+        for (int d = 0; d < downs; d++) { Interaction.PostKey(gridHwnd, VK_DOWN_KEY); Thread.Sleep(20); }
+        Console.WriteLine($"      → Clavier : Home + {downs} × Down + Entrée.");
+        Thread.Sleep(80);
+        Interaction.PostKey(gridHwnd, VK_RETURN_KEY);        // ouvre la ligne sélectionnée
+    }
+
+    /// <summary>Ouvre une demande (formalités J00 ou DCADEMAT) en la SÉLECTIONNANT via MSAA accSelect (qui
+    /// scrolle la ligne dans la vue), puis double-clic aux nouvelles coords si elle est visible, sinon Entrée
+    /// sur la ligne sélectionnée (fallback clavier Home+Down si accSelect échoue). Vérifie qu'un document/onglet
+    /// s'ouvre sans crash (DocDemat / RigAffichageDoc si l'étape interrompue le rouvre, sinon l'onglet de la
+    /// demande). Réessaie sur les demandes suivantes du même type si la 1ère ne produit pas de signal
+    /// (robustesse données DEV).
+    /// ⚠ CORRIGE le bug run live : les coords MSAA (accLocation) sont absolues écran ; une demande en bas de
+    /// grille a Y &gt; hauteur écran (1585/4513/5657 sur 1080) ; l'ancien scroll molette WM_MOUSEWHEEL ne
+    /// faisait RIEN et le double-clic tapait dans le vide → aucune demande ouvrable. accSelect scrolle
+    /// nativement la ligne, et l'ouverture par Entrée ne dépend plus d'aucune coordonnée écran.
+    /// THROW si AUCUNE demande ne produit de signal d'ouverture (l'appelant NE doit PAS enchaîner l'étape
+    /// réclamation/validation si rien n'est ouvert — sinon il cherche des contrôles absents pendant ~111 s).</summary>
     public void OpenFirstDemandeAndVerify(bool dcademat)
     {
-        var cells = FindDemandeCells(dcademat, 3);
-        if (cells.Count == 0)
+        IntPtr gridHwnd = ResolveDemandeGridHwnd();
+        if (gridHwnd == IntPtr.Zero)
+            throw new Exception("Grille des demandes introuvable (hwnd nul) — impossible d'ouvrir une demande.");
+
+        var Match = BuildDemandeMatch(dcademat);
+        var hits = CollectDemandeCellsMsaaRich(gridHwnd, Match, 3);
+        Console.WriteLine($"      → {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA (rich)"
+            + (hits.Count > 0 ? $" ; 1ère : '{LegacyParsing.Truncate(hits[0].Text, 50)}' @ ({hits[0].Cx},{hits[0].Cy}) rowIndex={hits[0].RowIndex}" : ""));
+        if (hits.Count == 0)
             throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (non « en cours ») dans la grille (données DEV ? override RIG_ALERTES_*).");
+
+        var (top, bottom) = GetGridVisibleBand(gridHwnd);
         Exception? last = null;
-        for (int i = 0; i < cells.Count; i++)
+        for (int i = 0; i < hits.Count; i++)
         {
-            var (cx, cy, txt) = cells[i];
+            var hit = hits[i];
             try
             {
-                Console.WriteLine($"      → Tentative {i + 1}/{cells.Count} : demande ('{txt}') @ {cx},{cy}");
-                VerifyDocumentOpened(() =>
-                {
-                    Console.WriteLine("      → Double-clic → ReprendreProcessus");
-                    Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: true);
-                }, "Demande (reprise)", waitSeconds: 15);
+                Console.WriteLine($"      → Tentative {i + 1}/{hits.Count} : demande ('{LegacyParsing.Truncate(hit.Text, 50)}') Y={hit.Cy} rowIndex={hit.RowIndex}");
+                var trigger = BuildOpenDemandeTrigger(gridHwnd, hit, top, bottom);
+                VerifyDocumentOpened(trigger, "Demande (reprise)", waitSeconds: 15);
                 return; // signal reçu → succès
             }
             catch (Exception ex) { last = ex; Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}"); }
         }
-        throw new Exception($"Aucune des {cells.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture. Dernière erreur : {last?.Message}");
+        throw new Exception($"Aucune des {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture (sélection MSAA + Entrée + fallback clavier tous tentés). Dernière erreur : {last?.Message}");
     }
 
     // ════════════════════════════════════════════════════════════════════════

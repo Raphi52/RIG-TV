@@ -560,7 +560,12 @@ internal static class Program
             {
                 TryStep($"{tag} : Ouvrir alerte RCS ('{alerte}') + grille des demandes",
                     () => driver.OpenAlerteRcs(alerte));
-                TryStep($"{tag} : Ouvrir demande ({famille}) → Configurer le dépôt",
+                // ⚠ GATE : on capture le succès de l'ouverture de la demande. Si AUCUNE demande n'a pu être
+                //   ouverte (toutes hors écran/sélection KO), l'étape « Action » (réclamation/validation)
+                //   n'a aucun sens : ses contrôles (combo « Type de motif », case DCA…) ne sont pas à l'écran.
+                //   Sans ce garde-fou, FindTypeMotifCombo balayait l'arbre UIA en boucle ~111 s avant null
+                //   (bug run live). On SKIP donc l'Action proprement au lieu de la lancer dans le vide.
+                bool demandeOuverte = TryStepBool($"{tag} : Ouvrir demande ({famille}) → Configurer le dépôt",
                     () => driver.OpenFirstDemandeAndVerify(dcademat: isDca));
                 // Étape 3 — step "Action" métier. Implémenté pour dca-validation :
                 //   cocher la case 'DCA' (grille Exercices) + Valider + vérifier l'apparition des
@@ -570,8 +575,11 @@ internal static class Program
                 // "ouvrir alerte + demande" (Action à éprouver avec supervision).
                 if (kind == "dca-validation")
                 {
-                    TryStep($"{tag} : Action (validation) - case DCA + Valider + n° depot/facture/demande",
-                        () => driver.ConfigurerDepotDcaEtValider(numGestion));
+                    if (demandeOuverte)
+                        TryStep($"{tag} : Action (validation) - case DCA + Valider + n° depot/facture/demande",
+                            () => driver.ConfigurerDepotDcaEtValider(numGestion));
+                    else
+                        Skip($"{tag} : Action (validation) SKIP — aucune demande ouverte (étape précédente échouée).");
                 }
                 // Étape 3 (réclamation) — implémenté : case DCA (si présente) + étape Réclamation/Refus
                 //   → motif INPMANQ + Tab (texte auto-rempli) + ajout "TEST" en fin de texte + Réclamer (Alt+R).
@@ -580,8 +588,11 @@ internal static class Program
                 //   ⚠ NE PAS IMPRIMER : aucun bouton Imprimer / boîte d'impression n'est touché.
                 else if (kind == "dca-reclamation")
                 {
-                    TryStep($"{tag} : Action (réclamation) - motif INPMANQ + texte TEST + Réclamer",
-                        () => driver.ReclamerDcaAvecMotif());
+                    if (demandeOuverte)
+                        TryStep($"{tag} : Action (réclamation) - motif INPMANQ + texte TEST + Réclamer",
+                            () => driver.ReclamerDcaAvecMotif());
+                    else
+                        Skip($"{tag} : Action (réclamation) SKIP — aucune demande ouverte (étape précédente échouée).");
                 }
                 // TODO Étape 3 (avec supervision) — autres kinds :
                 //   refus / interrompue : action correspondante.
@@ -2532,6 +2543,16 @@ internal static class Program
     {
         try { action(); Pass(description); }
         catch (Exception ex) { Fail(description, ex); }
+    }
+
+    /// <summary>Comme <see cref="TryStep(string, Action)"/> mais retourne true si le step a réussi.
+    /// Sert à GATER un step suivant qui n'a de sens que si le précédent a réussi (ex : ne pas chercher
+    /// le combo « Type de motif » de l'étape réclamation si AUCUNE demande n'a pu être ouverte — sinon
+    /// FindTypeMotifCombo balaie l'arbre UIA en boucle ~111 s avant de renvoyer null).</summary>
+    private static bool TryStepBool(string description, Action action)
+    {
+        try { action(); Pass(description); return true; }
+        catch (Exception ex) { Fail(description, ex); return false; }
     }
 
     private static void Pass(string description) { _passed++; Console.WriteLine($"  ✓ {description}"); }
