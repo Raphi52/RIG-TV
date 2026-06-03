@@ -573,9 +573,17 @@ internal static class Program
                     TryStep($"{tag} : Action (validation) - case DCA + Valider + n° depot/facture/demande",
                         () => driver.ConfigurerDepotDcaEtValider(numGestion));
                 }
+                // Étape 3 (réclamation) — implémenté : case DCA (si présente) + étape Réclamation/Refus
+                //   → motif INPMANQ + Tab (texte auto-rempli) + ajout "TEST" en fin de texte + Réclamer (Alt+R).
+                //   Vérif (sans aperçu écran, mur HDESK) : courrier récupérable → "TEST" présent (PdfPig),
+                //   sinon confirmation non-visuelle (signal d'ouverture + RIG vivant) avec limite documentée.
+                //   ⚠ NE PAS IMPRIMER : aucun bouton Imprimer / boîte d'impression n'est touché.
+                else if (kind == "dca-reclamation")
+                {
+                    TryStep($"{tag} : Action (réclamation) - motif INPMANQ + texte TEST + Réclamer",
+                        () => driver.ReclamerDcaAvecMotif());
+                }
                 // TODO Étape 3 (avec supervision) — autres kinds :
-                //   réclamation : motif INPMANQ + modifier le texte + Réclamer (Alt+R)
-                //                 + vérifier le courrier (⚠ aperçu avant impression → NE PAS IMPRIMER) ;
                 //   refus / interrompue : action correspondante.
             });
     }

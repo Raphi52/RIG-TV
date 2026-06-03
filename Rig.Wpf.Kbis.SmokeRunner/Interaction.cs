@@ -23,6 +23,8 @@ namespace Rig.Wpf.Kbis.SmokeRunner
         private const uint WM_SETTEXT     = 0x000C;
         private const uint WM_KEYDOWN     = 0x0100;
         private const uint WM_KEYUP       = 0x0101;
+        private const uint WM_SYSKEYDOWN  = 0x0104;
+        private const uint WM_SYSKEYUP    = 0x0105;
         private const int  MK_LBUTTON     = 0x0001;
         private const int  MK_RBUTTON     = 0x0002;
         private const int  VK_RETURN      = 0x0D;
@@ -492,6 +494,28 @@ namespace Rig.Wpf.Kbis.SmokeRunner
             if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
             PostMessage(hwnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)0x00000001);
             PostMessage(hwnd, WM_KEYUP,   (IntPtr)vkCode, unchecked((IntPtr)(int)0xC0000001));
+        }
+
+        /// <summary>
+        /// Poste un raccourci ALT+touche (mnémonique WinForms, ex Alt+R pour "&amp;Réclamer") sur un hwnd via
+        /// WM_SYSKEYDOWN/WM_SYSKEYUP. Le bit 29 du lParam (contexte ALT) DOIT être à 1 pour que la message loop
+        /// WinForms traite l'accélérateur (sinon le caractère est ignoré). Séquence : SYSKEYDOWN(ALT) →
+        /// SYSKEYDOWN(touche, ctx ALT) → SYSKEYUP(touche, ctx ALT) → KEYUP(ALT). 100 % message-based (pas de
+        /// SendInput global) → ne vole pas le focus utilisateur. Best-effort sur un HDESK (le focus clavier
+        /// n'y est pas garanti) — d'où l'usage en FALLBACK du clic direct du bouton.
+        /// </summary>
+        public static void PostAltKey(IntPtr hwnd, int vkCode)
+        {
+            if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
+            // lParam avec bit 29 (0x20000000) = contexte ALT enfoncé ; bit 0 = repeat=1.
+            IntPtr downCtxAlt = unchecked((IntPtr)(int)0x20000001);
+            // KEYUP : bits 31 (transition) + 30 (prev down) + 29 (ALT ctx) + repeat.
+            IntPtr upCtxAlt   = unchecked((IntPtr)(int)0xE0000001);
+            const int VK_MENU_LOCAL = 0x12; // ALT
+            PostMessage(hwnd, WM_SYSKEYDOWN, (IntPtr)VK_MENU_LOCAL, (IntPtr)0x20000001);
+            PostMessage(hwnd, WM_SYSKEYDOWN, (IntPtr)vkCode,        downCtxAlt);
+            PostMessage(hwnd, WM_SYSKEYUP,   (IntPtr)vkCode,        upCtxAlt);
+            PostMessage(hwnd, WM_KEYUP,      (IntPtr)VK_MENU_LOCAL, unchecked((IntPtr)(int)0xC0000001));
         }
 
         /// <summary>

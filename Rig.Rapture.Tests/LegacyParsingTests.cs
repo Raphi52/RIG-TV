@@ -146,4 +146,64 @@ public class LegacyParsingTests
     [InlineData(null)]
     public void Truncate_vide_ou_null_retourne_chaine_vide(string s)
         => Assert.Equal("", LegacyParsing.Truncate(s));
+
+    // ── AppendMotifMarker : ajoute le marqueur en fin de texte de motif (reclamation) ──
+
+    [Fact]
+    public void AppendMotifMarker_texte_normal_ajoute_le_marqueur_a_la_fin()
+        => Assert.Equal("Pieces manquantes. TEST",
+            LegacyParsing.AppendMotifMarker("Pieces manquantes.", "TEST"));
+
+    [Fact]
+    public void AppendMotifMarker_supprime_les_blancs_de_fin_avant_d_ajouter()
+        // le texte auto-rempli peut finir par espaces / CRLF -> on normalise puis " TEST".
+        => Assert.Equal("Motif developpe TEST",
+            LegacyParsing.AppendMotifMarker("Motif developpe \r\n  ", "TEST"));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    [InlineData("   ")]
+    [InlineData("\r\n")]
+    public void AppendMotifMarker_texte_vide_retourne_le_marqueur_seul(string existing)
+        => Assert.Equal("TEST", LegacyParsing.AppendMotifMarker(existing, "TEST"));
+
+    [Fact]
+    public void AppendMotifMarker_idempotent_si_deja_termine_par_le_marqueur()
+        // re-run / re-saisie : on n'accumule pas "TEST TEST".
+        => Assert.Equal("Motif TEST", LegacyParsing.AppendMotifMarker("Motif TEST", "TEST"));
+
+    [Fact]
+    public void AppendMotifMarker_idempotent_insensible_a_la_casse_et_blancs_de_fin()
+        => Assert.Equal("Motif test", LegacyParsing.AppendMotifMarker("Motif test  ", "TEST"));
+
+    [Fact]
+    public void AppendMotifMarker_marqueur_au_milieu_n_empeche_pas_l_ajout_final()
+        // "TEST" present mais PAS en fin -> on ajoute quand meme a la fin (preuve = en fin de phrase).
+        => Assert.Equal("TEST puis autre chose TEST",
+            LegacyParsing.AppendMotifMarker("TEST puis autre chose", "TEST"));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData(null)]
+    public void AppendMotifMarker_marqueur_vide_retourne_le_texte_inchange(string marker)
+        => Assert.Equal("Motif inchange", LegacyParsing.AppendMotifMarker("Motif inchange", marker));
+
+    // ── ContainsMotifMarker : detecte le marqueur dans le courrier genere ──
+
+    [Theory]
+    [InlineData("Veuillez nous faire parvenir les pieces. TEST", "TEST")]
+    [InlineData("blabla test blabla", "TEST")]          // insensible a la casse
+    [InlineData("TEST", "TEST")]
+    public void ContainsMotifMarker_present_retourne_true(string text, string marker)
+        => Assert.True(LegacyParsing.ContainsMotifMarker(text, marker));
+
+    [Theory]
+    [InlineData("Texte sans le marqueur", "TEST")]
+    [InlineData("", "TEST")]
+    [InlineData(null, "TEST")]
+    [InlineData("du texte", "")]
+    [InlineData("du texte", null)]
+    public void ContainsMotifMarker_absent_ou_args_vides_retourne_false(string text, string marker)
+        => Assert.False(LegacyParsing.ContainsMotifMarker(text, marker));
 }

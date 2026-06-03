@@ -17,6 +17,8 @@ namespace Rig.Wpf.Kbis.SmokeRunner;
 ///   - <see cref="ExtractAudienceId"/>       : "ID=12345" dans le texte d'une popup "Audience creee"
 ///   - <see cref="IsDataRowName"/>           : ligne DataGridView "Prefixe Ligne N" (N>=1), 2 sites
 ///   - <see cref="Truncate"/>                : tronque + ellipse pour le dump MSAA
+///   - <see cref="AppendMotifMarker"/>       : ajoute un marqueur en fin de texte de motif (scenario reclamation)
+///   - <see cref="ContainsMotifMarker"/>     : detecte le marqueur dans un texte (verif courrier de reclamation)
 /// </summary>
 public static class LegacyParsing
 {
@@ -88,5 +90,37 @@ public static class LegacyParsing
     {
         if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
         return s.Length > maxLen ? s.Substring(0, maxLen) + "…" : s;
+    }
+
+    /// <summary>
+    /// Ajoute le marqueur <paramref name="marker"/> a la FIN du texte de motif de reclamation
+    /// (scenario dca-reclamation : on prouve que la modif du texte est prise en compte). Regles :
+    ///   - texte existant (auto-rempli depuis le code motif) -> on enleve les blancs de fin puis on
+    ///     ajoute " &lt;marker&gt;" (un espace separateur) -> le marqueur est en toute fin de phrase ;
+    ///   - texte vide/null -> on retourne juste le marqueur ;
+    ///   - si le texte se termine DEJA par le marqueur (idempotence : re-run / re-saisie) -> inchange,
+    ///     pour ne pas accumuler "TEST TEST TEST".
+    /// Comparaison du suffixe insensible a la casse. Le marqueur lui-meme est insere tel quel.
+    /// Pur : entree texte -> sortie texte, aucun effet de bord.
+    /// </summary>
+    public static string AppendMotifMarker(string? existingText, string marker)
+    {
+        if (string.IsNullOrEmpty(marker)) return existingText ?? string.Empty;
+        var baseText = (existingText ?? string.Empty).TrimEnd();
+        if (baseText.Length == 0) return marker;
+        // Idempotence : ne pas ajouter une 2e fois si le texte se termine deja par le marqueur.
+        if (baseText.EndsWith(marker, StringComparison.OrdinalIgnoreCase)) return baseText;
+        return baseText + " " + marker;
+    }
+
+    /// <summary>
+    /// true si <paramref name="text"/> contient <paramref name="marker"/> (comparaison ordinale
+    /// insensible a la casse). Sert a verifier que la modif du texte de motif ("TEST") se retrouve
+    /// dans le courrier de reclamation genere (couche texte PDF/doc). null/vide -> false.
+    /// </summary>
+    public static bool ContainsMotifMarker(string? text, string marker)
+    {
+        if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(marker)) return false;
+        return text.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }

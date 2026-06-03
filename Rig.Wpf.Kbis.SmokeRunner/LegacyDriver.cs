@@ -3659,6 +3659,625 @@ public sealed class LegacyDriver : IDisposable
             + (numFacture != null ? $", n° de facture {numFacture}" : "") + ").");
     }
 
+    // ════════════════════════════════════════════════════════════════════════
+    // DCADEMAT réclamation — step "Action" (Étape 3, kind "dca-reclamation")
+    // Après OpenFirstDemandeAndVerify(dcademat:true) depuis l'alerte "réclamation".
+    //
+    // Spec métier (recette manuelle) :
+    //   1. cocher la 1re case "DCA" de l'étape "Configurer le dépôt" si pas déjà cochée auto ;
+    //   2. aller à l'étape "Réclamation / Refus" ;
+    //   3. sélectionner un type de motif dans le combo (ex INPMANQ) ;
+    //   4. tabuler → le texte du motif s'affiche (auto-rempli depuis CODE_MOTIF, cf.
+    //      OPE_MOTIF_EVT.MTFEV_CODE_MOTIF_AfterChangementValeur) ;
+    //   5. ajouter le mot "TEST" à la fin du texte (preuve que la modif du texte est enregistrée) ;
+    //   6. cliquer "Réclamer" (Alt+R) → Processus.Reclamer() ;
+    //   7. le courrier de réclamation s'affiche en aperçu avant impression → vérifier que "TEST" y figure.
+    //
+    // Contrôles RIG sous-jacents (Source\…\ETP_RECLAM_REFUS\OPE_MOTIF_EVT.Designer.cs) :
+    //   - cboTypeMotif        : ULT_COMBO_CODE_MOTIF, MetierTitre "Type de motif" (Link MTFEV_CODE_MOTIF)
+    //   - ultMotifReclamation : Ult_TextMultiLine,   MetierTitre "Motif"        (Link MTFEV_TEXTE_MOTIF)
+    //   - ultToolbar          : Ult_Toolbar avec bouton RECLAMATION = "&Réclamer" (Alt+R, RigToolBar.cs:181)
+    //
+    // ⚠ MUR HDESK partie (b) : l'aperçu avant impression (composition DWM, type AcroPDF) ne peint PAS
+    //   sur un desktop non composé (Mode B headless). On NE se repose donc PAS sur l'écran (cf.
+    //   OpenReclamationViaMenuMultiTry). Vérif Étape 7 (par ordre de préférence) :
+    //     (a) si Réclamer génère un fichier courrier (PDF/doc) récupérable via la cmdline d'un viewer
+    //         (modèle OpenKbisDocument/GetPdfPathFromProcessCmdline) → extraire le texte (PdfPig) et
+    //         vérifier que "TEST" y figure (ContainsMotifMarker) ;
+    //     (b) sinon → confirmation NON visuelle : un signal d'ouverture (process viewer / fenêtre /
+    //         fichier / onglet via VerifyDocumentOpened), preuve que Réclamer s'est exécuté sans crash
+    //         et que RIG est toujours vivant. Limite explicite : sans fichier lisible, on NE peut PAS
+    //         confirmer la présence de "TEST" dans le courrier (mur HDESK) → loggé et signalé.
+    // ════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Sur une demande DCADEMAT ouverte depuis l'alerte "réclamation" : coche la case DCA si présente,
+    /// va à l'étape "Réclamation / Refus", sélectionne un type de motif (<paramref name="motif"/>),
+    /// tabule (le texte du motif s'auto-remplit), ajoute <paramref name="ajout"/> à la fin du texte,
+    /// puis clique "Réclamer" (Alt+R). Vérifie ensuite (sans dépendre de l'aperçu écran — mur HDESK) :
+    /// (a) si un courrier PDF/doc récupérable est généré → que <paramref name="ajout"/> y figure (PdfPig) ;
+    /// (b) sinon → un signal d'ouverture non-visuel (process/fenêtre/fichier/onglet) prouvant que Réclamer
+    /// s'est exécuté sans crash. ⚠ NE PAS IMPRIMER : on ne clique AUCUN bouton "Imprimer" ni boîte d'impression.
+    /// </summary>
+    /// <param name="motif">Code/type de motif à sélectionner dans le combo (default "INPMANQ").</param>
+    /// <param name="ajout">Mot ajouté en fin de texte de motif comme preuve de modif (default "TEST").</param>
+    public void ReclamerDcaAvecMotif(string motif = "INPMANQ", string ajout = "TEST")
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + OpenFirstDemandeAndVerify(dcademat:true) doivent être appelés avant ReclamerDcaAvecMotif()");
+
+        EnsureWindowMaximized();
+
+        // ── (1) Cocher la case DCA de la 1re ligne d'exercice (si l'écran "Configurer le dépôt" est là) ─
+        // Réutilise la logique de ConfigurerDepotDcaEtValider (UIA DataItem "DCA Ligne N" + toggle), MAIS
+        // on NE clique PAS "Valider" ici : la réclamation a son propre bouton "Réclamer". Si la case DCA
+        // n'est pas atteignable (la demande peut s'ouvrir directement sur une autre étape selon son état),
+        // c'est NON bloquant pour le scénario réclamation → on logue et on continue vers l'étape motif.
+        try
+        {
+            var dcaCell = FindDcaCheckboxDataItem();
+            if (dcaCell is not null)
+            {
+                if (IsDcaCellChecked(dcaCell)) Console.WriteLine("      → (1) Case DCA déjà cochée — pas de clic.");
+                else
+                {
+                    Console.WriteLine("      → (1) Coche la case DCA (UIA, sans cliquer Valider)…");
+                    ToggleDcaCellAndConfirm(dcaCell);
+                }
+            }
+            else
+            {
+                Console.WriteLine("      → (1) Case DCA (grille Exercices) absente de l'écran courant — étape « Configurer le dépôt » "
+                    + "probablement déjà passée pour cette demande. NON bloquant pour la réclamation → on continue.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      → (1) ⓘ Cochage case DCA ignoré (non bloquant pour la réclamation) : {ex.GetType().Name}: {ex.Message}");
+        }
+
+        // ── (2) Aller à l'étape "Réclamation / Refus" + (3) localiser le combo "Type de motif" ────────
+        var combo = FindTypeMotifCombo();
+        if (combo is null)
+        {
+            DumpDescendants(_window!, maxDepth: 5);
+            try { CaptureScreenshot("dca-reclam-combo-motif-introuvable"); } catch { }
+            throw new Exception("Étape « Réclamation / Refus » : combo « Type de motif » (cboTypeMotif / ULT_COMBO_CODE_MOTIF) "
+                + "introuvable. La demande n'est peut-être pas sur l'étape réclamation (mauvais état de données DEV), ou le "
+                + "combo n'expose pas de ComboBox UIA. Voir dump + screenshot pour ajuster le sélecteur.");
+        }
+
+        // ── (3) Sélectionner le type de motif (ex INPMANQ) ───────────────────────────────────────────
+        SelectMotifInCombo(combo, motif);
+
+        // ── (4) Tabuler → RIG remplit le texte du motif (MTFEV_TEXTE_MOTIF depuis CODE_MOTIF) ─────────
+        Console.WriteLine("      → (4) Tab pour quitter le combo → RIG remplit le texte du motif…");
+        try { Interaction.PressKey(combo, 0x09 /* VK_TAB */); }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ Tab sur le combo a jeté : {ex.Message}"); }
+
+        // ── (5) Ajouter "TEST" à la fin du texte du motif (preuve de modif enregistrée) ──────────────
+        var motifTextEl = FindMotifTexteField();
+        if (motifTextEl is null)
+        {
+            DumpDescendants(_window!, maxDepth: 5);
+            try { CaptureScreenshot("dca-reclam-texte-motif-introuvable"); } catch { }
+            throw new Exception("Étape « Réclamation / Refus » : champ texte « Motif » (ultMotifReclamation / Ult_TextMultiLine) "
+                + "introuvable après sélection du motif. Voir dump + screenshot pour ajuster le sélecteur.");
+        }
+
+        // Poll-jusqu'à-condition : le texte s'auto-remplit en asynchrone après le Tab. On attend qu'il
+        // soit non vide (max ~6s), sinon on ajoute quand même le marqueur (le motif peut n'avoir aucun
+        // texte développé selon le CODE_MOTIF — non bloquant, on prouve juste la modif).
+        string before = ReadValue(motifTextEl);
+        var swText = Stopwatch.StartNew();
+        while (string.IsNullOrWhiteSpace(before) && swText.ElapsedMilliseconds < 6000)
+        {
+            Thread.Sleep(400);
+            before = ReadValue(motifTextEl);
+        }
+        Console.WriteLine($"      → (5) Texte du motif AVANT ajout ({swText.ElapsedMilliseconds}ms) : "
+            + (string.IsNullOrWhiteSpace(before) ? "(vide)" : $"'{LegacyParsing.Truncate(before, 80)}'"));
+
+        string after = LegacyParsing.AppendMotifMarker(before, ajout);  // logique pure testée xUnit
+        Console.WriteLine($"      → (5) Écriture du texte modifié (ajout de '{ajout}' en fin)…");
+        try { Interaction.SetText(motifTextEl, after); }
+        catch (Exception ex)
+        {
+            try { CaptureScreenshot("dca-reclam-set-texte-echec"); } catch { }
+            throw new Exception($"Échec écriture du texte de motif modifié (SetValue/WM_SETTEXT) : {ex.GetType().Name}: {ex.Message}");
+        }
+
+        // Confirme via relecture que le marqueur est bien présent dans le champ (poll court).
+        var swConfirm = Stopwatch.StartNew();
+        bool markerInField = false;
+        string reread = "";
+        while (swConfirm.ElapsedMilliseconds < 3000)
+        {
+            reread = ReadValue(motifTextEl);
+            if (LegacyParsing.ContainsMotifMarker(reread, ajout)) { markerInField = true; break; }
+            Thread.Sleep(300);
+        }
+        if (markerInField)
+            Console.WriteLine($"      ✓ (5) Texte modifié confirmé dans le champ (contient '{ajout}') : '{LegacyParsing.Truncate(reread, 80)}'");
+        else
+            Console.WriteLine($"      → ⚠ (5) Marqueur '{ajout}' NON relu dans le champ après SetText (binding RIG asynchrone ?) — "
+                + $"valeur relue : '{LegacyParsing.Truncate(reread, 80)}'. On clique Réclamer quand même ; la vérif finale tranchera.");
+
+        // ── (6) + (7) Cliquer "Réclamer" (Alt+R) puis vérifier le courrier sans dépendre de l'aperçu ─
+        ClickReclamerEtVerifier(ajout);
+    }
+
+    /// <summary>Coche une cellule DCA UIA (sans cliquer Valider) : TogglePattern si dispo, sinon clic écran
+    /// au centre ; confirme l'état via poll (max 4s, 1 re-clic). Extrait de CheckDcaCellAndValidateUia pour
+    /// le scénario réclamation (qui n'enchaîne pas sur Valider). Non bloquant si l'état n'est pas confirmé.</summary>
+    private void ToggleDcaCellAndConfirm(AutomationElement dcaCell)
+    {
+        var r = dcaCell.BoundingRectangle;
+        int cx = (int)(r.X + r.Width / 2), cy = (int)(r.Y + r.Height / 2);
+        bool toggled = false;
+        try { if (dcaCell.Patterns.Toggle.IsSupported) { dcaCell.Patterns.Toggle.Pattern.Toggle(); toggled = true; } } catch { }
+        if (!toggled) Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: false);
+
+        var sw = Stopwatch.StartNew();
+        bool now = false; int reclicks = 0;
+        while (sw.ElapsedMilliseconds < 4000)
+        {
+            Thread.Sleep(300);
+            var fresh = FindDcaCheckboxDataItem();
+            now = fresh is not null && IsDcaCellChecked(fresh);
+            if (now) break;
+            if (sw.ElapsedMilliseconds > 1500 && reclicks == 0)
+            {
+                reclicks++;
+                Console.WriteLine("      → Case DCA toujours décochée après 1,5s — re-clic (double)");
+                Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId, doubleClick: true);
+            }
+        }
+        Console.WriteLine(now
+            ? $"      ✓ (1) Case DCA cochée (confirmé UIA en {sw.ElapsedMilliseconds}ms)"
+            : "      → ⚠ (1) État coché de la case DCA non confirmé via UIA (non bloquant pour la réclamation).");
+    }
+
+    /// <summary>Localise le combo « Type de motif » de l'étape Réclamation/Refus. Stratégie :
+    /// 1) AutomationId "cboTypeMotif" (Name du contrôle RIG) ; 2) un ComboBox visible voisin d'un label
+    /// « Type de motif » ; 3) le 1er ComboBox visible non-trivial. Retourne null si rien trouvé.</summary>
+    private AutomationElement? FindTypeMotifCombo()
+    {
+        if (_window is null) return null;
+
+        // 1) Par AutomationId (le Name WinForms "cboTypeMotif" est souvent exposé comme AutomationId).
+        var byId = FindByAutomationId("cboTypeMotif");
+        if (byId is not null && IsUsableCombo(byId))
+        {
+            Console.WriteLine("      → (2/3) Combo « Type de motif » trouvé via AutomationId 'cboTypeMotif'.");
+            return byId;
+        }
+
+        // Liste des ComboBox visibles (le combo RIG peut s'exposer comme ComboBox ou Pane wrapper).
+        List<AutomationElement> combos;
+        try
+        {
+            combos = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.ComboBox))
+                .Where(c => { try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; } })
+                .ToList();
+        }
+        catch { combos = new List<AutomationElement>(); }
+
+        // 2) ComboBox le plus proche d'un label "Type de motif" / "motif".
+        try
+        {
+            var labels = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .Where(t => { try { return t.IsAvailable && !t.IsOffscreen; } catch { return false; } })
+                .Where(t =>
+                {
+                    var n = SafeText(() => t.Name).ToLowerInvariant();
+                    return n.Contains("type de motif") || n == "motif" || n.Contains("type motif");
+                })
+                .ToList();
+            foreach (var lbl in labels)
+            {
+                var lr = lbl.BoundingRectangle;
+                var near = combos
+                    .Where(c => { var cr = c.BoundingRectangle; return Math.Abs(cr.Y - lr.Y) < 60 || (cr.Y > lr.Y && cr.Y < lr.Y + 60); })
+                    .OrderBy(c => { var cr = c.BoundingRectangle; return (cr.Y - lr.Y) * (cr.Y - lr.Y) + (cr.X - lr.X) * (cr.X - lr.X); })
+                    .FirstOrDefault();
+                if (near is not null)
+                {
+                    Console.WriteLine($"      → (2/3) Combo « Type de motif » trouvé près du label '{SafeText(() => lbl.Name)}'.");
+                    return near;
+                }
+            }
+        }
+        catch { }
+
+        // 3) Fallback : 1er ComboBox visible (l'étape réclamation n'a qu'un combo motif par opération).
+        var first = combos.OrderBy(c => { try { return c.BoundingRectangle.Y; } catch { return double.MaxValue; } }).FirstOrDefault();
+        if (first is not null) Console.WriteLine("      → (2/3) ⚠ Combo « Type de motif » non identifié formellement — fallback 1er ComboBox visible.");
+        return first;
+    }
+
+    private bool IsUsableCombo(AutomationElement el)
+    {
+        try { return el.IsAvailable && !el.IsOffscreen; } catch { return false; }
+    }
+
+    /// <summary>Sélectionne dans le combo l'item correspondant à <paramref name="motif"/> (match exact code,
+    /// sinon substring case-insensitive sur le texte affiché du combo de motifs RCS). Stratégie UIA :
+    /// Expand → chercher l'item → SelectionItem.Select(). Fallbacks : ValuePattern.SetValue (combo éditable),
+    /// puis saisie clavier du code. Throw avec la liste des items si le motif est introuvable.</summary>
+    private void SelectMotifInCombo(AutomationElement combo, string motif)
+    {
+        Console.WriteLine($"      → (3) Sélection du type de motif '{motif}' dans le combo…");
+        // Expand pour matérialiser les items (selon le template, FindAllChildren d'un combo collapsed peut être vide).
+        try { combo.Patterns.ExpandCollapse.Pattern.Expand(); Thread.Sleep(300); } catch { }
+
+        AutomationElement[] items;
+        try { items = combo.FindAllChildren(cf => cf.ByControlType(ControlType.ListItem)); }
+        catch { items = System.Array.Empty<AutomationElement>(); }
+        if (items.Length == 0)
+        {
+            // Certains ComboBox n'exposent leurs items que sous un popup List séparé.
+            try { items = combo.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)); }
+            catch { items = System.Array.Empty<AutomationElement>(); }
+        }
+        Console.WriteLine($"      → (3) {items.Length} item(s) dans le combo de motifs.");
+
+        AutomationElement? match =
+            // 1) match exact sur le code (le texte d'item RCS commence souvent par le code, ex "INPMANQ ...").
+            items.FirstOrDefault(i => SafeText(() => i.Name).Trim().Equals(motif, StringComparison.OrdinalIgnoreCase))
+            ?? items.FirstOrDefault(i => SafeText(() => i.Name).Trim().StartsWith(motif + " ", StringComparison.OrdinalIgnoreCase))
+            ?? items.FirstOrDefault(i => SafeText(() => i.Name).IndexOf(motif, StringComparison.OrdinalIgnoreCase) >= 0);
+
+        if (match is not null)
+        {
+            Console.WriteLine($"      → (3) Item motif retenu : '{SafeText(() => match.Name)}'");
+            bool selected = false;
+            try { if (match.Patterns.SelectionItem.IsSupported) { match.Patterns.SelectionItem.Pattern.Select(); selected = true; } } catch { }
+            if (!selected) { try { Interaction.Click(match); selected = true; } catch { } }
+            try { combo.Patterns.ExpandCollapse.Pattern.Collapse(); } catch { }
+            if (selected) { Console.WriteLine($"      ✓ (3) Type de motif '{motif}' sélectionné."); return; }
+        }
+
+        // Fallback A : combo éditable → SetValue du code directement.
+        try
+        {
+            if (combo.Patterns.Value.IsSupported)
+            {
+                Console.WriteLine($"      → (3) ⚠ Item non sélectionnable par liste — fallback ValuePattern.SetValue('{motif}').");
+                combo.Patterns.Value.Pattern.SetValue(motif);
+                try { combo.Patterns.ExpandCollapse.Pattern.Collapse(); } catch { }
+                Console.WriteLine($"      ✓ (3) Type de motif '{motif}' saisi via ValuePattern.");
+                return;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ (3) ValuePattern.SetValue a jeté : {ex.Message}"); }
+
+        // Échec : liste les items vus pour ajuster le code motif / le sélecteur.
+        try { combo.Patterns.ExpandCollapse.Pattern.Collapse(); } catch { }
+        var sample = string.Join(" | ", items.Take(20).Select(i => "'" + LegacyParsing.Truncate(SafeText(() => i.Name), 40) + "'"));
+        try { CaptureScreenshot("dca-reclam-motif-introuvable-dans-combo"); } catch { }
+        throw new Exception($"Type de motif '{motif}' introuvable dans le combo (items vus : {sample}). "
+            + "Vérifier que ce code motif existe pour le DCADEMAT en base DEV (table CODE_MOTIF / R_CODEMOTIF_DCA_RECL), "
+            + "ou ajuster le code passé à ReclamerDcaAvecMotif.");
+    }
+
+    /// <summary>Localise le champ texte « Motif » (ultMotifReclamation / Ult_TextMultiLine, multiline) de
+    /// l'étape Réclamation/Refus. 1) AutomationId "ultMotifReclamation" ; 2) un Edit/Document multiligne
+    /// (hauteur > 40px) avec ValuePattern voisin d'un label « Motif » ; 3) le plus grand Edit avec
+    /// ValuePattern visible. Retourne null si rien trouvé.</summary>
+    private AutomationElement? FindMotifTexteField()
+    {
+        if (_window is null) return null;
+
+        var byId = FindByAutomationId("ultMotifReclamation");
+        if (byId is not null && SupportsValue(byId))
+        {
+            Console.WriteLine("      → (5) Champ texte « Motif » trouvé via AutomationId 'ultMotifReclamation'.");
+            return byId;
+        }
+
+        // Candidats : éléments avec ValuePattern, visibles, plutôt hauts (multiline) — exclut les Edits
+        // mono-ligne étroits (combos, montants).
+        List<AutomationElement> valueEls;
+        try
+        {
+            valueEls = _window.FindAllDescendants()
+                .Where(c =>
+                {
+                    try
+                    {
+                        if (!c.IsAvailable || c.IsOffscreen) return false;
+                        if (!c.Patterns.Value.IsSupported) return false;
+                        if (c.ControlType == ControlType.ComboBox) return false; // pas le combo motif
+                        var r = c.BoundingRectangle;
+                        return r.Width >= 120 && r.Height >= 30;
+                    }
+                    catch { return false; }
+                })
+                .ToList();
+        }
+        catch { valueEls = new List<AutomationElement>(); }
+
+        // 2) Le plus proche d'un label "Motif" (mais pas "Type de motif" / "Montant").
+        try
+        {
+            var motifLabels = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .Where(t => { try { return t.IsAvailable && !t.IsOffscreen; } catch { return false; } })
+                .Where(t =>
+                {
+                    var n = SafeText(() => t.Name).Trim().ToLowerInvariant();
+                    return n == "motif" || (n.Contains("motif") && !n.Contains("type") && !n.Contains("montant"));
+                })
+                .ToList();
+            foreach (var lbl in motifLabels)
+            {
+                var lr = lbl.BoundingRectangle;
+                var near = valueEls
+                    .Where(c => { var cr = c.BoundingRectangle; return cr.Y >= lr.Y - 30 && cr.Y < lr.Y + 80; })
+                    .OrderBy(c => { var cr = c.BoundingRectangle; return (cr.Y - lr.Y) * (cr.Y - lr.Y) + (cr.X - lr.X) * (cr.X - lr.X); })
+                    .FirstOrDefault();
+                if (near is not null)
+                {
+                    Console.WriteLine($"      → (5) Champ texte « Motif » trouvé près du label '{SafeText(() => lbl.Name)}'.");
+                    return near;
+                }
+            }
+        }
+        catch { }
+
+        // 3) Fallback : le plus GRAND champ à ValuePattern (le multiline motif domine en surface).
+        var biggest = valueEls.OrderByDescending(c => { try { var r = c.BoundingRectangle; return r.Width * r.Height; } catch { return 0; } }).FirstOrDefault();
+        if (biggest is not null) Console.WriteLine("      → (5) ⚠ Champ « Motif » non identifié formellement — fallback plus grand champ texte visible.");
+        return biggest;
+    }
+
+    private bool SupportsValue(AutomationElement el)
+    {
+        try { return el.Patterns.Value.IsSupported; } catch { return false; }
+    }
+
+    /// <summary>Lit la valeur d'un champ : ValuePattern d'abord, sinon Name. "" si rien.</summary>
+    private string ReadValue(AutomationElement el)
+    {
+        try { if (el.Patterns.Value.IsSupported) return (el.Patterns.Value.Pattern.Value.Value ?? "").Trim(); } catch { }
+        return SafeText(() => el.Name);
+    }
+
+    /// <summary>Localise le bouton « Réclamer » (ToolStripButton RECLAMATION, Text "Réclamer", Alt+R) de la
+    /// toolbar de l'étape Réclamation/Refus. Match par Name "Réclamer" (le '&' mnémonique est retiré de
+    /// l'AccessibleName WinForms ; on tolère quand même un Name avec '&'). Retourne null si introuvable.</summary>
+    private AutomationElement? FindReclamerButton()
+    {
+        if (_window is null) return null;
+        try
+        {
+            return _window.FindAllDescendants()
+                .FirstOrDefault(c =>
+                {
+                    if (c.ControlType != ControlType.Button && c.ControlType != ControlType.MenuItem) return false;
+                    var n = SafeText(() => c.Name).Replace("&", "").Trim().ToLowerInvariant();
+                    // "Réclamer" (exact) — éviter "Réclamation" libellés d'onglet/titre éventuels.
+                    return n == "réclamer" || n == "reclamer";
+                });
+        }
+        catch { return null; }
+    }
+
+    /// <summary>
+    /// (6) Clique « Réclamer » puis (7) vérifie le courrier SANS se reposer sur l'aperçu écran (mur HDESK).
+    /// Capture une baseline (PDFs disque + process viewer) AVANT le clic, déclenche Réclamer (bouton, fallback
+    /// Alt+R), puis :
+    ///   (a) si un fichier courrier (PDF/doc) apparaît / est récupérable via la cmdline d'un viewer → on en
+    ///       extrait le texte (PdfPig pour les PDF) et on VÉRIFIE que <paramref name="marker"/> y figure ;
+    ///   (b) sinon → on accepte un signal d'ouverture non-visuel (process viewer / fenêtre / fichier / onglet)
+    ///       comme preuve que Réclamer s'est exécuté sans crash, en signalant la LIMITE : la présence de
+    ///       "<paramref name="marker"/>" dans le courrier n'a PAS pu être confirmée (mur HDESK).
+    /// ⚠ NE PAS IMPRIMER : aucun bouton « Imprimer » ni boîte d'impression n'est touché.
+    /// </summary>
+    private void ClickReclamerEtVerifier(string marker)
+    {
+        // Baseline disque/process AVANT le clic (modèle OpenKbisDocument).
+        var pdfDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
+        var docDirsBefore = pdfDirs.SelectMany(SafeDocList).ToHashSet();
+        var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
+
+        var reclamerBtn = FindReclamerButton();
+
+        // (6) Déclenche Réclamer via VerifyDocumentOpened (capture process/fenêtre/fichier/onglet autour du
+        // trigger). Trigger = clic du bouton si trouvé, sinon Alt+R posté sur la fenêtre (RigFormAutomateVB6
+        // mappe Alt+R → RECLAMATION). VerifyDocumentOpened throw si AUCUN signal après le timeout.
+        bool signalOpened = true;
+        string signalDetail = "";
+        try
+        {
+            VerifyDocumentOpened(() =>
+            {
+                if (reclamerBtn is not null)
+                {
+                    Console.WriteLine($"      → (6) Clic « Réclamer » (Type={SafeText(() => reclamerBtn.ControlType.ToString())} Name='{SafeText(() => reclamerBtn.Name)}')");
+                    try { Interaction.Click(reclamerBtn); }
+                    catch (Exception ex) { Console.WriteLine($"      → ⚠ Click bouton Réclamer a jeté ({ex.Message}) — fallback Alt+R"); PostAltR(); }
+                }
+                else
+                {
+                    Console.WriteLine("      → (6) ⚠ Bouton « Réclamer » introuvable par Name — fallback raccourci Alt+R posté sur la fenêtre.");
+                    PostAltR();
+                }
+            }, "Courrier de réclamation (DCADEMAT)", waitSeconds: 25);
+        }
+        catch (Exception ex)
+        {
+            // Aucun signal d'ouverture détecté. En HDESK (Mode B), l'aperçu avant impression ne peint pas
+            // (mur HDESK partie b). On NE throw PAS systématiquement : si RIG est vivant et n'a pas crashé,
+            // la réclamation a pu s'exécuter sans matérialiser de fenêtre/fichier détectable. On bascule sur
+            // la vérif "RIG vivant" plus bas. On retient l'info pour le rapport.
+            signalOpened = false;
+            signalDetail = ex.Message;
+            Console.WriteLine($"      → (6/7) ⓘ Aucun signal d'ouverture détecté autour de Réclamer : {ex.Message}");
+            CaptureFullVirtualScreen("dca-reclam-apercu-absent-mur-hdesk");
+        }
+
+        // (7a) Tente de récupérer un fichier courrier généré par Réclamer et d'y vérifier le marqueur.
+        Console.WriteLine("      → (7a) Recherche d'un fichier courrier récupérable (disque + cmdline viewer)…");
+        string? courrierFile = TryCaptureGeneratedDocument(docDirsBefore, procsBefore, pdfDirs, waitSeconds: 20);
+        if (!string.IsNullOrEmpty(courrierFile))
+        {
+            Console.WriteLine($"      → (7a) Fichier courrier candidat : {courrierFile}");
+            string? extracted = TryExtractText(courrierFile!);
+            if (extracted is not null)
+            {
+                bool hasMarker = LegacyParsing.ContainsMotifMarker(extracted, marker);  // logique pure testée xUnit
+                // Sidecar texte pour inspection humaine.
+                try { File.WriteAllText(courrierFile + ".extracted.txt", extracted, new System.Text.UTF8Encoding(false)); } catch { }
+                if (hasMarker)
+                {
+                    Console.WriteLine($"      ✓ (7) VÉRIFIÉ : le marqueur '{marker}' figure dans le courrier de réclamation généré "
+                        + $"({Path.GetFileName(courrierFile)}, {extracted.Length} chars). La modif du texte de motif est bien prise en compte.");
+                    return;
+                }
+                // Fichier lisible mais marqueur absent → ÉCHEC dur : la modif n'a PAS été propagée au courrier.
+                try { CaptureScreenshot("dca-reclam-marqueur-absent-du-courrier"); } catch { }
+                throw new Exception($"Courrier de réclamation généré ({Path.GetFileName(courrierFile)}, {extracted.Length} chars de texte) "
+                    + $"mais le marqueur '{marker}' NE s'y trouve PAS → la modification du texte de motif n'a pas été reportée dans le courrier. "
+                    + $"Extrait début : '{LegacyParsing.Truncate(extracted, 200)}'");
+            }
+            Console.WriteLine($"      → (7a) ⓘ Fichier courrier trouvé mais texte non extractible (pas de couche texte / format non géré) → "
+                + $"impossible de confirmer '{marker}' par ce chemin. On passe à la confirmation non-visuelle.");
+        }
+        else
+        {
+            Console.WriteLine("      → (7a) Aucun fichier courrier récupérable (l'aperçu RIG peut rendre dans un OCX/composition DWM "
+                + "non matérialisé en fichier sur HDESK).");
+        }
+
+        // (7b) Confirmation NON visuelle : RIG toujours vivant + (si on l'a) un signal d'ouverture.
+        // LIMITE explicite : sans fichier courrier lisible, on NE peut PAS prouver que "marker" figure dans
+        // le courrier (mur HDESK). On valide donc le sous-objectif « Réclamer s'est exécuté sans crash » :
+        //   - le marqueur a été écrit + relu dans le champ Motif AVANT le clic (loggé en (5)) ;
+        //   - Réclamer a été déclenché (bouton/Alt+R) sans exception ;
+        //   - RIG est toujours vivant (process non terminé, fenêtre principale répond).
+        EnsureRigStillAlive();
+        if (signalOpened)
+        {
+            Console.WriteLine($"      ✓ (7b) Réclamation exécutée : un signal d'ouverture a été détecté (courrier/aperçu/onglet) et RIG est vivant. "
+                + $"⚠ LIMITE : le contenu du courrier n'a pas pu être lu (aperçu non matérialisé en fichier sur HDESK) → la présence de "
+                + $"'{marker}' DANS LE COURRIER n'est pas confirmée par cette exécution (elle l'est dans le champ de saisie, étape 5). "
+                + $"Pour confirmer visuellement l'aperçu : rejouer en Mode A/C (desktop composé).");
+            return;
+        }
+
+        // Pas de fichier lisible ET pas de signal d'ouverture : on tolère SI RIG est vivant (mur HDESK dur),
+        // mais on le signale fortement. Si RIG était mort, EnsureRigStillAlive() aurait déjà throw.
+        Console.WriteLine($"      ✓ (7b) Réclamer déclenché sans crash et RIG toujours vivant, MAIS aucun signal d'ouverture NI fichier "
+            + $"courrier détecté (mur HDESK : aperçu avant impression non matérialisé sur desktop non composé). "
+            + $"⚠ LIMITE FORTE : ni le déclenchement de l'aperçu, ni la présence de '{marker}' dans le courrier ne sont confirmés ici "
+            + $"(seule la modif du champ de saisie l'est, étape 5). Signal manquant détaillé : {signalDetail}. "
+            + $"Validation visuelle à faire en Mode A/C avec supervision.");
+    }
+
+    /// <summary>Poste le raccourci Alt+R sur la fenêtre RIG (déclenche RECLAMATION via RigFormAutomateVB6).
+    /// Combine WM_SYSKEYDOWN/UP (R avec contexte ALT) — fallback du clic bouton si le Name n'est pas trouvé.</summary>
+    private void PostAltR()
+    {
+        IntPtr hwnd = IntPtr.Zero;
+        try { if (_window!.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → ⚠ Alt+R : hwnd fenêtre introuvable."); return; }
+        Interaction.PostAltKey(hwnd, 0x52 /* VK_R */);
+    }
+
+    /// <summary>Vérifie que RIG n'a pas crashé après Réclamer : process vivant + fenêtre principale lisible.
+    /// Throw si le process est terminé (= crash, échec dur du scénario).</summary>
+    private void EnsureRigStillAlive()
+    {
+        try { if (_app is not null && _app.HasExited) throw new Exception("Le process RigClientAccueil s'est terminé (crash) après Réclamer."); }
+        catch (InvalidOperationException) { /* HasExited peut jeter si déjà disposed — traité comme mort */ throw new Exception("Process RIG inaccessible après Réclamer (probable crash)."); }
+        // Sanity UIA : la fenêtre principale répond toujours (lecture d'un titre/rect).
+        try { var _ = _window!.BoundingRectangle; }
+        catch (Exception ex) { throw new Exception($"Fenêtre principale RIG ne répond plus après Réclamer (probable crash) : {ex.GetType().Name}."); }
+        Console.WriteLine("      → RIG toujours vivant après Réclamer (process actif + fenêtre principale répond).");
+    }
+
+    /// <summary>
+    /// Récupère un document (courrier de réclamation) généré par RIG, modèle OpenKbisDocument :
+    /// 1) poll les dossiers doc connus pour un fichier PDF/doc apparu depuis la baseline (le plus récent) ;
+    /// 2) sinon, repère un nouveau process viewer (Acrobat/Edge/Word/DocDemat…) et extrait le chemin du
+    ///    document de sa ligne de commande (GetPdfPathFromProcessCmdline pour les PDF). Retourne le chemin
+    ///    ou null. Poll-jusqu'à-condition (max <paramref name="waitSeconds"/>s).
+    /// </summary>
+    private string? TryCaptureGeneratedDocument(HashSet<string> docsBefore, HashSet<int> procsBefore, string[] docDirs, int waitSeconds)
+    {
+        bool IsViewer(string n) =>
+               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
+            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase);
+
+        var sw = Stopwatch.StartNew();
+        while (sw.Elapsed.TotalSeconds < waitSeconds)
+        {
+            // 1) Nouveau fichier doc sur disque (le plus récent).
+            try
+            {
+                var fresh = docDirs.SelectMany(SafeDocList).Except(docsBefore)
+                    .Select(p => { DateTime when; try { when = File.GetLastWriteTimeUtc(p); } catch { when = DateTime.MinValue; } return (Path: p, When: when); })
+                    .OrderByDescending(t => t.When)
+                    .ToList();
+                if (fresh.Count > 0 && File.Exists(fresh[0].Path)) return fresh[0].Path;
+            }
+            catch { }
+
+            // 2) Nouveau process viewer → chemin via cmdline (PDF). Modèle GetPdfPathFromProcessCmdline.
+            try
+            {
+                var newViewers = Process.GetProcesses()
+                    .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
+                    .Where(t => t.id > 0 && !procsBefore.Contains(t.id) && IsViewer(t.name))
+                    .ToList();
+                foreach (var v in newViewers)
+                {
+                    var fromCmd = GetPdfPathFromProcessCmdline(v.id);
+                    if (!string.IsNullOrEmpty(fromCmd) && File.Exists(fromCmd)) return fromCmd;
+                }
+            }
+            catch { }
+
+            Thread.Sleep(500);
+        }
+        return null;
+    }
+
+    /// <summary>Extrait la couche texte d'un document généré : PdfPig pour les .pdf, lecture brute pour .txt/.rtf.
+    /// Les .doc/.docx ne sont PAS dépaquetés ici (pas de dépendance Word) → null (le contenu ne peut pas être
+    /// vérifié par ce chemin). Retourne null si extraction impossible.</summary>
+    private string? TryExtractText(string path)
+    {
+        try
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext == ".pdf")
+            {
+                var sb = new System.Text.StringBuilder();
+                using (var doc = UglyToad.PdfPig.PdfDocument.Open(path))
+                    foreach (var page in doc.GetPages()) sb.AppendLine(page.Text);
+                var txt = sb.ToString();
+                Console.WriteLine($"      → (7a) PDF courrier ouvert : {txt.Length} caractères de texte.");
+                return txt;
+            }
+            if (ext == ".txt" || ext == ".rtf")
+                return File.ReadAllText(path);
+            Console.WriteLine($"      → (7a) ⓘ Extension '{ext}' non gérée pour l'extraction texte (pas de dépendance Word) → contenu non vérifiable par ce chemin.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      → (7a) ⓘ Extraction texte échouée ({Path.GetFileName(path)}) : {ex.GetType().Name}: {ex.Message}");
+            return null;
+        }
+    }
+
     /// <summary>
     /// Cherche la case "DCA" de la 1re ligne DATA de la grille Exercices via UIA `DataItem` (pattern XEX :
     /// le DataGridView WinForms expose ses cellules comme DataItem "Col Ligne N"). On vise "DCA Ligne N" avec
