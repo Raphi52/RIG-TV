@@ -24,10 +24,23 @@ function Get-KbisExe {
 
 function Kill-RigProcs {
     # Tue tout l'ecosysteme (RIG legacy + workers + viewers PDF + TV). A appeler entre 2 runs.
+    # KILL PAR NOM = GLOBAL : tue TOUS les RIG/TV, peu importe qui les a lances. NE PAS utiliser
+    # quand plusieurs agents pilotent RIG en parallele (ils se cross-kill). Pour le parallele :
+    # un seul Kill-RigProcs global au depart (orchestrateur), puis Kill-RigTree -TvPid par agent.
     Get-Process | Where-Object {
         $_.ProcessName -match 'Rig.Wpf.Kbis.TestViewer|RigClientAccueil|Rig.Wpf.Kbis.SmokeRunner|RigAffichageDoc|Acrobat|AcroRd'
     } | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Milliseconds 800
+}
+
+function Kill-RigTree {
+    # KILL SCOPE AU PID : tue UN TestViewer + tout son arbre (workers SmokeRunner enfants +
+    # RigClientAccueil + viewers lances par eux), via taskkill /T. Permet le parallelisme
+    # multi-agents : chaque agent ne tue QUE son propre arbre (vs Kill-RigProcs = par nom = global).
+    # La chaine TV -> SmokeRunner -> RigClientAccueil est parent->enfant, donc /T descend tout.
+    param([Parameter(Mandatory)] [int]$TvPid)
+    try { & taskkill /PID $TvPid /T /F 2>$null | Out-Null } catch { }
+    Start-Sleep -Milliseconds 400
 }
 
 function Get-MarkerCount {
@@ -178,4 +191,63 @@ function Run-Scenario {
     return @{ Exit = $p.ExitCode; Log = $OutLog }
 }
 
-Write-Host "kbis-harness.ps1 charge. Fonctions : Kill-RigProcs, Launch-TV, Capture-TV, Invoke-TileButton, Run-Scenario, Wait-MarkerCountAbove, Get-MarkerCount."
+function Invoke-RaptureTab {
+    # Selectionne un onglet du TabControl RAPTURE par LIBELLE (regex sur le Name du TabItem).
+    # ATTENTION : les TabItem du module RAPTURE n'ont PAS d'AutomationId (header = TextBlock nu,
+    # cf. MainWindow.xaml). On NE peut donc PAS passer par Invoke-TileButton (qui cible des Button
+    # par AutomationId). On selectionne par Name via SelectionItemPattern (fallback clic souris).
+    param([Parameter(Mandatory)] [int]$TvPid, [Parameter(Mandatory)] [string]$NameRegex, [int]$TimeoutSec = 15)
+    Add-Type -AssemblyName UIAutomationClient
+    Add-Type -AssemblyName UIAutomationTypes
+    $proc = Get-Process -Id $TvPid -ErrorAction SilentlyContinue
+    if (-not $proc) { throw "TV PID $TvPid introuvable" }
+    $win = [System.Windows.Automation.AutomationElement]::FromHandle($proc.MainWindowHandle)
+    $tabCond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::TabItem)
+    if (-not ([System.Management.Automation.PSTypeName]'Kbis.RailClick').Type) {
+        Add-Type -Namespace Kbis -Name RailClick -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, System.IntPtr e);
+[System.Runtime.InteropServices.DllImport("user32.dll")] public static extern bool SetForegroundWindow(System.IntPtr h);
+public static void Front(System.IntPtr h){ SetForegroundWindow(h); }
+public static void Click(int x, int y){ SetCursorPos(x,y); mouse_event(0x0002,0,0,0,System.IntPtr.Zero); mouse_event(0x0004,0,0,0,System.IntPtr.Zero); }
+'@
+    }
+    $dl = (Get-Date).AddSeconds($TimeoutSec)
+    while ((Get-Date) -lt $dl) {
+        try {
+            foreach ($t in $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, $tabCond)) {
+                if ($t.Current.Name -match $NameRegex) {
+                    try {
+                        $t.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+                        return "tab '$($t.Current.Name)' selectionne (SelectionItemPattern)"
+                    } catch {
+                        $r = $t.Current.BoundingRectangle
+                        if ($r.Width -gt 0) {
+                            [Kbis.RailClick]::Front($proc.MainWindowHandle)
+                            Start-Sleep -Milliseconds 200
+                            [Kbis.RailClick]::Click([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+                            return "tab '$($t.Current.Name)' clic souris (fallback)"
+                        }
+                    }
+                }
+            }
+        } catch { }
+        Start-Sleep -Milliseconds 400
+    }
+    throw "Onglet RAPTURE ~ '$NameRegex' introuvable dans la fenetre TV"
+}
+
+function Navigate-RaptureSmokeImport {
+    # Sequence VETTEE : rail RAPTURE -> tab Smoke Import. Remplace le code inline duplique
+    # (Add-Type class M/N DllImport + Click-Center maison) des scripts perennes.
+    # NOTE : le tab Smoke Import n'a PAS d'AutomationId (header = TextBlock), on le selectionne
+    # donc par Name via Invoke-RaptureTab, pas par Invoke-TileButton/AutomationId.
+    # Ne fait QUE la nav commune ; ce qui suit (Apply ON/OFF, scenario, Start E2E) reste a l'appelant.
+    param([Parameter(Mandatory)] [int]$TvPid)
+    [void](Invoke-RailModule -TvPid $TvPid -ModuleName 'RAPTURE')
+    Start-Sleep -Milliseconds 500
+    [void](Invoke-RaptureTab -TvPid $TvPid -NameRegex '(?i)smoke\s*import')
+    Start-Sleep -Milliseconds 500
+}
+
+Write-Host "kbis-harness.ps1 charge. Fonctions : Kill-RigProcs, Launch-TV, Capture-TV, Invoke-TileButton, Invoke-RailModule, Invoke-RaptureTab, Navigate-RaptureSmokeImport, Run-Scenario, Wait-MarkerCountAbove, Get-MarkerCount."
