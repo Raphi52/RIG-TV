@@ -438,8 +438,7 @@ public sealed class LegacyDriver : IDisposable
         {
             if (string.IsNullOrWhiteSpace(name)) return false;
             var n = name.Trim();
-            var firstToken = n.Split(new[] { ' ', '\t', '|', '-' },
-                StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            var firstToken = LegacyParsing.FirstToken(n);
 
             // Exclusions dures (codes pièges)
             if (firstToken.Equals("XXKBIS", StringComparison.OrdinalIgnoreCase)) return false;
@@ -1445,12 +1444,12 @@ public sealed class LegacyDriver : IDisposable
                 throw new Exception("Popup de confirmation 'Audience créée' pas apparue en 15s — Creator.CreateFromJson a peut-être throw");
             var createdText = ExtractStaticText(createdPopup);
             Console.WriteLine($"      → Popup 'Audience créée' : {createdText}");
-            // Match "ID=12345" dans le texte
-            var m = System.Text.RegularExpressions.Regex.Match(createdText, @"ID\s*=\s*(\d+)");
-            if (m.Success && int.TryParse(m.Groups[1].Value, out var newId))
+            // Match "ID=12345" dans le texte (logique pure testée xUnit, cf. LegacyParsing)
+            var newIdOpt = LegacyParsing.ExtractAudienceId(createdText);
+            if (newIdOpt.HasValue)
             {
-                LastCreatedAudienceId = newId;
-                Console.WriteLine($"      → ✓ LastCreatedAudienceId={newId} (sera cleanup en SQL post-smoke)");
+                LastCreatedAudienceId = newIdOpt.Value;
+                Console.WriteLine($"      → ✓ LastCreatedAudienceId={newIdOpt.Value} (sera cleanup en SQL post-smoke)");
             }
             else
             {
@@ -2528,7 +2527,7 @@ public sealed class LegacyDriver : IDisposable
             // Cherche le numéro de demande (ex. 'D2613500028') affiché à côté
             var demandeNumber = allControls
                 .Select(c => SafeText(() => c.Name))
-                .Where(n => !string.IsNullOrEmpty(n) && n.Length >= 8 && n.StartsWith("D") && n.Skip(1).All(char.IsDigit))
+                .Where(n => LegacyParsing.IsNumDemandeToken(n))
                 .FirstOrDefault();
             // Aussi : peut être dans un Edit (value via ValuePattern)
             if (string.IsNullOrEmpty(demandeNumber))
@@ -2536,7 +2535,7 @@ public sealed class LegacyDriver : IDisposable
                 foreach (var e in allControls.Where(c => c.ControlType == ControlType.Edit))
                 {
                     string? v = null; try { v = e.AsTextBox().Text; } catch { }
-                    if (!string.IsNullOrEmpty(v) && v.Length >= 8 && v.StartsWith("D") && v.Skip(1).All(char.IsDigit))
+                    if (LegacyParsing.IsNumDemandeToken(v))
                     { demandeNumber = v; break; }
                 }
             }
@@ -2760,14 +2759,14 @@ public sealed class LegacyDriver : IDisposable
         var refreshed = kbisRoot.FindAllDescendants();
         string? newDemandeNumber = refreshed
             .Select(c => SafeText(() => c.Name))
-            .Where(n => !string.IsNullOrEmpty(n) && n.Length >= 8 && n.StartsWith("D") && n.Skip(1).All(char.IsDigit))
+            .Where(n => LegacyParsing.IsNumDemandeToken(n))
             .FirstOrDefault();
         if (string.IsNullOrEmpty(newDemandeNumber))
         {
             foreach (var e in refreshed.Where(c => c.ControlType == ControlType.Edit))
             {
                 string? v = null; try { v = e.AsTextBox().Text; } catch { }
-                if (!string.IsNullOrEmpty(v) && v.Length >= 8 && v.StartsWith("D") && v.Skip(1).All(char.IsDigit))
+                if (LegacyParsing.IsNumDemandeToken(v))
                 { newDemandeNumber = v; break; }
             }
         }
@@ -3248,8 +3247,7 @@ public sealed class LegacyDriver : IDisposable
         OpenProcessus("PROC_XEX", n =>
         {
             if (string.IsNullOrWhiteSpace(n)) return false;
-            var firstToken = n.Trim().Split(new[] { ' ', '\t', '|', '-' },
-                StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "";
+            var firstToken = LegacyParsing.FirstToken(n);
             // Match XEX exact ET libellé contient "edition" + "kbis" (en backup).
             if (firstToken.Equals("XEX", StringComparison.OrdinalIgnoreCase)) return true;
             return n.IndexOf("edition interne", StringComparison.OrdinalIgnoreCase) >= 0
@@ -3686,9 +3684,8 @@ public sealed class LegacyDriver : IDisposable
         {
             if (!IsDataItem(c)) return false;
             var n = SafeText(() => c.Name);
-            if (n.StartsWith("DCACO", StringComparison.OrdinalIgnoreCase)) return false;
-            return n.StartsWith("DCA Ligne ", StringComparison.OrdinalIgnoreCase)
-                && !n.StartsWith("DCA Ligne 0", StringComparison.OrdinalIgnoreCase);
+            if (n.StartsWith("DCACO", StringComparison.OrdinalIgnoreCase)) return false; // exclusion COLONNE
+            return LegacyParsing.IsDataRowName(n, "DCA ");
         }).OrderBy(c => { try { return c.BoundingRectangle.Y; } catch { return double.MaxValue; } }).ToList();
 
         var cell = dcaCells.FirstOrDefault();
@@ -4078,7 +4075,7 @@ public sealed class LegacyDriver : IDisposable
                     string nm = SafeAcc(() => childAcc.get_accName(0));
                     string vl = SafeAcc(() => childAcc.get_accValue(0));
                     if (!string.IsNullOrWhiteSpace(nm) || !string.IsNullOrWhiteSpace(vl))
-                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}role={role} name='{Trunc(nm)}' value='{Trunc(vl)}'"); printed++; }
+                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}role={role} name='{LegacyParsing.Truncate(nm)}' value='{LegacyParsing.Truncate(vl)}'"); printed++; }
                     Walk(childAcc, depth + 1);
                 }
                 else if (k is int cid && cid != 0)
@@ -4086,11 +4083,10 @@ public sealed class LegacyDriver : IDisposable
                     string nm = SafeAcc(() => node.get_accName(cid));
                     string vl = SafeAcc(() => node.get_accValue(cid));
                     if (!string.IsNullOrWhiteSpace(nm) || !string.IsNullOrWhiteSpace(vl))
-                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}cid={cid} name='{Trunc(nm)}' value='{Trunc(vl)}'"); printed++; }
+                    { Console.WriteLine($"      [DUMP MSAA] {new string(' ', depth * 2)}cid={cid} name='{LegacyParsing.Truncate(nm)}' value='{LegacyParsing.Truncate(vl)}'"); printed++; }
                 }
             }
         }
-        string Trunc(string s) => s.Length > 60 ? s.Substring(0, 60) + "…" : s;
         try { Walk(root!, 0); } catch (Exception ex) { Console.WriteLine($"      [DUMP MSAA] Walk jeté : {ex.Message}"); }
         if (printed == 0) Console.WriteLine("      [DUMP MSAA] (aucun nœud nommé — fenêtre vide côté MSAA)");
     }
@@ -4991,9 +4987,8 @@ public sealed class LegacyDriver : IDisposable
                     var ct = c.ControlType.ToString();
                     if (ct.IndexOf("DataItem", StringComparison.OrdinalIgnoreCase) < 0) return false;
                     var n = SafeText(() => c.Name);
-                    // Match "Imprimer Ligne N" (pas "Imprimante Ligne N" qui est colonne texte)
-                    return n.StartsWith("Imprimer Ligne ", StringComparison.OrdinalIgnoreCase)
-                        && !n.StartsWith("Imprimer Ligne 0", StringComparison.OrdinalIgnoreCase); // skip ligne 0
+                    // Match "Imprimer Ligne N" (pas "Imprimante Ligne N" qui est colonne texte), skip ligne 0
+                    return LegacyParsing.IsDataRowName(n, "Imprimer ");
                 }
                 catch { return false; }
             })
