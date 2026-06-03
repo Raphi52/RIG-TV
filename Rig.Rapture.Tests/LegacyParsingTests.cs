@@ -206,4 +206,35 @@ public class LegacyParsingTests
     [InlineData("du texte", null)]
     public void ContainsMotifMarker_absent_ou_args_vides_retourne_false(string text, string marker)
         => Assert.False(LegacyParsing.ContainsMotifMarker(text, marker));
+
+    // ── MotifAlreadySelected : le combo affiche-t-il deja le motif voulu ? (combo RCS lazy) ──
+
+    [Theory]
+    // cas reel du run live : combo deja rempli "INPMANQ - Piece manquante, n..." -> deja selectionne.
+    [InlineData("INPMANQ - Pièce manquante, non valide ou illisible", "INPMANQ")]
+    [InlineData("INPMANQ - Pièce manquante, n...", "INPMANQ")] // libelle tronque par la largeur du combo
+    [InlineData("INPMANQ", "INPMANQ")]                          // combo qui n'affiche que le code
+    [InlineData("INPMANQ-Piece manquante", "INPMANQ")]          // sans espace autour du tiret
+    [InlineData("inpmanq - piece manquante", "INPMANQ")]        // insensible a la casse
+    [InlineData("  INPMANQ - Piece manquante  ", "INPMANQ")]    // blancs de bord ignores
+    public void MotifAlreadySelected_combo_prefixe_par_le_code_est_deja_selectionne(string current, string motif)
+        => Assert.True(LegacyParsing.MotifAlreadySelected(current, motif));
+
+    [Fact]
+    public void MotifAlreadySelected_motif_present_au_milieu_du_libelle_compte_comme_selectionne()
+        // motif demande sous forme de libelle (substring), present meme sans etre en tete.
+        => Assert.True(LegacyParsing.MotifAlreadySelected(
+            "AUTRE - voir Pièces manquantes plus bas", "Pièces manquantes"));
+
+    [Theory]
+    [InlineData("INPVALID - Pièce non valide", "INPMANQ")] // autre code -> pas selectionne
+    [InlineData("AUTRE - autre motif", "INPMANQ")]
+    [InlineData("", "INPMANQ")]      // combo vide -> rien de selectionne (il faudra ouvrir le dropdown)
+    [InlineData("   ", "INPMANQ")]   // blancs seuls = vide
+    [InlineData(null, "INPMANQ")]
+    [InlineData("INPMANQ - Pièce manquante", "")]   // motif voulu vide -> ne pas court-circuiter
+    [InlineData("INPMANQ - Pièce manquante", "   ")]
+    [InlineData("INPMANQ - Pièce manquante", null)]
+    public void MotifAlreadySelected_non_correspondant_ou_args_vides_retourne_false(string current, string motif)
+        => Assert.False(LegacyParsing.MotifAlreadySelected(current, motif));
 }

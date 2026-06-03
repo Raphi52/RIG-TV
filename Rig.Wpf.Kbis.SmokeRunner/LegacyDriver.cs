@@ -3756,6 +3756,9 @@ public sealed class LegacyDriver : IDisposable
         catch (Exception ex) { Console.WriteLine($"      → ⚠ Tab sur le combo a jeté : {ex.Message}"); }
 
         // ── (5) Ajouter "TEST" à la fin du texte du motif (preuve de modif enregistrée) ──────────────
+        // FindMotifTexteField cible EN PRIORITÉ ultMotifReclamation (le champ éditable de la section
+        // Réclamation/Refus), et ne retombe sur l'heuristique « plus grand champ » que si l'AutomationId
+        // est introuvable. C'est CE même élément qui sert à la fois pour la LECTURE (before) et l'ÉCRITURE.
         var motifTextEl = FindMotifTexteField();
         if (motifTextEl is null)
         {
@@ -3765,9 +3768,46 @@ public sealed class LegacyDriver : IDisposable
                 + "introuvable après sélection du motif. Voir dump + screenshot pour ajuster le sélecteur.");
         }
 
+        // ── Garde-fou cible éditable : avant d'écrire, vérifier que le champ supporte ValuePattern et n'est
+        // PAS read-only. Le ValuePattern et son IsReadOnly peuvent être transitoirement non lisibles juste
+        // après le Tab (UIA cache) → poll-jusqu'à-condition court (max ~2,5s, pas 200ms) pour les laisser se
+        // stabiliser. Si le champ reste DÉFINITIVEMENT read-only ⇒ mauvaise cible (ex. champ « Pièces qui
+        // doivent être déposées », read-only) ⇒ message d'erreur clair plutôt que l'InvalidOperationException
+        // brute renvoyée par SetValue. Si l'état n'est jamais déterminable (null) on tolère et on laisse
+        // l'écriture tenter (la cible vient de l'AutomationId ultMotifReclamation = a priori la bonne).
+        {
+            var swEditable = Stopwatch.StartNew();
+            bool? readOnly = TryGetValueReadOnly(motifTextEl);
+            while (swEditable.ElapsedMilliseconds < 2500 && (!SupportsValue(motifTextEl) || readOnly == true))
+            {
+                Thread.Sleep(200);
+                readOnly = TryGetValueReadOnly(motifTextEl);
+            }
+            if (!SupportsValue(motifTextEl))
+            {
+                try { CaptureScreenshot("dca-reclam-motif-sans-valuepattern"); } catch { }
+                throw new Exception("Étape « Réclamation / Refus » : le champ « Motif » ciblé n'expose PAS de ValuePattern "
+                    + "(non saisissable via UIA). Mauvaise cible ou contrôle non éditable — voir screenshot.");
+            }
+            if (readOnly == true)
+            {
+                try { CaptureScreenshot("dca-reclam-motif-read-only"); } catch { }
+                string roVal = LegacyParsing.Truncate(ReadValue(motifTextEl), 80);
+                throw new Exception("Étape « Réclamation / Refus » : le champ texte ciblé pour le motif est READ-ONLY "
+                    + "(ValuePattern.IsReadOnly = true) — c'est la MAUVAISE cible (probablement « Pièces qui doivent être "
+                    + "déposées », read-only, et non le champ « Motif » ultMotifReclamation). On n'écrit PAS dans un champ "
+                    + $"non éditable. Valeur du champ read-only ciblé : '{roVal}'. Vérifier que l'AutomationId "
+                    + "'ultMotifReclamation' est bien exposé sur l'étape Réclamation/Refus (voir screenshot + dump).");
+            }
+            Console.WriteLine($"      → (5) Cible « Motif » éditable confirmée (ValuePattern supporté, IsReadOnly="
+                + $"{(readOnly.HasValue ? readOnly.Value.ToString().ToLowerInvariant() : "indéterminé")}).");
+        }
+
         // Poll-jusqu'à-condition : le texte s'auto-remplit en asynchrone après le Tab. On attend qu'il
         // soit non vide (max ~6s), sinon on ajoute quand même le marqueur (le motif peut n'avoir aucun
         // texte développé selon le CODE_MOTIF — non bloquant, on prouve juste la modif).
+        // ⚠ before lit le MÊME élément motifTextEl (ultMotifReclamation) → on lit bien « Pièces manquantes… »
+        // et non le texte « - Bilan, compte de résultat… » du champ read-only voisin.
         string before = ReadValue(motifTextEl);
         var swText = Stopwatch.StartNew();
         while (string.IsNullOrWhiteSpace(before) && swText.ElapsedMilliseconds < 6000)
@@ -3779,8 +3819,19 @@ public sealed class LegacyDriver : IDisposable
             + (string.IsNullOrWhiteSpace(before) ? "(vide)" : $"'{LegacyParsing.Truncate(before, 80)}'"));
 
         string after = LegacyParsing.AppendMotifMarker(before, ajout);  // logique pure testée xUnit
-        Console.WriteLine($"      → (5) Écriture du texte modifié (ajout de '{ajout}' en fin)…");
+        Console.WriteLine($"      → (5) Écriture du texte modifié (ajout de '{ajout}' en fin) dans 'ultMotifReclamation'…");
         try { Interaction.SetText(motifTextEl, after); }
+        catch (InvalidOperationException ex)
+        {
+            // SetValue jette InvalidOperationException si le contrôle est devenu non éditable entre la garde
+            // ci-dessus et l'écriture (état asynchrone). Message orienté cause (état/read-only), pas brut.
+            try { CaptureScreenshot("dca-reclam-set-texte-echec"); } catch { }
+            bool? roNow = TryGetValueReadOnly(motifTextEl);
+            throw new Exception("Échec écriture du texte de motif (ValuePattern.SetValue a jeté InvalidOperationException : "
+                + $"« {ex.Message} »). Le champ ciblé est probablement non éditable / dans un état refusant SetValue "
+                + $"(IsReadOnly relu = {(roNow.HasValue ? roNow.Value.ToString().ToLowerInvariant() : "indéterminé")}). "
+                + "Vérifier que la cible est bien 'ultMotifReclamation' (champ « Motif » éditable) et non un champ read-only.");
+        }
         catch (Exception ex)
         {
             try { CaptureScreenshot("dca-reclam-set-texte-echec"); } catch { }
@@ -3901,26 +3952,55 @@ public sealed class LegacyDriver : IDisposable
         try { return el.IsAvailable && !el.IsOffscreen; } catch { return false; }
     }
 
-    /// <summary>Sélectionne dans le combo l'item correspondant à <paramref name="motif"/> (match exact code,
-    /// sinon substring case-insensitive sur le texte affiché du combo de motifs RCS). Stratégie UIA :
-    /// Expand → chercher l'item → SelectionItem.Select(). Fallbacks : ValuePattern.SetValue (combo éditable),
-    /// puis saisie clavier du code. Throw avec la liste des items si le motif est introuvable.</summary>
+    /// <summary>Sélectionne dans le combo l'item correspondant à <paramref name="motif"/>. Robustesse pour le
+    /// combo RCS custom (ULT_COMBO_CODE_MOTIF) qui ne peuple ses items via UIA FindAll que dropdown OUVERT
+    /// (lazy : fermé, FindAll(ListItem)=0). Ordre des 3 cas :
+    ///   (A) Lire d'abord la valeur COURANTE (ValuePattern.Value, sinon Name de l'élément sélectionné) :
+    ///       si elle correspond déjà au motif (cf. <see cref="LegacyParsing.MotifAlreadySelected"/>) →
+    ///       sélection DÉJÀ FAITE, on ne tente PAS d'énumérer, on continue (cas du run live : demande déjà
+    ///       en réclamation, combo affichant "INPMANQ - …").
+    ///   (B) Sinon : Expand le dropdown → poll court que les items se peuplent → énumérer → SelectionItem.Select()
+    ///       (fallbacks Click item, puis ValuePattern.SetValue du code).
+    ///   (C) Si après ouverture le combo a TOUJOURS 0 item → échouer (vrai problème de données),
+    ///       message distinct du faux négatif "combo fermé".</summary>
     private void SelectMotifInCombo(AutomationElement combo, string motif)
     {
         Console.WriteLine($"      → (3) Sélection du type de motif '{motif}' dans le combo…");
-        // Expand pour matérialiser les items (selon le template, FindAllChildren d'un combo collapsed peut être vide).
-        try { combo.Patterns.ExpandCollapse.Pattern.Expand(); Thread.Sleep(300); } catch { }
 
-        AutomationElement[] items;
-        try { items = combo.FindAllChildren(cf => cf.ByControlType(ControlType.ListItem)); }
-        catch { items = System.Array.Empty<AutomationElement>(); }
-        if (items.Length == 0)
+        // ── (A) Valeur courante déjà bonne ? (combo lazy : ne PAS ouvrir/énumérer si déjà sélectionné) ──
+        string current = ReadComboCurrentValue(combo);
+        Console.WriteLine($"      → (3A) Valeur courante du combo : "
+            + (string.IsNullOrWhiteSpace(current) ? "(vide)" : $"'{LegacyParsing.Truncate(current, 60)}'"));
+        if (LegacyParsing.MotifAlreadySelected(current, motif))  // logique pure testée xUnit
         {
-            // Certains ComboBox n'exposent leurs items que sous un popup List séparé.
-            try { items = combo.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)); }
-            catch { items = System.Array.Empty<AutomationElement>(); }
+            Console.WriteLine($"      ✓ (3A) Motif '{motif}' DÉJÀ sélectionné dans le combo (valeur courante correspond) — "
+                + "pas d'énumération du dropdown (combo RCS lazy). On continue.");
+            return;
         }
-        Console.WriteLine($"      → (3) {items.Length} item(s) dans le combo de motifs.");
+
+        // ── (B) Pas (encore) sélectionné : ouvrir le dropdown puis attendre que les items se peuplent ──
+        Console.WriteLine("      → (3B) Valeur courante absente ou différente → ouverture du dropdown pour énumérer…");
+        bool expanded = false;
+        try { combo.Patterns.ExpandCollapse.Pattern.Expand(); expanded = true; } catch (Exception ex) { Console.WriteLine($"      → ⚠ (3B) Expand a jeté : {ex.Message}"); }
+
+        // Poll-jusqu'à-condition : le combo RCS peuple ses ListItem en lazy juste après Expand. On attend
+        // qu'au moins 1 item apparaisse (max ~3s, poll 150ms), au lieu d'un Thread.Sleep fixe trop court.
+        AutomationElement[] items = System.Array.Empty<AutomationElement>();
+        var swItems = Stopwatch.StartNew();
+        while (swItems.ElapsedMilliseconds < 3000)
+        {
+            try { items = combo.FindAllChildren(cf => cf.ByControlType(ControlType.ListItem)); }
+            catch { items = System.Array.Empty<AutomationElement>(); }
+            if (items.Length == 0)
+            {
+                // Certains ComboBox n'exposent leurs items que sous un popup List séparé.
+                try { items = combo.FindAllDescendants(cf => cf.ByControlType(ControlType.ListItem)); }
+                catch { items = System.Array.Empty<AutomationElement>(); }
+            }
+            if (items.Length > 0) break;
+            Thread.Sleep(150);
+        }
+        Console.WriteLine($"      → (3B) {items.Length} item(s) dans le combo de motifs (dropdown ouvert={expanded}, {swItems.ElapsedMilliseconds}ms).");
 
         AutomationElement? match =
             // 1) match exact sur le code (le texte d'item RCS commence souvent par le code, ex "INPMANQ ...").
@@ -3952,29 +4032,81 @@ public sealed class LegacyDriver : IDisposable
         }
         catch (Exception ex) { Console.WriteLine($"      → ⚠ (3) ValuePattern.SetValue a jeté : {ex.Message}"); }
 
-        // Échec : liste les items vus pour ajuster le code motif / le sélecteur.
+        // ── (C) Échec : on distingue "combo vide même dropdown ouvert" (vrai problème de données) du
+        // cas "items présents mais motif absent" (mauvais code passé / item attendu manquant). ──────
         try { combo.Patterns.ExpandCollapse.Pattern.Collapse(); } catch { }
-        var sample = string.Join(" | ", items.Take(20).Select(i => "'" + LegacyParsing.Truncate(SafeText(() => i.Name), 40) + "'"));
         try { CaptureScreenshot("dca-reclam-motif-introuvable-dans-combo"); } catch { }
-        throw new Exception($"Type de motif '{motif}' introuvable dans le combo (items vus : {sample}). "
-            + "Vérifier que ce code motif existe pour le DCADEMAT en base DEV (table CODE_MOTIF / R_CODEMOTIF_DCA_RECL), "
-            + "ou ajuster le code passé à ReclamerDcaAvecMotif.");
+        if (items.Length == 0)
+        {
+            // (C) Dropdown ouvert ET 0 item => le combo n'a réellement aucune option (données DEV) — PAS le
+            // faux négatif historique (combo lazy fermé), puisqu'on l'a explicitement ouvert + attendu ci-dessus.
+            throw new Exception($"Combo « Type de motif » VIDE même dropdown ouvert (0 item après Expand + poll) — "
+                + $"et la valeur courante ('{(string.IsNullOrWhiteSpace(current) ? "(vide)" : LegacyParsing.Truncate(current, 40))}') "
+                + $"ne correspond pas au motif '{motif}'. Vrai problème de données : aucun motif disponible pour ce DCADEMAT "
+                + "en base DEV (table CODE_MOTIF / R_CODEMOTIF_DCA_RECL). NB : la demande devrait idéalement partir d'un état "
+                + "« en attente » (non encore réclamée) pour tester la 1re mise en réclamation.");
+        }
+        var sample = string.Join(" | ", items.Take(20).Select(i => "'" + LegacyParsing.Truncate(SafeText(() => i.Name), 40) + "'"));
+        throw new Exception($"Type de motif '{motif}' introuvable parmi les {items.Length} item(s) du combo "
+            + $"(items vus : {sample}). Vérifier que ce code motif existe pour le DCADEMAT en base DEV "
+            + "(table CODE_MOTIF / R_CODEMOTIF_DCA_RECL), ou ajuster le code passé à ReclamerDcaAvecMotif.");
+    }
+
+    /// <summary>Lit la valeur AFFICHÉE d'un combo (ce qui est sélectionné, sans ouvrir le dropdown).
+    /// 1) ValuePattern.Value (texte de la zone éditable du combo) ; 2) Name de l'élément ListItem
+    /// sélectionné (SelectionPattern.Selection) ; 3) Name du combo lui-même en dernier recours.
+    /// Retourne "" si rien de lisible. Pour le combo RCS lazy, c'est ce qui permet de savoir si le
+    /// motif est déjà sélectionné SANS forcer l'ouverture (qui seule peuple les ListItem via UIA).</summary>
+    private string ReadComboCurrentValue(AutomationElement combo)
+    {
+        // 1) ValuePattern : la plupart des ComboBox exposent le texte affiché ici.
+        try { if (combo.Patterns.Value.IsSupported) { var v = (combo.Patterns.Value.Pattern.Value.Value ?? "").Trim(); if (v.Length > 0) return v; } } catch { }
+
+        // 2) SelectionPattern : l'item actuellement sélectionné (son Name = texte affiché).
+        try
+        {
+            if (combo.Patterns.Selection.IsSupported)
+            {
+                var sel = combo.Patterns.Selection.Pattern.Selection.Value;
+                if (sel is not null && sel.Length > 0)
+                {
+                    var n = SafeText(() => sel[0].Name);
+                    if (n.Length > 0) return n;
+                }
+            }
+        }
+        catch { }
+
+        // 3) Dernier recours : le Name du combo (certains contrôles WinForms exposent la valeur ici).
+        return SafeText(() => combo.Name);
     }
 
     /// <summary>Localise le champ texte « Motif » (ultMotifReclamation / Ult_TextMultiLine, multiline) de
-    /// l'étape Réclamation/Refus. 1) AutomationId "ultMotifReclamation" ; 2) un Edit/Document multiligne
-    /// (hauteur > 40px) avec ValuePattern voisin d'un label « Motif » ; 3) le plus grand Edit avec
-    /// ValuePattern visible. Retourne null si rien trouvé.</summary>
+    /// l'étape Réclamation/Refus. 1) AutomationId "ultMotifReclamation" (avec retry anti-transient UIA) —
+    /// dès qu'il est trouvé on le RETOURNE TEL QUEL (c'est LE champ éditable « Motif » de la section
+    /// Réclamation/Refus) ; 2) SEULEMENT s'il est introuvable par AutomationId : un Edit/Document multiligne
+    /// avec ValuePattern voisin d'un label « Motif » ; 3) le plus grand Edit avec ValuePattern visible.
+    /// Retourne null si rien trouvé.
+    /// ⚠ Bug run live (corrigé) : l'ancienne garde « byId != null && SupportsValue(byId) » pouvait
+    /// court-circuiter sur un faux négatif transitoire (UIA cache juste après le Tab) → on tombait dans le
+    /// fallback « plus grand champ texte visible » qui sélectionnait le champ READ-ONLY « Pièces qui doivent
+    /// être déposées » → InvalidOperationException sur SetValue. On ne gate donc PLUS la cible AutomationId sur
+    /// SupportsValue ; la vérif ValuePattern/read-only est faite au site d'écriture (étape 5) avec message clair.</summary>
     private AutomationElement? FindMotifTexteField()
     {
         if (_window is null) return null;
 
-        var byId = FindByAutomationId("ultMotifReclamation");
-        if (byId is not null && SupportsValue(byId))
+        // 1) Par AutomationId, avec retry (en mode parallèle, FindFirstDescendant peut return null
+        // transitoirement même quand l'élément existe — cf. FindByAutomationIdWithRetry). Si trouvé →
+        // c'est LE bon champ : on le retourne directement, AUCUN fallback (ne PAS retomber sur le plus
+        // grand champ texte, qui est le champ read-only « Pièces qui doivent être déposées »).
+        var byId = FindByAutomationIdWithRetry("ultMotifReclamation", timeoutMs: 2500, pollMs: 120);
+        if (byId is not null)
         {
-            Console.WriteLine("      → (5) Champ texte « Motif » trouvé via AutomationId 'ultMotifReclamation'.");
+            Console.WriteLine("      → (5) Champ texte « Motif » trouvé via AutomationId 'ultMotifReclamation' (cible directe, pas de fallback).");
             return byId;
         }
+        Console.WriteLine("      → (5) ⚠ AutomationId 'ultMotifReclamation' introuvable (après retry) — fallback heuristique label/plus-grand-champ.");
 
         // Candidats : éléments avec ValuePattern, visibles, plutôt hauts (multiline) — exclut les Edits
         // mono-ligne étroits (combos, montants).
@@ -4034,6 +4166,19 @@ public sealed class LegacyDriver : IDisposable
     private bool SupportsValue(AutomationElement el)
     {
         try { return el.Patterns.Value.IsSupported; } catch { return false; }
+    }
+
+    /// <summary>État read-only d'un champ via ValuePattern.IsReadOnly. Retourne true/false si déterminable,
+    /// ou null si le ValuePattern n'est pas supporté / l'état n'est pas lisible (transitoire). null = on ne
+    /// sait pas (on laissera l'écriture tenter), true = champ NON éditable (mauvaise cible → erreur claire).</summary>
+    private bool? TryGetValueReadOnly(AutomationElement el)
+    {
+        try
+        {
+            if (!el.Patterns.Value.IsSupported) return null;
+            return el.Patterns.Value.Pattern.IsReadOnly.Value;
+        }
+        catch { return null; }
     }
 
     /// <summary>Lit la valeur d'un champ : ValuePattern d'abord, sinon Name. "" si rien.</summary>

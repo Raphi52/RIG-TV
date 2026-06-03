@@ -19,6 +19,7 @@ namespace Rig.Wpf.Kbis.SmokeRunner;
 ///   - <see cref="Truncate"/>                : tronque + ellipse pour le dump MSAA
 ///   - <see cref="AppendMotifMarker"/>       : ajoute un marqueur en fin de texte de motif (scenario reclamation)
 ///   - <see cref="ContainsMotifMarker"/>     : detecte le marqueur dans un texte (verif courrier de reclamation)
+///   - <see cref="MotifAlreadySelected"/>    : la valeur courante du combo motif correspond-elle deja au motif voulu ?
 /// </summary>
 public static class LegacyParsing
 {
@@ -122,5 +123,32 @@ public static class LegacyParsing
     {
         if (string.IsNullOrEmpty(text) || string.IsNullOrEmpty(marker)) return false;
         return text.IndexOf(marker, StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
+    /// <summary>
+    /// true si la valeur DEJA affichee dans le combo « Type de motif » (combo RCS custom
+    /// ULT_COMBO_CODE_MOTIF) correspond au motif voulu -> la selection est consideree comme
+    /// DEJA FAITE et on n'a pas besoin d'ouvrir le dropdown (qui peuple ses items en lazy : ferme,
+    /// UIA FindAll(ListItem) renvoie 0). C'est le 1er recours de la selection robuste (cf. run live :
+    /// demande deja en reclamation, combo affichant "INPMANQ - Piece manquante, n...").
+    ///
+    /// Le texte d'item RCS est de la forme "&lt;CODE&gt; - &lt;libelle&gt;" (ex "INPMANQ - Piece manquante,
+    /// non valide ou illisible"). On considere qu'il y a correspondance si, apres trim, la valeur
+    /// courante (insensible a la casse) :
+    ///   - est EXACTEMENT le motif (combo qui n'affiche que le code), OU
+    ///   - COMMENCE par le motif (typiquement "&lt;CODE&gt; ..." ou "&lt;CODE&gt;-..." ou "&lt;CODE&gt; - ..."), OU
+    ///   - CONTIENT le motif (libelle saisi sans le code, ou motif demande sous forme de libelle).
+    /// Valeur courante vide/null -> false (rien de selectionne -> il faudra ouvrir le dropdown).
+    /// motif vide/null -> false (on ne sait pas quoi matcher -> ne pas court-circuiter).
+    /// Pur : (valeur courante, motif voulu) -> bool, aucun effet de bord.
+    /// </summary>
+    public static bool MotifAlreadySelected(string? currentValue, string? motif)
+    {
+        if (string.IsNullOrWhiteSpace(currentValue) || string.IsNullOrWhiteSpace(motif)) return false;
+        var cur = currentValue.Trim();
+        var want = motif.Trim();
+        return cur.Equals(want, StringComparison.OrdinalIgnoreCase)
+            || cur.StartsWith(want, StringComparison.OrdinalIgnoreCase)
+            || cur.IndexOf(want, StringComparison.OrdinalIgnoreCase) >= 0;
     }
 }
