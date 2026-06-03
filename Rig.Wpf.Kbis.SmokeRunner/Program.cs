@@ -40,114 +40,104 @@ internal static class Program
         // → caractères remplacés par '?' à la lecture.
         try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* best-effort */ }
 
-        // ── Mode legacy : route distincte qui ne touche PAS au stack WPF/DI ────
+        // ── Dispatch CLI : cascade de routes, PREMIÈRE qui matche gagne ────────
+        // L'ORDRE est significatif (certains flags se chevauchent par préfixe) :
+        //   --legacy-rapture-{import,process,export} AVANT --legacy-rapture
+        //   --legacy-rapture                         AVANT --legacy
+        // Helpers HasFlag / HasFlagPrefix = mêmes comparaisons OrdinalIgnoreCase
+        // qu'avant (Equals exact / StartsWith), juste factorisées.
         // Le flag --legacy fait tourner exclusivement le smoke RigClientAccueil.exe
         // (WinForms x86 + COM) via FlaUI. Mutuellement exclusif avec le smoke WPF.
         // --drive-testviewer-rapture-import = drive Rig Testing UI au lieu de RIG legacy
         // (pour qu'un agent voie ses iterations dans le GUI TestViewer en live)
-        if (args.Any(a => a.Equals("--drive-testviewer-rapture-import", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-rapture-import"))
             return RunDriveTestViewerRaptureImport(args);
         // --drive-testviewer-rapture-diag = pilote le bouton "Diagnostic import"
         // du module RAPTURE de Rig Testing (mode --rapture-diag) en FlaUI.
-        if (args.Any(a => a.Equals("--drive-testviewer-rapture-diag", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-rapture-diag"))
             return RunDriveTestViewerRaptureDiag(args);
         // --drive-testviewer-rapture-process = pilote le bouton "▶ Start E2E"
         // du tab Smoke Import (mode --legacy-rapture-process) en FlaUI.
-        if (args.Any(a => a.Equals("--drive-testviewer-rapture-process", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-rapture-process"))
             return RunDriveTestViewerRaptureProcess(args);
         // --drive-testviewer-rapture-export = pilote le bouton "▶ Start E2E"
         // du tab Smoke Export (mode --legacy-rapture-export) en FlaUI.
-        if (args.Any(a => a.Equals("--drive-testviewer-rapture-export", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-rapture-export"))
             return RunDriveTestViewerRaptureExport(args);
         // --drive-testviewer-rapture-stoppause = vérif Stop/Pause : lance Smoke UI,
         // Pause (screenshot gelé), Reprend, Stop (screenshot + vérif process tués).
-        if (args.Any(a => a.Equals("--drive-testviewer-rapture-stoppause", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-rapture-stoppause"))
             return RunDriveTestViewerRaptureStopPause(args);
         // --drive-testviewer-legacy-kbis = rejoue le smoke legacy KBIS/VK via Rig Testing
-        if (args.Any(a => a.Equals("--drive-testviewer-legacy-kbis", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-legacy-kbis"))
             return RunDriveTestViewerLegacyKbis(args);
         // --drive-testviewer-kbis-stress = pilote le stress X× du scénario sélectionné (env
         // RIG_KBIS_STRESS_SCENARIO/COUNT/LOOP set au lancement de la TV) via Rig Testing.
-        if (args.Any(a => a.Equals("--drive-testviewer-kbis-stress", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--drive-testviewer-kbis-stress"))
             return RunDriveTestViewerKbisStress(args);
         // --inspect-testviewer-kbis-legacy = diag : screenshot + dump du tab Smoke Legacy
-        if (args.Any(a => a.Equals("--inspect-testviewer-kbis-legacy", StringComparison.OrdinalIgnoreCase)))
-        {
-            var insp = Stopwatch.StartNew();
-            try
-            {
-                using var d = new TestViewerDriver();
-                d.SwitchToModule("KBIS");
-                var b = d.EnsureLegacyTabRealized();
-                Console.WriteLine($"   → Bouton 'Run smoke RIG' {(b is null ? "INTROUVABLE" : "présent")}");
-                d.CaptureAndDumpActiveTab("kbis-legacy-inspect");
-            }
-            catch (Exception ex) { Console.WriteLine($"  ✗ {ex.GetType().Name}: {ex.Message}"); _failed++; }
-            return PrintSummaryAndExit(insp);
-        }
+        if (HasFlag(args, "--inspect-testviewer-kbis-legacy"))
+            return RunInspectTestViewerKbisLegacy(args);
         // --rapture-selfdrive = self-drive in-process : lance RigClientAccueil.exe
         // en mode --rapture-smoke (worker invisible, pipeline d'import direct en mémoire,
         // AUCUNE fenêtre/souris/focus). AudienceLock + snapshot/restore SQL net-zero.
-        if (args.Any(a => a.Equals("--rapture-selfdrive", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--rapture-selfdrive"))
             return RunRaptureSelfDrive(args);
         // --rapture-diag = diagnostic d'import complet (Mapper/Validator/Diff/Apply
         // réel + rapport placement + valeurs non placées) via RaptureImportDiag_EXE,
         // stdout relayé pour affichage dans la console Rig Testing.
-        if (args.Any(a => a.Equals("--rapture-diag", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--rapture-diag"))
             return RunRaptureDiag(args);
         // --legacy-rapture-process = process E2E testable via l'UI : ouvre une audience
         // PRÉCISE (par date+heure, en fenêtre RETAUD) qui matche le JSON par date+greffe
         // → Cas A → recap DIRECTE avec lignes modifiables cochables → capture + Annuler.
-        if (args.Any(a => a.Equals("--legacy-rapture-process", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-rapture-process"))
             return RunLegacyRaptureProcess(args);
         // --legacy-rapture-export = Start E2E (tab Smoke Export) : Login → PROC_PREAUD →
         // audience → click 'Export JSON Plumitif' → écrit le JSON sur disque.
-        if (args.Any(a => a.Equals("--legacy-rapture-export", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-rapture-export"))
             return RunLegacyRaptureExport(args);
         // --reset-smoke-db = panic restore SQL : restaure tout résidu écrit par les
         // scénarios smoke (audit, notes RAPTURE_*, cas C leftover audiences). Permet
         // de partir d'une DB propre pour rejouer les mêmes scénarios.
-        if (args.Any(a => a.Equals("--reset-smoke-db", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--reset-smoke-db"))
             return RunResetSmokeDb(args);
         // --legacy-rapture-import = skip export (boucle iter import only)
-        if (args.Any(a => a.Equals("--legacy-rapture-import", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-rapture-import"))
             return RunLegacyRaptureImportOnly(args);
         // --legacy-rapture en priorité (avant --legacy car ce dernier match aussi le préfixe)
-        if (args.Any(a => a.Equals("--legacy-rapture", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-rapture"))
             return RunLegacyRapture(args);
         // --loop = CLI de la boucle rig-testing (run/build/bench). Émet du JSON.
-        if (args.Any(a => a.Equals("--loop", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--loop"))
             return LoopMode.RunLoop(args);
         // --legacy-kbis-vk = scenario isolé PROC_VK (Visualisation extrait RCS depuis num_gestion).
         //   Lance son propre RIG sur HDESK isolé, login, ouvre PROC_KBIS (tab VK), saisit
         //   le num_gestion (env RIG_LEGACY_NUM_GESTION ou 2024B00001), vérifie dossier chargé.
         //   Self-snap PNG dans self-snaps/$RIG_RUN_STAMP/kbis-vk/.
-        if (args.Any(a => a.Equals("--legacy-kbis-vk", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-kbis-vk"))
             return RunLegacyKbisVk(args);
         // --legacy-kbis-xex = scenario isolé PROC_XEX (Édition Brouillon).
         //   Launch + login + OpenProcXex + saisir num_gestion + Alt+V + toggle imprimante +
         //   Brouillon. Self-snap dans self-snaps/$RIG_RUN_STAMP/kbis-xex/.
-        if (args.Any(a => a.Equals("--legacy-kbis-xex", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-kbis-xex"))
             return RunLegacyKbisXex(args);
         // --legacy-alertes-* = scénarios module ALERTES RCS (reprise interrompue / réclamation).
         //   Accès via la tuile "Alertes RCS" de l'accueil (pas un PROC). Self-snap dans
         //   self-snaps/$RIG_RUN_STAMP/alertes-<type>/. Étape 1 : Launch+Login+OpenAlerteRcs.
-        if (args.Any(a => a.Equals("--legacy-alertes-int-form", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-alertes-int-form"))
             return RunLegacyAlertesIntForm(args);
-        if (args.Any(a => a.Equals("--legacy-alertes-int-dca", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-alertes-int-dca"))
             return RunLegacyAlertesIntDca(args);
-        if (args.Any(a => a.Equals("--legacy-alertes-rec-form", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-alertes-rec-form"))
             return RunLegacyAlertesRecForm(args);
-        if (args.Any(a => a.Equals("--legacy-alertes-rec-dca", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlag(args, "--legacy-alertes-rec-dca"))
             return RunLegacyAlertesRecDca(args);
         // --legacy-dcademat-* = module DCADEMAT (2026-05-29). v1 : Ouvrir alerte + Ouvrir demande.
-        if (args.Any(a => a.StartsWith("--legacy-dcademat-", StringComparison.OrdinalIgnoreCase)))
+        if (HasFlagPrefix(args, "--legacy-dcademat-"))
             return RunLegacyDcademat(args);
-        var legacyMode = args.Any(a => a.Equals("--legacy", StringComparison.OrdinalIgnoreCase));
-        if (legacyMode)
-        {
+        if (HasFlag(args, "--legacy"))
             return RunLegacy(args);
-        }
 
         // Mode par defaut RETIRE (decouplage 2026-05-29) : le test in-process de la reecriture
         // WPF-KBIS (KbisProcessusViewModel / KbisProcessusView via le socle Rig.Wpf.Shell/Core/RigMetier)
@@ -156,6 +146,34 @@ internal static class Program
         Console.WriteLine("Modes : --legacy-kbis-vk|xex, --legacy-alertes-*, --legacy-dcademat-*,");
         Console.WriteLine("        --legacy-rapture-*, --rapture-selfdrive, --loop, --drive-testviewer-*.");
         return 0;
+    }
+
+    /// <summary>true si <paramref name="args"/> contient EXACTEMENT <paramref name="flag"/> (OrdinalIgnoreCase).</summary>
+    private static bool HasFlag(string[] args, string flag)
+        => args.Any(a => a.Equals(flag, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>true si un des <paramref name="args"/> COMMENCE par <paramref name="prefix"/> (OrdinalIgnoreCase).</summary>
+    private static bool HasFlagPrefix(string[] args, string prefix)
+        => args.Any(a => a.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// Mode --inspect-testviewer-kbis-legacy : diag rapide du tab Smoke Legacy KBIS de
+    /// Rig Testing — switch module KBIS, vérifie la présence du bouton "Run smoke RIG"
+    /// (réalise le tab si besoin), puis screenshot + dump de l'arbre UIA du tab actif.
+    /// </summary>
+    private static int RunInspectTestViewerKbisLegacy(string[] args)
+    {
+        var sw = Stopwatch.StartNew();
+        try
+        {
+            using var d = new TestViewerDriver();
+            d.SwitchToModule("KBIS");
+            var b = d.EnsureLegacyTabRealized();
+            Console.WriteLine($"   → Bouton 'Run smoke RIG' {(b is null ? "INTROUVABLE" : "présent")}");
+            d.CaptureAndDumpActiveTab("kbis-legacy-inspect");
+        }
+        catch (Exception ex) { Console.WriteLine($"  ✗ {ex.GetType().Name}: {ex.Message}"); _failed++; }
+        return PrintSummaryAndExit(sw);
     }
 
     /// <summary>
