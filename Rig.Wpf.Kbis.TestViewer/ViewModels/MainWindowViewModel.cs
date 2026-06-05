@@ -12,6 +12,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Rig.Wpf.Kbis.TestViewer.Helpers;
 using Rig.Wpf.Kbis.TestViewer.Services;
+using Rig.Wpf.Kbis.SmokeRunner; // LegacyParsing : politique + textes des logs de retry-on-transient
 
 namespace Rig.Wpf.Kbis.TestViewer.ViewModels;
 
@@ -1518,10 +1519,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Log.Info($"RunAlertesPlan — {plan.Count} instances : {string.Join(", ", plan.Select(p => p.InstanceId))}");
         _legacySmokeProxy.ResetLines();
         AlertesCatalog.ResetAllFrozenPaths();
-        var tasks = plan.Select(spec => SpawnLegacyKbisWorker(smokeExe, spec.Arg, runStamp, spec.InstanceId)).ToList();
-        await Task.WhenAll(tasks);
-        Log.Info("ALERTES plan done — " + string.Join("  ", plan.Select((spec, i) => $"{spec.InstanceId}=exit{tasks[i].Result.exitCode}")));
-        var combined = string.Join("\n\n", plan.Select((spec, i) => $"═══ {spec.InstanceId} (PID {tasks[i].Result.pid}, exit={tasks[i].Result.exitCode}) ═══\n{tasks[i].Result.stdout}"));
+        // Throttle : même schéma que DCADEMAT (chaque worker = un RigClientAccueil lourd) →
+        // max 2 simultanés pour des verdicts fiables. Cf. SpawnLegacyWorkersThrottledAsync.
+        var results = await SpawnLegacyWorkersThrottledAsync(
+            smokeExe, runStamp,
+            plan.Select(spec => (spec.Arg, spec.InstanceId)).ToList(), "ALERTES plan");
+        Log.Info("ALERTES plan done — " + string.Join("  ", plan.Select((spec, i) => $"{spec.InstanceId}=exit{results[i].exitCode}")));
+        var combined = string.Join("\n\n", plan.Select((spec, i) => $"═══ {spec.InstanceId} (PID {results[i].pid}, exit={results[i].exitCode}) ═══\n{results[i].stdout}"));
         LegacyLastFullStdout = combined;
         DumpLegacyRunToDisk();
     }
@@ -1798,6 +1802,158 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex) { Log.Warn($"StopDcadematScenario pid={pid} failed: {ex.Message}"); }
     }
 
+    /// <summary>
+    /// Cap dur de concurrence pour les suites legacy LOURDES (DCADEMAT, ALERTES) : chaque
+    /// worker ouvre un RigClientAccueil complet. Au-delà de ~2-3 instances simultanées, la
+    /// contention CPU/RAM/UIA rend les verdicts OK/FAIL non fiables (timeouts, flakes : un
+    /// écran complètement chargé ressort en FAIL). On plafonne donc à 2 quoi qu'il arrive,
+    /// indépendamment du Parallelism de GlobalSettings (réglé pour le batch RAPTURE selfdrive,
+    /// bien plus léger). Le cap effectif = Math.Min(Parallelism, 2) : si l'utilisateur descend
+    /// Parallelism à 1, on respecte 1 ; sinon 2.
+    /// </summary>
+    private const int LegacyHeavySuiteMaxConcurrency = 2;
+
+    /// <summary>
+    /// Spawn une liste de workers SmokeRunner legacy (KBIS/ALERTES/DCADEMAT) en respectant un
+    /// THROTTLE de concurrence : jamais plus de N workers vivants en même temps, les suivants
+    /// démarrant au fur et à mesure que des slots se libèrent. Reprend EXACTEMENT le pattern
+    /// SemaphoreSlim de <see cref="RunAllRaptureScenariosAsync"/> (le batch RAPTURE). N est borné
+    /// par <see cref="LegacyHeavySuiteMaxConcurrency"/> ET par le Parallelism de GlobalSettings,
+    /// puis on prend le min. Les résultats sont retournés DANS L'ORDRE du plan (le caller indexe
+    /// par position pour reconstituer le dump combiné).
+    /// </summary>
+    private async Task<(int exitCode, string stdout, int pid)[]> SpawnLegacyWorkersThrottledAsync(
+        string smokeExe, string runStamp,
+        IReadOnlyList<(string arg, string workerId)> workers, string suiteLabel)
+    {
+        // Cap = min(GlobalSettings.Parallelism, cap dur). Borne basse 1 (clamp défensif).
+        int configured = _globalSettings?.Current?.Parallelism ?? 4;
+        if (configured < 1) configured = 1;
+        int cap = Math.Min(configured, LegacyHeavySuiteMaxConcurrency);
+        if (cap < 1) cap = 1;
+        Log.Info($"{suiteLabel} — throttle concurrence : {workers.Count} workers, max {cap} simultané(s) " +
+                 $"(parallelism={configured}, cap dur={LegacyHeavySuiteMaxConcurrency})");
+
+        var results = new (int exitCode, string stdout, int pid)[workers.Count];
+        using var semaphore = new SemaphoreSlim(cap, cap);
+        var tasks = workers.Select((w, i) => Task.Run(async () =>
+        {
+            await semaphore.WaitAsync();
+            try
+            {
+                results[i] = await SpawnLegacyKbisWorker(smokeExe, w.arg, runStamp, w.workerId);
+            }
+            finally
+            {
+                semaphore.Release();
+            }
+        })).ToList();
+
+        await Task.WhenAll(tasks);
+
+        // ── RETRY-on-transient ────────────────────────────────────────────────────────────────
+        // Absorbe la flakiness environnementale (RIG lent sous Mode B 2-concurrent FAIL ~1 scenario
+        // aleatoire/run alors que les vrais modes d'echec sont corriges). Politique (cf.
+        // LegacyParsing) : tout worker en ECHEC (exit != 0) est relance UNE seule fois, meme flag,
+        // en respectant le throttle. Le retry n'est consulte QUE sur exit != 0 -> les scenarios OK
+        // du 1er coup ne sont JAMAIS relances (zero surcout, zero regression). UN SEUL retry par
+        // scenario (jamais de boucle) : le resultat du 2e essai est final. Le retry reste VISIBLE
+        // (logs explicites) et le verdict agrege / "plan done" reflete l'APRES-retry (on remplace
+        // results[i] par le resultat du 2e essai).
+        var toRetry = Enumerable.Range(0, workers.Count)
+                                .Where(i => LegacyParsing.ShouldRetryAfterExit(results[i].exitCode))
+                                .ToList();
+        if (toRetry.Count > 0)
+        {
+            Log.Info($"{suiteLabel} — {toRetry.Count} scenario(s) en echec au 1er essai, retry unique : " +
+                     string.Join(", ", toRetry.Select(i => $"{workers[i].workerId}(exit{results[i].exitCode})")));
+
+            var retryTasks = toRetry.Select(i => Task.Run(async () =>
+            {
+                int firstExit = results[i].exitCode;
+                var workerId = workers[i].workerId;
+                // Purge D'ABORD les lignes parsees de CE worker : la tuile UI recompute son verdict sur
+                // le STDOUT DU 2e ESSAI uniquement (sinon le step FAILED du 1er essai reste "premier" et
+                // ComputePhase renverrait toujours Fail malgre un retry vert). On purge AVANT d'emettre
+                // l'annonce de retry pour que celle-ci (et les lignes du 2e essai) survivent.
+                ResetLinesForWorkerOnUi(workerId);
+                // Annonce visible APRES la purge (flux temps reel, persiste dans la tuile).
+                LogLegacyRetryLine(workerId, LegacyParsing.RetryStartingLogLine(workerId, firstExit));
+                await semaphore.WaitAsync();
+                (int exitCode, string stdout, int pid) retryResult;
+                try
+                {
+                    retryResult = await SpawnLegacyKbisWorker(smokeExe, workers[i].arg, runStamp, workerId);
+                }
+                finally
+                {
+                    semaphore.Release();
+                }
+                // Verdict final = celui du 2e essai (le 1er etait != 0, sinon pas de retry).
+                results[i] = (LegacyParsing.FinalExitAfterRetry(firstExit, retryResult.exitCode),
+                              retryResult.stdout, retryResult.pid);
+                if (retryResult.exitCode == 0)
+                    LogLegacyRetryLine(workerId, LegacyParsing.RetryAbsorbedLogLine(workerId));
+                else
+                    LogLegacyRetryLine(workerId, LegacyParsing.RetryConfirmedFailLogLine(workerId));
+            })).ToList();
+
+            await Task.WhenAll(retryTasks);
+
+            bool allGreen = LegacyParsing.AllPassedAfterRetry(results.Select(r => r.exitCode));
+            Log.Info($"{suiteLabel} — apres retry : " +
+                     string.Join("  ", workers.Select((w, i) => $"{w.workerId}=exit{results[i].exitCode}")) +
+                     $"  => {(allGreen ? "TOUT VERT" : "echec(s) confirme(s)")}");
+        }
+
+        return results;
+    }
+
+    /// <summary>
+    /// Emet une ligne de log de RETRY (annonce / absorbe / confirme) — visible a la fois dans le log
+    /// applicatif ET dans le flux de la tuile (taggee <paramref name="workerId"/>), prefixee "✓" pour
+    /// que <see cref="SmokeRunnerProxy.AppendLineForParsing"/> la matche et l'affiche dans l'UI. Le
+    /// retry ne doit JAMAIS etre masque silencieusement.
+    /// </summary>
+    private void LogLegacyRetryLine(string workerId, string message)
+    {
+        Log.Info(message);
+        try
+        {
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                _legacySmokeProxy.AppendLineForParsing("✓ " + message, workerId));
+        }
+        catch (Exception ex) { Log.Warn($"LogLegacyRetryLine jeté pour {workerId} : {ex.Message}"); }
+    }
+
+    /// <summary>Émet la ligne de log du WATCHDOG (worker tué pour hang). Contrairement au retry, c'est un
+    /// ÉCHEC : on l'émet avec l'icône « ✗ » ET un retrait initial (deux espaces) pour que
+    /// <see cref="SmokeRunnerProxy.AppendLineForParsing"/> (regex « ^\s+[✓✗⊘] … ») la capte comme une
+    /// ligne FAILED visible dans la tuile, en plus du log applicatif. Le hang devient ainsi visible dans
+    /// l'UI live avant que le retry ne purge et relance. Le retry (qui suit) re-jugera sur le 2e essai.</summary>
+    private void LogLegacyWatchdogLine(string workerId, string message)
+    {
+        Log.Warn(message);
+        try
+        {
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                _legacySmokeProxy.AppendLineForParsing("  ✗ " + message, workerId));
+        }
+        catch (Exception ex) { Log.Warn($"LogLegacyWatchdogLine jeté pour {workerId} : {ex.Message}"); }
+    }
+
+    /// <summary>Purge (sur le thread UI) les lignes parsees du worker <paramref name="workerId"/> avant
+    /// son retry, pour que la tuile recompute son verdict sur le seul stdout du 2e essai.</summary>
+    private void ResetLinesForWorkerOnUi(string workerId)
+    {
+        try
+        {
+            System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                _legacySmokeProxy.ResetLinesForWorker(workerId));
+        }
+        catch (Exception ex) { Log.Warn($"ResetLinesForWorker jeté pour {workerId} : {ex.Message}"); }
+    }
+
     private async Task RunDcadematPlanAsync(IReadOnlyList<Smoke.Dcademat.DcadematInstanceSpec> plan)
     {
         var smokeExe = _legacySmokeProxy.ExePath;
@@ -1807,9 +1963,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Log.Info($"RunDcadematPlan — {plan.Count} instances : {string.Join(", ", plan.Select(p => p.InstanceId))}");
         _legacySmokeProxy.ResetLines();
         DcadematCatalog.ResetAllFrozenPaths();
-        var tasks = plan.Select(spec => SpawnLegacyKbisWorker(smokeExe, spec.Arg, runStamp, spec.InstanceId)).ToList();
-        await Task.WhenAll(tasks);
-        LegacyLastFullStdout = string.Join("\n\n", plan.Select((spec, i) => $"═══ {spec.InstanceId} (PID {tasks[i].Result.pid}, exit={tasks[i].Result.exitCode}) ═══\n{tasks[i].Result.stdout}"));
+        // Throttle : ces workers ouvrent chacun un RigClientAccueil lourd → max 2 simultanés
+        // (sinon verdicts non fiables sous contention). Cf. SpawnLegacyWorkersThrottledAsync.
+        var results = await SpawnLegacyWorkersThrottledAsync(
+            smokeExe, runStamp,
+            plan.Select(spec => (spec.Arg, spec.InstanceId)).ToList(), "DCADEMAT plan");
+        Log.Info("DCADEMAT plan done — " + string.Join("  ", plan.Select((spec, i) => $"{spec.InstanceId}=exit{results[i].exitCode}")));
+        LegacyLastFullStdout = string.Join("\n\n", plan.Select((spec, i) => $"═══ {spec.InstanceId} (PID {results[i].pid}, exit={results[i].exitCode}) ═══\n{results[i].stdout}"));
         DumpLegacyRunToDisk();
     }
 
@@ -1889,20 +2049,75 @@ public sealed partial class MainWindowViewModel : ObservableObject
         Log.Info($"Worker {arg} spawned : PID={p.Id}");
 
         var sb = new System.Text.StringBuilder();
-        // Streaming ligne par ligne : push à _legacySmokeProxy en temps réel
-        string? line;
-        while ((line = await p.StandardOutput.ReadLineAsync().ConfigureAwait(false)) is not null)
+        // ── Drain du stdout (streaming ligne par ligne) + attente de sortie, dans UNE tâche de fond ──
+        // On lit jusqu'à EOF (qui survient quand le process ferme stdout = quand il se termine, OU quand
+        // on le tue) PUIS WaitForExit. Cette tâche complète => le worker est sorti (proprement ou tué).
+        // On la COURSE ensuite contre le watchdog : c'est cette course (et pas un await direct) qui
+        // empêche un worker en hang (stdout jamais fermé, busy-poll) de bloquer la suite à l'infini.
+        var drainTask = Task.Run(async () =>
         {
-            sb.AppendLine(line);
-            try
+            string? line;
+            while ((line = await p.StandardOutput.ReadLineAsync().ConfigureAwait(false)) is not null)
             {
-                System.Windows.Application.Current?.Dispatcher.Invoke(() =>
-                    _legacySmokeProxy.AppendLineForParsing(line, workerId));
+                sb.AppendLine(line);
+                try
+                {
+                    System.Windows.Application.Current?.Dispatcher.Invoke(() =>
+                        _legacySmokeProxy.AppendLineForParsing(line, workerId));
+                }
+                catch (Exception ex) { Log.Warn($"AppendLineForParsing jeté pour {arg} : {ex.Message}"); }
             }
-            catch (Exception ex) { Log.Warn($"AppendLineForParsing jeté pour {arg} : {ex.Message}"); }
+            p.WaitForExit();
+        });
+
+        // ── WATCHDOG par worker (filet anti-hang) ────────────────────────────────────────────────
+        // Plafond de temps PAR worker (constante + override env, décision PURE testée). Un worker qui
+        // dépasse ce délai = HANG (ex. dca-reclamation post-MB1, cpuSec=378 sans sortir) : on tue son
+        // ARBRE de process (worker + RigClientAccueil enfant — Process.Kill() ne tue PAS les enfants en
+        // .NET Fx 4.8, d'où taskkill /T /F) et on retourne un exit synthétique != 0 (WatchdogKillExitCode)
+        // qui ALIMENTE le retry-on-transient EXISTANT (ShouldRetryAfterExit relance tout exit != 0). Ce
+        // n'est PAS un mécanisme parallèle : le hang devient un échec normal que la machinerie de retry
+        // re-lance (le re-sampling reprend probablement une autre demande -> passe). Un worker qui sort
+        // dans les temps (drainTask gagne la course) n'est JAMAIS tué : aucun impact sur les OK-du-1er-coup.
+        int watchdogSeconds = LegacyParsing.ResolveWatchdogSeconds(
+            Environment.GetEnvironmentVariable("RIG_LEGACY_WATCHDOG_SECONDS"));
+        var winner = await Task.WhenAny(drainTask, Task.Delay(TimeSpan.FromSeconds(watchdogSeconds))).ConfigureAwait(false);
+        if (winner != drainTask)
+        {
+            // Hang : le délai a gagné la course avant que le worker ne sorte.
+            LogLegacyWatchdogLine(workerId, LegacyParsing.WatchdogTimeoutLogLine(workerId, watchdogSeconds));
+            KillProcessTree(p.Id, $"watchdog {workerId}");
+            // Le kill ferme stdout => drainTask atteint EOF et complète : on l'attend pour vider proprement
+            // les dernières lignes (évite une tâche orpheline) avant de retourner l'exit synthétique.
+            try { await drainTask.ConfigureAwait(false); } catch (Exception ex) { Log.Warn($"drainTask post-kill jeté pour {arg} : {ex.Message}"); }
+            return (LegacyParsing.WatchdogKillExitCode, sb.ToString(), p.Id);
         }
-        await Task.Run(() => p.WaitForExit());
+
+        await drainTask.ConfigureAwait(false);   // sortie normale : propage une éventuelle exception du drain
         return (p.ExitCode, sb.ToString(), p.Id);
+    }
+
+    /// <summary>Tue l'ARBRE d'un process (le worker SmokeRunner + le RigClientAccueil enfant qu'il a
+    /// lancé) via <c>taskkill /T /F /PID</c>. ⚠ En .NET Framework 4.8, <c>Process.Kill()</c> ne tue PAS
+    /// les descendants : on passe donc par taskkill /T (propage à toute la descendance) /F (force).
+    /// Best-effort, non bloquant (timeout 3s sur le killer). <paramref name="reason"/> n'est que pour le log.</summary>
+    private void KillProcessTree(int pid, string reason)
+    {
+        try
+        {
+            using var killer = Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskkill",
+                Arguments = $"/T /F /PID {pid}",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            });
+            killer?.WaitForExit(3000);
+            Log.Info($"KillProcessTree ({reason}) : pid {pid} + enfants tués via taskkill /T /F.");
+        }
+        catch (Exception ex) { Log.Warn($"KillProcessTree pid={pid} ({reason}) échoué : {ex.Message}"); }
     }
 
     private bool CanRunLegacy() => !IsLegacyRunning && LegacyExeExists;

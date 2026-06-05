@@ -233,6 +233,375 @@ public class LegacyParsingTests
     public void IsDossierLocked_non_verrou_rejete(string text)
         => Assert.False(LegacyParsing.IsDossierLocked(text));
 
+    // ── DemandeRowMatches : selection d'une LIGNE de la grille des demandes (Name MSAA ';' concatene) ──
+    // CONTEXTE : extrait de LegacyDriver.BuildDemandeMatch (etait inline, NON teste). Regle le FAIL
+    // dca-interrompue (regression) via le flag includeMyEnCours (reprise = rouvrir une demande deja
+    // "en cours par moi"), et documente le filtre ';X;' qui faisait 0 candidat.
+
+    // Name de ligne realiste : colonnes concatenees par ';' (En cours = "X" => ';X;' present).
+    private const string RowDcaEnCours   = "D2606500132;BOULANGERIE DAVID;Interrompue;DCADEMAT;K00222754624;2004B00689;453 257 263;X;VILAIN Raphael";
+    private const string RowDcaLibre     = "D2611400077;HOP3;Interrompue;DCADEMAT;G99956017322;2025B00063;938 647 203;;CASALS FLORENCE";
+    private const string RowMacLibre     = "D2611400084;MR CAVARRETTA Daniel;Interrompue;MAC;G99956017363;2024AC0047;789 610 045;;CASALS FLORENCE";
+    private const string RowJ00EnCours   = "D2608300313;Floriane PITHOUD J00227998879;Interrompue;IAC;J00227998879;;;X;VILAIN Raphael";
+    private const string RowJ00Libre     = "D2607800393;Eloise LORENZI J00226774313;Interrompue;A1_C;J00226774313;;;;COTE Elia";
+
+    [Fact]
+    public void DemandeRowMatches_dcademat_libre_matche()
+        => Assert.True(LegacyParsing.DemandeRowMatches(RowDcaLibre, dcademat: true));
+
+    [Fact]
+    public void DemandeRowMatches_dcademat_en_cours_par_moi_exclu_par_defaut()
+        // defaut (actions mutantes) : une ligne DCADEMAT deja "en cours par moi" (';X;') est ignoree.
+        => Assert.False(LegacyParsing.DemandeRowMatches(RowDcaEnCours, dcademat: true));
+
+    [Fact]
+    public void DemandeRowMatches_dcademat_en_cours_par_moi_INCLUS_en_reprise()
+        // FIX dca-interrompue : en reprise (includeMyEnCours=true) la ligne ';X;' redevient candidate
+        // (sinon 0 candidat quand les seules lignes DCADEMAT de l'alerte sont "en cours par moi" -> throw).
+        => Assert.True(LegacyParsing.DemandeRowMatches(RowDcaEnCours, dcademat: true, includeMyEnCours: true));
+
+    [Fact]
+    public void DemandeRowMatches_ligne_non_dcademat_rejetee_meme_en_reprise()
+        // une ligne MAC (autre traitement) n'est jamais une demande DCADEMAT, quel que soit le flag.
+        => Assert.False(LegacyParsing.DemandeRowMatches(RowMacLibre, dcademat: true, includeMyEnCours: true));
+
+    [Fact]
+    public void DemandeRowMatches_j00_libre_matche_en_mode_formalite()
+        => Assert.True(LegacyParsing.DemandeRowMatches(RowJ00Libre, dcademat: false));
+
+    [Fact]
+    public void DemandeRowMatches_j00_en_cours_par_moi_exclu_par_defaut()
+        => Assert.False(LegacyParsing.DemandeRowMatches(RowJ00EnCours, dcademat: false));
+
+    [Fact]
+    public void DemandeRowMatches_j00_en_cours_par_moi_INCLUS_en_reprise()
+        // FIX form-interrompue (2026-06-05) : MÊME logique de reprise que dca-interrompue, côté FORMALITÉ.
+        // GROUND TRUTH (screenshot grille « Demandes interrompues ») : TOUTES les lignes J00 de la grille
+        // portent En cours="X" (verrou de MA session) ; les seules formalités libres sont des MAC/MB1 en
+        // G999… (PAS J00). Avec includeMyEnCours=false → 0 candidat → throw « Aucune demande formalités J00 ».
+        // En reprise (includeMyEnCours=true) la ligne J00 ';X;' redevient candidate (rouvrir SA PROPRE demande
+        // interrompue n'affiche pas le verrou ; le verrou par un AUTRE user reste capté post-open).
+        => Assert.True(LegacyParsing.DemandeRowMatches(RowJ00EnCours, dcademat: false, includeMyEnCours: true));
+
+    [Fact]
+    public void DemandeRowMatches_formalite_libre_non_J00_rejetee_meme_en_reprise()
+        // Les formalités LIBRES de la grille « interrompues » sont en G999… (MAC/MB1), pas J00 : elles ne
+        // matchent JAMAIS le mode formalité (qui cible le n° de liaison INPI démat J00…), quel que soit le flag.
+        // C'est pourquoi le fix passe par includeMyEnCours (rouvrir les J00 ';X;') et NON par un élargissement
+        // de la famille (qui changerait la sémantique « Formalité Demat INPI » du scénario).
+        => Assert.False(LegacyParsing.DemandeRowMatches(RowMacLibre, dcademat: false, includeMyEnCours: true));
+
+    [Fact]
+    public void DemandeRowMatches_dcademat_pas_pris_pour_une_formalite_j00()
+        // une ligne DCADEMAT sans n° de liaison J00 ne matche PAS le mode formalite (dcademat=false).
+        => Assert.False(LegacyParsing.DemandeRowMatches(RowDcaLibre, dcademat: false));
+
+    [Theory]
+    [InlineData("DCADEMAT", true)]    // sous-chaine presente dans RowDcaEnCours, type formalite ignore
+    [InlineData("Interrompue", true)] // autre sous-chaine presente -> match (override = substring brut)
+    [InlineData("MAC", false)]        // sous-chaine ABSENTE de RowDcaEnCours -> pas de match
+    [InlineData("ZZZINTROUVABLE", false)]
+    public void DemandeRowMatches_override_est_un_substring_brut_independant_du_type(string ovr, bool expected)
+        // override (RIG_ALERTES_*) = ciblage explicite : substring, ignore le type ET le filtre ';X;'.
+        // RowDcaEnCours est une ligne DCADEMAT ';X;' ; meme avec dcademat=false, l'override decide seul.
+        => Assert.Equal(expected, LegacyParsing.DemandeRowMatches(RowDcaEnCours, dcademat: false, includeMyEnCours: false, overrideSubstring: ovr));
+
+    [Fact]
+    public void DemandeRowMatches_override_matche_meme_une_ligne_en_cours()
+        // l'override prime aussi sur le filtre ';X;' (la ligne RowDcaEnCours porte ';X;').
+        => Assert.True(LegacyParsing.DemandeRowMatches(RowDcaEnCours, dcademat: true, includeMyEnCours: false, overrideSubstring: "BOULANGERIE"));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void DemandeRowMatches_vide_ou_blanc_retourne_false(string row)
+        => Assert.False(LegacyParsing.DemandeRowMatches(row, dcademat: true, includeMyEnCours: true));
+
+    // ── VERROU-AUTRUI : ExtractEnCoursColumn / ExtractUtilisateurColumn / CurrentUserSurname / IsLockedByOtherUser + DemandeRowMatches(currentUserToken) ──
+    // CONTEXTE + CORRECTIF 2026-06-05 (régression form-validation/reclamation/refus) :
+    //   Le Name MSAA d'une LIGNE = colonnes concaténées par ';', « En cours » = AVANT-DERNIER token,
+    //   « Utilisateur » = DERNIER token. Le VRAI verrou = « En cours »=X ; la colonne Utilisateur SEULE est le
+    //   PROPRIÉTAIRE/créateur, PAS un verrou. ⚠ Une version précédente d'IsLockedByOtherUser excluait une demande
+    //   dès que Utilisateur != moi (sans exiger « En cours »=X) → elle sautait à tort les demandes formalité
+    //   LIBRES créées par d'autres users (form-validation/reclamation/refus) → 0 candidat → FAIL. Prédicat
+    //   corrigé : verrou-autrui = (« En cours »=X) ET (Utilisateur != moi) ; une demande LIBRE (« En cours »
+    //   vide) reste TOUJOURS candidate, quel que soit son propriétaire. Rouvrir une demande RÉELLEMENT
+    //   verrouillée par un autre user ne produit aucun signal d'ouverture → on la saute AVANT l'ouverture.
+
+    // Lignes RÉELLES (format MSAA complet, 13 colonnes avec placeholders "(null)") tirées des logs.
+    // ⚠ Ces 2 lignes J00 ont « En cours »=(null) (avant-dernier token) = demande LIBRE (verrou = colonne
+    //   « En cours », PAS la colonne Utilisateur) → NI l'une NI l'autre n'est verrouillée-autrui. Les cas
+    //   verrouillés J00 portent « En cours »=X : voir RealRowJ00_*_EnCoursX plus bas.
+    private const string RealRowJ00_Cote_Libre   = "Ligne 3 D2608300313;Floriane PITHOUD J00227998879;Interrompue;IAC;(null);(null);J00227998879;(null);(null);24/03/2026 10:30:12;(null);(null);COTE Elia";
+    private const string RealRowJ00_Vilain_Libre = "Ligne 3 D2608300313;Floriane PITHOUD J00227998879;Interrompue;IAC;(null);(null);J00227998879;(null);(null);24/03/2026 10:30:12;(null);(null);VILAIN Raphel";
+    private const string RealRowDca_Vilain = "Ligne 5 D2608301642;LOCODAN (31/12/2025);Réclamation;DCADEMAT;(null);(null);K00227707569;2022B00899;912 245 776;24/03/2026 21:00:07;(null);X;VILAIN Raphel";
+    private const string RealRowDca_AmiSvc = "Ligne 0 D2608301630;SILA MDB 3182481 K00228250320 (31/12/2024);Qualifiée;DCADEMAT;(null);(null);K00228250320;2025B01074;903 186 427;24/03/2026 18:30:14;(null);X;AMISERVICE AMISERVICE";
+
+    [Theory]
+    [InlineData(RealRowJ00_Cote_Libre, "COTE Elia")]
+    [InlineData(RealRowJ00_Vilain_Libre, "VILAIN Raphel")]
+    [InlineData(RealRowDca_Vilain, "VILAIN Raphel")]
+    [InlineData(RealRowDca_AmiSvc, "AMISERVICE AMISERVICE")]
+    [InlineData("D2611400077;HOP3;Interrompue;DCADEMAT;G99956017322;2025B00063;938 647 203;;CASALS FLORENCE", "CASALS FLORENCE")] // En cours vide (token vide avant Utilisateur)
+    [InlineData("a;b;  Jean DUPONT  ", "Jean DUPONT")]   // trim des blancs de bord
+    public void ExtractUtilisateurColumn_dernier_token_est_l_utilisateur(string row, string expected)
+        => Assert.Equal(expected, LegacyParsing.ExtractUtilisateurColumn(row));
+
+    // ── ExtractEnCoursColumn : colonne « En cours » = AVANT-DERNIER token (le VRAI verrou) ──
+    [Theory]
+    [InlineData(RealRowDca_Vilain, "X")]                 // "...;(null);X;VILAIN Raphel" → avant-dernier = X
+    [InlineData(RealRowDca_AmiSvc, "X")]                 // "...;(null);X;AMISERVICE..." → X
+    [InlineData(RealRowJ00_Cote_Libre, "")]              // "...;(null);(null);COTE Elia" → avant-dernier (null) → vide = LIBRE
+    [InlineData(RealRowJ00_Vilain_Libre, "")]            // idem → vide = LIBRE
+    [InlineData("D2611400077;HOP3;Interrompue;DCADEMAT;G99956017322;2025B00063;938 647 203;;CASALS FLORENCE", "")] // ";;CASALS" → token vide = LIBRE
+    [InlineData("a;X;Jean DUPONT", "X")]                 // avant-dernier explicite
+    [InlineData("SoloName", "")]                          // pas de ';' → pas de colonne avant-derniere
+    [InlineData("", "")]
+    [InlineData(null, "")]
+    public void ExtractEnCoursColumn_avant_dernier_token_est_le_verrou(string row, string expected)
+        => Assert.Equal(expected, LegacyParsing.ExtractEnCoursColumn(row));
+
+    [Theory]
+    [InlineData("a;b;c;(null)")]        // "(null)" = cellule vide WinForms -> proprietaire vide
+    [InlineData("a;b;c;  (null)  ")]    // avec blancs
+    [InlineData("(NULL)")]               // insensible a la casse
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void ExtractUtilisateurColumn_null_ou_placeholder_retourne_vide(string row)
+        => Assert.Equal("", LegacyParsing.ExtractUtilisateurColumn(row));
+
+    [Fact]
+    public void ExtractUtilisateurColumn_ligne_sans_point_virgule_retourne_le_trim()
+        // pas de ';' -> toute la chaine est le "dernier token".
+        => Assert.Equal("SoloName", LegacyParsing.ExtractUtilisateurColumn("  SoloName  "));
+
+    [Theory]
+    [InlineData("raphael.vilain", "vilain")]          // session Windows réelle de l'utilisateur
+    [InlineData("DOMAINE\\jdupont", "jdupont")]       // forme DOMAINE\login
+    [InlineData("corp/abigaud", "abigaud")]            // séparateur '/'
+    [InlineData("Jean Dupont", "Dupont")]              // prénom nom séparés par espace
+    [InlineData("vilain", "vilain")]                   // déjà un seul segment
+    [InlineData("  raphael.vilain  ", "vilain")]       // trim
+    public void CurrentUserSurname_prend_le_dernier_segment(string userName, string expected)
+        => Assert.Equal(expected, LegacyParsing.CurrentUserSurname(userName));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void CurrentUserSurname_vide_retourne_vide(string userName)
+        => Assert.Equal("", LegacyParsing.CurrentUserSurname(userName));
+
+    [Fact]
+    public void IsLockedByOtherUser_J00_LIBRE_owned_by_other_n_est_PAS_verrouillee()
+        // ⚠ CORRECTIF : la formalité J00 LIBRE (« En cours » vide) détenue par "COTE Elia" n'est PAS
+        //   verrouillée-autrui (propriétaire ≠ verrou). Elle reste ouvrable → NON sautée.
+        => Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowJ00_Cote_Libre, "vilain"));
+
+    [Fact]
+    public void IsLockedByOtherUser_J00_LIBRE_mienne_n_est_pas_verrouillee()
+        // MÊME ligne LIBRE mais Utilisateur="VILAIN Raphel" (moi) -> évidemment pas un verrou-autrui.
+        => Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowJ00_Vilain_Libre, "vilain"));
+
+    [Fact]
+    public void IsLockedByOtherUser_DCADEMAT_en_cours_X_par_AMISERVICE_est_verrouillee_pour_vilain()
+        // « En cours »=X (avant-dernier token) + Utilisateur="AMISERVICE" ≠ moi -> verrou-autrui réel.
+        => Assert.True(LegacyParsing.IsLockedByOtherUser(RealRowDca_AmiSvc, "vilain"));
+
+    [Fact]
+    public void IsLockedByOtherUser_DCADEMAT_en_cours_X_mienne_n_est_pas_verrouillee()
+        // « En cours »=X mais owner=VILAIN (moi) -> verrou self, PAS un verrou-autrui.
+        => Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowDca_Vilain, "vilain"));
+
+    [Theory]
+    [InlineData("vilain")]                 // surname seul (ce que CurrentUserSurname renvoie)
+    [InlineData("VILAIN")]                 // casse haute -> match (comparaison sans casse)
+    [InlineData("Vilain")]                 // casse mixte
+    public void IsLockedByOtherUser_match_insensible_a_la_casse(string token)
+        // Ligne DCADEMAT « En cours »=X owner="VILAIN Raphel" : contient le token surname (quelle que soit
+        //   sa casse) -> verrou self, PAS un verrou-autrui (false).
+        // ⚠ Le helper attend le TOKEN surname (déjà extrait par CurrentUserSurname) — PAS le UserName brut
+        //   "raphael.vilain" (qui contient un point et "raphael"≠"raphel"). Le driver passe toujours
+        //   CurrentUserSurname(Environment.UserName), cf. test ci-dessous.
+        => Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowDca_Vilain, token));
+
+    [Fact]
+    public void IsLockedByOtherUser_pipeline_complet_depuis_le_UserName_session()
+    {
+        // Chaîne réelle utilisée par le driver : Environment.UserName "raphael.vilain" -> surname "vilain".
+        //   Verrou = « En cours »=X + owner ≠ moi. DCADEMAT « En cours »=X mienne (VILAIN) = self → libre ;
+        //   DCADEMAT « En cours »=X d'un autre (AMISERVICE) = verrou-autrui. Une J00 LIBRE owned-by-other (COTE)
+        //   N'est PAS un verrou (propriétaire ≠ verrou).
+        var me = LegacyParsing.CurrentUserSurname("raphael.vilain");   // "vilain"
+        Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowDca_Vilain, me));        // ma demande en cours
+        Assert.True(LegacyParsing.IsLockedByOtherUser(RealRowDca_AmiSvc, me));         // en cours par AMISERVICE
+        Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowJ00_Cote_Libre, me));    // LIBRE owned-by-COTE -> ouvrable
+    }
+
+    [Fact]
+    public void IsLockedByOtherUser_colonne_utilisateur_vide_est_libre()
+        // Utilisateur="(null)" -> demande LIBRE -> jamais un verrou (quel que soit le user courant),
+        //   et de toute façon « En cours » vide ici.
+        => Assert.False(LegacyParsing.IsLockedByOtherUser("a;b;c;(null)", "vilain"));
+
+    [Fact]
+    public void IsLockedByOtherUser_en_cours_X_owner_vide_n_est_pas_verrou_autrui()
+        // « En cours »=X mais colonne Utilisateur vide ("(null)") = verrou ORPHELIN, pas un AUTRE user
+        //   identifié -> false ici (c'est un self-lock levable, cf. IsMyEnCoursSelfLock).
+        => Assert.False(LegacyParsing.IsLockedByOtherUser("a;b;c;X;(null)", "vilain"));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void IsLockedByOtherUser_token_courant_absent_desactive_le_filtre(string token)
+        // RETRO-COMPATIBILITE : sans identité courante, on ne saute JAMAIS une ligne (filtre inactif) —
+        //   même une vraie « En cours »=X owned-by-other (DCADEMAT AMISERVICE).
+        => Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowDca_AmiSvc, token));
+
+    [Fact]
+    public void DemandeRowMatches_J00_LIBRE_owned_by_other_RESTE_candidate_en_reprise()
+        // ⚠ LE TEST QUI AURAIT ATTRAPÉ LA RÉGRESSION : une formalité J00 LIBRE (« En cours » vide) créée par
+        //   "COTE Elia" reste CANDIDATE en reprise quand je suis "vilain" (propriétaire ≠ verrou ; ouvrable).
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowJ00_Cote_Libre, dcademat: false, includeMyEnCours: true, currentUserToken: "vilain"));
+
+    [Fact]
+    public void DemandeRowMatches_J00_LIBRE_mienne_reste_candidate_en_reprise()
+        // MÊME ligne LIBRE mais Utilisateur=moi -> candidate retenue.
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowJ00_Vilain_Libre, dcademat: false, includeMyEnCours: true, currentUserToken: "vilain"));
+
+    [Fact]
+    public void DemandeRowMatches_J00_LIBRE_owned_by_other_candidate_aussi_pour_action_mutante()
+        // ⚠ CŒUR DE LA RÉGRESSION form-validation/reclamation/refus (includeMyEnCours=false, actions mutantes) :
+        //   une formalité J00 LIBRE créée par un AUTRE user DOIT rester candidate (ne PLUS être exclue au seul
+        //   motif que le propriétaire ≠ moi). C'est exactement ce que l'ancien IsLockedByOtherUser cassait.
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowJ00_Cote_Libre, dcademat: false, includeMyEnCours: false, currentUserToken: "vilain"));
+
+    [Fact]
+    public void DemandeRowMatches_J00_LIBRE_owned_by_other_sans_token_reste_candidate_retrocompat()
+        // Sans currentUserToken (appel historique) le filtre verrou-autrui est inactif -> comportement INCHANGÉ.
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowJ00_Cote_Libre, dcademat: false, includeMyEnCours: true));
+
+    [Fact]
+    public void DemandeRowMatches_DCADEMAT_en_cours_X_autrui_exclue_meme_pour_action_mutante()
+        // Le skip verrou-autrui s'applique AUSSI hors reprise (includeMyEnCours=false) : ne pas tenter une
+        //   DCADEMAT RÉELLEMENT verrouillée (« En cours »=X) détenue par "AMISERVICE" -> false.
+        => Assert.False(LegacyParsing.DemandeRowMatches(RealRowDca_AmiSvc, dcademat: true, includeMyEnCours: false, currentUserToken: "vilain"));
+
+    [Fact]
+    public void DemandeRowMatches_override_prime_sur_le_filtre_verrou_autrui()
+        // l'override (ciblage explicite RIG_ALERTES_*) prime sur TOUT, y compris le verrou-autrui (ici une
+        //   vraie DCADEMAT « En cours »=X owned-by-other reste sélectionnable par l'override).
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowDca_AmiSvc, dcademat: false, includeMyEnCours: false,
+            overrideSubstring: "SILA MDB", currentUserToken: "vilain"));
+
+    // ── VERROU SELF « En cours »=X : IsMyEnCoursSelfLock + garde modale IsDejaEnCoursGuard ──
+    // GROUND TRUTH (resolver #2, 2026-06-05) PROUVÉ par SQL RIG_DEV + RIG source + screenshot 11:16 :
+    //   Les 10 formalités J00 interrompues portent TOUTES DMND_EN_COURS=1 (colonne grille « En cours »=X,
+    //   owner=VILAIN = verrou self stale d'un run smoke précédent). RIG _ReprendreProcessus refuse de rouvrir
+    //   une demande en cours (DialogBox « déjà en cours d'exécution » AVANT le dispatch CODE_PROSS) → le
+    //   double-clic n'ouvre rien. C'est la CAUSE RÉELLE du FAIL form-interrompue. Le mécanisme de reprise =
+    //   lever le verrou via le menu « Supprimer l'état en cours » (DMND_EN_COURS=0) PUIS rouvrir — geste
+    //   gardé (écriture SQL, env RIG_LEGACY_CLEAR_MY_ENCOURS). dca-interrompue passe car DCADEMAT a 1
+    //   candidate EN_COURS=0 ; les formalités n'en ont AUCUNE.
+    // ⚠ Les fixtures RealRowJ00_*_Libre ci-dessus (sans ';X;', « En cours » vide) représentent des demandes
+    //   J00 LIBRES (ouvrables) — y compris owned-by-other (COTE) : elles servent à VERROUILLER la non-régression
+    //   « libre owned-by-other => candidate » (cœur du correctif 2026-06-05). Les fixtures J00 RÉELLEMENT
+    //   verrouillées (« En cours »=X) sont ci-dessous (RealRowJ00_*_EnCoursX).
+    private const string RealRowJ00_Vilain_EnCoursX = "Ligne 3 D2608300313;Floriane PITHOUD J00227998879;Interrompue;IAC;(null);(null);J00227998879;(null);(null);24/03/2026 10:30:12;(null);X;VILAIN Raphel";
+    private const string RealRowJ00_Cote_EnCoursX   = "Ligne 7 D2607800393;Eloise LORENZI J00226774313;Interrompue;A1_C;(null);(null);J00226774313;(null);(null);19/03/2026 10:45:37;(null);X;COTE Elia";
+    private const string RealRowDca_Vilain_Libre    = "Ligne 9 D2606101501;SARL CENTRE DE PRESERVATION;Interrompue;DCADEMAT;(null);(null);K00213675804;2024B00842;924 967 391;02/03/2026 19:15:04;(null);(null);VILAIN Raphel";
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_ligne_en_cours_X_mienne_est_un_verrou_self_levable()
+        // La formalité interrompue D2608300313 (IAC) porte « En cours »=X et owner=VILAIN (moi) = verrou self
+        // stale → levable par moi via « Supprimer l'état en cours ». C'est le cas RÉEL du screenshot 11:16.
+        => Assert.True(LegacyParsing.IsMyEnCoursSelfLock(RealRowJ00_Vilain_EnCoursX, "vilain"));
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_ligne_en_cours_X_dun_autre_user_nest_pas_self()
+        // « En cours »=X mais owner=COTE Elia → ce n'est pas MON verrou → je ne le réclame pas (false).
+        => Assert.False(LegacyParsing.IsMyEnCoursSelfLock(RealRowJ00_Cote_EnCoursX, "vilain"));
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_ligne_sans_X_nest_pas_un_verrou_en_cours()
+        // Pas de « En cours »=X (DCADEMAT libre EN_COURS=0) → pas un verrou self, même si owner=moi.
+        => Assert.False(LegacyParsing.IsMyEnCoursSelfLock(RealRowDca_Vilain_Libre, "vilain"));
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_verrou_X_orphelin_owner_vide_est_levable()
+        // « En cours »=X avec colonne Utilisateur vide ("(null)") = verrou orphelin → levable par moi (true).
+        => Assert.True(LegacyParsing.IsMyEnCoursSelfLock("D2;X owner vide;Interrompue;IAC;J00227998879;;;X;(null)", "vilain"));
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_token_courant_absent_ne_reclame_pas_un_owner_non_vide()
+        // Identité inconnue + owner non vide → on ne réclame pas le verrou (false, prudence).
+        => Assert.False(LegacyParsing.IsMyEnCoursSelfLock(RealRowJ00_Vilain_EnCoursX, ""));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData(null)]
+    public void IsMyEnCoursSelfLock_vide_retourne_false(string row)
+        => Assert.False(LegacyParsing.IsMyEnCoursSelfLock(row, "vilain"));
+
+    [Fact]
+    public void IsMyEnCoursSelfLock_et_IsLockedByOtherUser_sont_complementaires_sur_X_autrui()
+    {
+        // Une ligne « En cours »=X détenue par un AUTRE = verrou-autrui (true) ET PAS un self-lock (false).
+        Assert.True(LegacyParsing.IsLockedByOtherUser(RealRowJ00_Cote_EnCoursX, "vilain"));
+        Assert.False(LegacyParsing.IsMyEnCoursSelfLock(RealRowJ00_Cote_EnCoursX, "vilain"));
+        // Une ligne « En cours »=X mienne = self-lock (true) ET PAS un verrou-autrui (false).
+        Assert.True(LegacyParsing.IsMyEnCoursSelfLock(RealRowJ00_Vilain_EnCoursX, "vilain"));
+        Assert.False(LegacyParsing.IsLockedByOtherUser(RealRowJ00_Vilain_EnCoursX, "vilain"));
+    }
+
+    [Fact]
+    public void DemandeRowMatches_J00_mienne_en_cours_X_reste_candidate_en_reprise()
+        // En reprise, la formalité J00 MIENNE « En cours »=X reste candidate (on tentera de lever le verrou
+        // self). Le filtre ';X;' est désactivé par includeMyEnCours=true ; owner=moi → pas de skip verrou-autrui.
+        => Assert.True(LegacyParsing.DemandeRowMatches(RealRowJ00_Vilain_EnCoursX, dcademat: false, includeMyEnCours: true, currentUserToken: "vilain"));
+
+    [Fact]
+    public void DemandeRowMatches_J00_en_cours_X_autrui_exclue_en_reprise()
+        // En reprise, la formalité J00 « En cours »=X d'un AUTRE est SAUTÉE pré-open (verrou-autrui, owner=COTE).
+        => Assert.False(LegacyParsing.DemandeRowMatches(RealRowJ00_Cote_EnCoursX, dcademat: false, includeMyEnCours: true, currentUserToken: "vilain"));
+
+    [Theory]
+    // Garde modale RIG « Vous ne pouvez pas traiter une demande qui est déjà en cours d'exécution… »
+    [InlineData("Vous ne pouvez pas traiter une demande qui est déjà en cours d'exécution.")]
+    [InlineData("vous ne pouvez pas traiter une demande qui est deja en cours d'execution")] // accents absents (restitution UIA)
+    [InlineData("Erreur — Vous ne pouvez pas traiter une demande qui est déjà en cours d'exécution par l'utilisateur VILAIN Raphel.")]
+    [InlineData("...déjà... ...traiter... ...en cours d'exécution...")] // fragmenté/agrégé
+    public void IsDejaEnCoursGuard_message_reconnu(string text)
+        => Assert.True(LegacyParsing.IsDejaEnCoursGuard(text));
+
+    [Theory]
+    [InlineData("Configurer le dépôt")]                                   // formulaire ouvert = pas la garde
+    [InlineData("Une demande est en cours sur ce dossier — D2608200352")] // verrou-autrui DCADEMAT (autre message)
+    [InlineData("Traitement en cours...")]                                // overlay de chargement, pas la garde
+    [InlineData("")]
+    [InlineData(null)]
+    public void IsDejaEnCoursGuard_hors_garde_rejete(string text)
+        => Assert.False(LegacyParsing.IsDejaEnCoursGuard(text));
+
+    [Fact]
+    public void IsDejaEnCoursGuard_disjoint_du_verrou_autrui_DCADEMAT_et_de_loverlay()
+    {
+        // Les 3 messages « en cours » sont distincts : garde reprise (déjà en cours d'exécution),
+        // verrou-autrui dossier (en cours sur ce dossier), overlay (traitement en cours) — pas de confusion.
+        string garde   = "Vous ne pouvez pas traiter une demande qui est déjà en cours d'exécution.";
+        string dossier = "Une demande est en cours sur ce dossier — D2608200352 par RIGAPP23/julien.fontrier";
+        string overlay = "Veuillez patienter... Traitement en cours...";
+        Assert.True(LegacyParsing.IsDejaEnCoursGuard(garde));
+        Assert.False(LegacyParsing.IsDossierLocked(garde));
+        Assert.False(LegacyParsing.IsLoadingOverlay(garde));
+        Assert.False(LegacyParsing.IsDejaEnCoursGuard(dossier));
+        Assert.False(LegacyParsing.IsDejaEnCoursGuard(overlay));
+    }
+
     // ── IsLoadingOverlay : overlay "Veuillez patienter / Traitement en cours" ──
 
     [Theory]
@@ -264,6 +633,44 @@ public class LegacyParsingTests
         Assert.False(LegacyParsing.IsLoadingOverlay(verrou));
         Assert.True(LegacyParsing.IsLoadingOverlay(overlay));
         Assert.False(LegacyParsing.IsDossierLocked(overlay));
+    }
+
+    // ── ShouldKeepWaitingForGrid : prolonger l'attente de la grille TANT QUE RIG charge encore ──
+    // Cause racine du flap form-validation (run 17:29, STAMP 171521) : la grille des demandes n'est
+    // pas apparue dans le budget de WaitForDemandeGrid alors que l'ecran affichait encore l'overlay
+    // « Veuillez patienter / Traitement en cours » -> throw timing-race. Ce helper rend l'attente
+    // DETERMINISTE : on ne renonce PAS tant que l'overlay de chargement est present (la grille arrive),
+    // jusqu'a un plafond dur ; sans overlay (= RIG fige/plante, pas en chargement) on s'arrete.
+
+    [Fact]
+    public void ShouldKeepWaitingForGrid_prolonge_si_overlay_present_et_sous_plafond()
+        // budget de base epuise MAIS RIG charge encore (overlay) ET on est sous le plafond dur -> on attend.
+        => Assert.True(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 9000, baseMaxMs: 8000, hardCapMs: 45000, overlayPresent: true));
+
+    [Fact]
+    public void ShouldKeepWaitingForGrid_arrete_si_pas_overlay()
+        // budget de base epuise et PLUS d'overlay (RIG ne charge plus = vrai blocage/plante) -> on s'arrete.
+        => Assert.False(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 9000, baseMaxMs: 8000, hardCapMs: 45000, overlayPresent: false));
+
+    [Fact]
+    public void ShouldKeepWaitingForGrid_arrete_au_plafond_dur_meme_si_overlay()
+        // garde-fou anti-attente-infinie : meme overlay present, au-dela du plafond dur on s'arrete (throw).
+        => Assert.False(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 45000, baseMaxMs: 8000, hardCapMs: 45000, overlayPresent: true));
+
+    [Fact]
+    public void ShouldKeepWaitingForGrid_pas_de_prolongation_avant_epuisement_du_budget_de_base()
+        // avant la fin du budget de base, la boucle normale tourne deja -> ce helper ne s'applique pas (false).
+        => Assert.False(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 3000, baseMaxMs: 8000, hardCapMs: 45000, overlayPresent: true));
+
+    [Fact]
+    public void ShouldKeepWaitingForGrid_fac_simile_run_17h29_overlay_a_18s_prolonge()
+    {
+        // Reproduction du flap : apres le budget cumule 8s+10s=18s, l'ecran a TOUJOURS l'overlay
+        // (dump du log : pnlIconsForm « Veuillez patienter... Traitement en cours... ») -> on prolonge
+        // au lieu de throw. Le run 17:04 (succes) trouvait la grille a ~6,4s, donc << plafond.
+        Assert.True(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 18000, baseMaxMs: 18000, hardCapMs: 45000, overlayPresent: true));
+        // Sans overlay au meme instant (grille jamais demandee / autre ecran fige) -> pas de prolongation.
+        Assert.False(LegacyParsing.ShouldKeepWaitingForGrid(elapsedMs: 18000, baseMaxMs: 18000, hardCapMs: 45000, overlayPresent: false));
     }
 
     // ── MotifAlreadySelected : le combo affiche-t-il deja le motif voulu ? (combo RCS lazy) ──
@@ -419,4 +826,413 @@ public class LegacyParsingTests
     [InlineData(null)]
     public void ParseLigneIndex_sans_motif_ou_ligne_0_retourne_moins_un(string name)
         => Assert.Equal(-1, LegacyParsing.ParseLigneIndex(name));
+
+    // ── ShouldAcceptDepotViaEditionsScreen : signal de succes de repli pour la validation DCADEMAT ──
+    // CONTEXTE : « Valider » cree le depot puis navigue vers « Tableau des editions » ; la grille
+    // Exercices n'est alors plus lisible -> aucun n° relu, mais le depot EXISTE. Le passage a l'ecran
+    // editions (+ Valider clique) = preuve de succes. N'est consulte QUE si aucun n° n'a ete relu.
+
+    [Fact]
+    public void ShouldAcceptDepot_via_editions_quand_pas_de_numero_mais_valider_clique_et_ecran_editions()
+        => Assert.True(LegacyParsing.ShouldAcceptDepotViaEditionsScreen(
+            numDemandeFound: false, validerWasClicked: true, editionsScreenAfter: true));
+
+    [Fact]
+    public void ShouldAcceptDepot_false_si_un_numero_a_ete_relu()
+        // Un n° relu => succes deja prouve par le chemin nominal ; pas besoin du repli.
+        => Assert.False(LegacyParsing.ShouldAcceptDepotViaEditionsScreen(
+            numDemandeFound: true, validerWasClicked: true, editionsScreenAfter: true));
+
+    [Fact]
+    public void ShouldAcceptDepot_false_si_valider_pas_clique()
+        // Pas de clic Valider (no-op) => on ne doit pas conclure au succes meme si l'ecran editions est la.
+        => Assert.False(LegacyParsing.ShouldAcceptDepotViaEditionsScreen(
+            numDemandeFound: false, validerWasClicked: false, editionsScreenAfter: true));
+
+    [Fact]
+    public void ShouldAcceptDepot_false_si_pas_ecran_editions()
+        // Ni n°, ni ecran editions => vrai echec : la validation n'a pas abouti.
+        => Assert.False(LegacyParsing.ShouldAcceptDepotViaEditionsScreen(
+            numDemandeFound: false, validerWasClicked: true, editionsScreenAfter: false));
+
+    // ── IsAlreadyReclamee : la demande de reclamation ouverte est-elle deja reclamee (terminal atteint) ? ──
+    // CONTEXTE : l'alerte « Demandes en reclamations > 15 jours » contient des demandes deja reclamees ;
+    // leur combo « Type de motif » est vide/verrouille alors qu'un motif est deja pose. C'est le terminal
+    // metier (demande en reclamation), pas un echec. Filet etroit : combo vide ET valeur deja presente.
+
+    [Theory]
+    [InlineData("9LIB")]                         // cas reel run live (screenshot 2084) : motif libre deja pose
+    [InlineData("INPMANQ - Piece manquante")]    // motif code deja pose
+    [InlineData("  9LIB  ")]                       // espaces autour -> non vide apres trim
+    public void IsAlreadyReclamee_vrai_quand_combo_vide_et_motif_deja_pose(string current)
+        => Assert.True(LegacyParsing.IsAlreadyReclamee(comboItemCount: 0, currentMotifValue: current));
+
+    [Theory]
+    [InlineData(0, "")]        // combo vide MAIS aucune valeur posee -> vrai ecran vide / mauvais etat -> echec garde
+    [InlineData(0, "   ")]     // valeur blanche = vide apres trim
+    [InlineData(0, null)]      // pas de valeur
+    [InlineData(5, "9LIB")]    // combo a des items -> on PEUT choisir -> pas « deja verrouille » -> false
+    [InlineData(1, "INPMANQ")] // au moins 1 item selectionnable -> false
+    [InlineData(3, "")]        // items presents + pas de valeur -> chemin nominal de selection -> false
+    public void IsAlreadyReclamee_faux_si_combo_a_des_items_ou_aucun_motif_pose(int count, string current)
+        => Assert.False(LegacyParsing.IsAlreadyReclamee(count, current));
+
+    // ── IsDemandeDejaReclamee : detection par le TEXTE de l'ecran (independante du combo) ──────────────
+    // CONTEXTE (run live 2026-06-04, run 17:04, screenshot dca-reclamation-FAIL-170431) : variant ou le combo
+    // « Type de motif » est PEUPLE (INPMANQ deja selectionne) mais la demande est DEJA reclamee — non capte
+    // par IsAlreadyReclamee (qui exige combo vide). Signal robuste = « Etat Demande = N - Reclamation » et/ou
+    // commentaire « reclamation en cours n° D... ». Discrimination : ne PAS sur-declencher sur une demande EN
+    // ATTENTE (l'ecran contient TOUJOURS le titre « Reclamation / Refus » + bouton « Reclamer »).
+
+    [Theory]
+    // (B) etat « N - Reclamation » (avec/sans accents, espacement variable autour du tiret).
+    [InlineData("Evenement attendu PDCA Traitement Etat Demande N - Reclamation Reception")]
+    [InlineData("etat demande n - reclamation")]                 // minuscule, sans accent
+    [InlineData("Etat Demande  N  -  Réclamation")]              // espacement large + accent
+    // (A) commentaire « reclamation en cours n° D... le ... » (grille Exercices).
+    [InlineData("Date de cloture 30/06/2025 commentaire reclamation en cours n° D2608301551 le 27/04/2026")]
+    [InlineData("RECLAMATION EN COURS")]                          // casse haute
+    // Cas reel complet (texte agrege facsimile du screenshot 170431 : titre section + bouton + etat + commentaire).
+    [InlineData("Reclamation / Refus Evenement attendu PDCA - Piece manquante DCA Etat Demande N - Reclamation "
+        + "Type de motif INPMANQ - Piece manquante Motif Pieces manquantes Reclamer Refuser "
+        + "reclamation en cours n° D2608301551 le 27/04/2026")]
+    public void IsDemandeDejaReclamee_vrai_sur_etat_N_ou_commentaire_en_cours(string agg)
+        => Assert.True(LegacyParsing.IsDemandeDejaReclamee(agg));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    // ⚠ DISCRIMINATION : l'ecran d'une demande EN ATTENTE (non encore reclamee) contient le titre de section
+    //   « Reclamation / Refus » + le bouton « Reclamer » + le label « Type de motif » -> NE DOIT PAS matcher
+    //   (sinon on conclurait « deja reclamee » a tort et on sauterait la vraie 1re mise en reclamation).
+    [InlineData("Reclamation / Refus Evenement attendu PDCA Type de motif Motif Reclamer Refuser Surenu")]
+    [InlineData("Reclamation / Refus  Reclamer  Refuser")]       // titre + boutons seuls
+    [InlineData("Configurer le depot Exercices DCA Valider Interrompre Verifier Quitter")] // ecran depot, pas reclamation
+    [InlineData("Etat Demande A - Attente de pieces")]            // etat « A » (en attente) -> pas N-reclamation
+    public void IsDemandeDejaReclamee_faux_sur_demande_en_attente_ou_texte_vide(string agg)
+        => Assert.False(LegacyParsing.IsDemandeDejaReclamee(agg));
+
+    // ── IsReclamationActionTerminalOk : verdict du step terminal ALERTES rec-form / rec-dca ──────────────
+    // CONTEXTE (run live 2026-06-04, run 18:04, stdout legacy-20260604-180417 + screenshots FAIL 180306/180411) :
+    // le clic-droit OUVRE le menu (VK_APPS) et l'item « Reprendre les impressions » / « Lancer le pool d'editions »
+    // est TROUVE puis CLIQUE (action metier declenchee), MAIS l'apercu avant impression (courrier/lettre, rendu
+    // par composition DWM type AcroPDF) ne peint sur RIEN de detectable sur le HDESK non compose (mur partie b).
+    // POLITIQUE (alignee sur RefuserDemande / ReclamerDcaAvecMotif) : terminal-OK SSI item clique ET RIG vivant ;
+    // l'apercu detecte est un bonus non requis. FAIL seulement si l'item n'a pas ete clique OU si RIG a crashe.
+
+    [Theory]
+    // Item clique + RIG vivant = OK, que l'apercu soit detecte (Mode A/C, desktop compose) ou non (mur HDESK b).
+    [InlineData(true, true, true)]   // cas nominal Mode A/C : apercu peint -> OK
+    [InlineData(true, true, false)]  // cas reel HDESK Mode B (run 18:04) : apercu non peint -> terminal-OK gracieux
+    public void IsReclamationActionTerminalOk_vrai_si_item_clique_et_rig_vivant(bool clicked, bool alive, bool preview)
+        => Assert.True(LegacyParsing.IsReclamationActionTerminalOk(clicked, alive, preview));
+
+    [Theory]
+    // RIG a crashe apres l'action = vrai echec dur (EnsureRigStillAlive aurait throw cote driver) -> FAIL.
+    [InlineData(true, false, false)]
+    [InlineData(true, false, true)]
+    // Item PAS clique (menu non ouvert / item introuvable) = pas d'action declenchee -> FAIL (le driver throw
+    // deja en amont sur ces cas ; on encode la politique pour qu'elle reste FAIL si elle est jamais sollicitee).
+    [InlineData(false, true, false)]
+    [InlineData(false, true, true)]
+    [InlineData(false, false, false)]
+    public void IsReclamationActionTerminalOk_faux_si_pas_clique_ou_rig_mort(bool clicked, bool alive, bool preview)
+        => Assert.False(LegacyParsing.IsReclamationActionTerminalOk(clicked, alive, preview));
+
+    // ── RETRY-on-transient (DCADEMAT / ALERTES) : politique + verdict + textes de log ─────────
+    // Sous Mode B (HDESK isole, 2 workers concurrents), RIG est lent et un scenario aleatoire FAIL
+    // parfois (contention/timeout environnemental) alors que les vrais modes d'echec sont corriges.
+    // Politique : un worker en echec (exit != 0) est relance UNE seule fois ; 2e essai vert -> flap
+    // absorbe (OK) ; 2e essai rouge -> echec confirme (vrai bug). Un worker OK du 1er coup (exit 0)
+    // n'est JAMAIS relance.
+
+    [Fact]
+    public void ShouldRetryAfterExit_exit_non_nul_declenche_le_retry()
+        => Assert.True(LegacyParsing.ShouldRetryAfterExit(1));
+
+    [Theory]
+    [InlineData(2)]
+    [InlineData(255)]
+    [InlineData(-1)]
+    public void ShouldRetryAfterExit_tout_exit_non_nul_declenche_le_retry(int exit)
+        => Assert.True(LegacyParsing.ShouldRetryAfterExit(exit));
+
+    [Fact]
+    public void ShouldRetryAfterExit_exit0_ne_relance_jamais()
+        // INVARIANT CLE : les passes-du-1er-coup ne sont JAMAIS relancees (zero surcout, zero regression).
+        => Assert.False(LegacyParsing.ShouldRetryAfterExit(0));
+
+    [Fact]
+    public void FinalExitAfterRetry_succes_au_1er_coup_ignore_le_2e_essai()
+        // exit1 == 0 -> pas de retry : le retryExit (ici volontairement != 0) est IGNORE, verdict reste 0.
+        => Assert.Equal(0, LegacyParsing.FinalExitAfterRetry(firstExitCode: 0, retryExitCode: 1));
+
+    [Fact]
+    public void FinalExitAfterRetry_flap_absorbe_le_2e_essai_passe()
+        // exit1 != 0 puis exit2 == 0 -> verdict final = 0 (flap transitoire absorbe).
+        => Assert.Equal(0, LegacyParsing.FinalExitAfterRetry(firstExitCode: 1, retryExitCode: 0));
+
+    [Fact]
+    public void FinalExitAfterRetry_echec_confirme_le_2e_essai_echoue_aussi()
+        // exit1 != 0 et exit2 != 0 -> verdict final = exit2 (echec confirme, vrai bug).
+        => Assert.Equal(1, LegacyParsing.FinalExitAfterRetry(firstExitCode: 1, retryExitCode: 1));
+
+    [Theory]
+    [InlineData(0, 0, 0)]   // OK direct
+    [InlineData(0, 1, 0)]   // OK direct -> 2e essai ignore
+    [InlineData(1, 0, 0)]   // flap absorbe
+    [InlineData(3, 0, 0)]   // flap absorbe (autre code d'echec initial)
+    [InlineData(1, 1, 1)]   // echec confirme
+    [InlineData(1, 2, 2)]   // echec confirme (2e code different)
+    public void FinalExitAfterRetry_table_de_verite(int first, int retry, int expected)
+        => Assert.Equal(expected, LegacyParsing.FinalExitAfterRetry(first, retry));
+
+    [Fact]
+    public void AllPassedAfterRetry_tous_verts_apres_retry()
+        => Assert.True(LegacyParsing.AllPassedAfterRetry(new[] { 0, 0, 0, 0 }));
+
+    [Fact]
+    public void AllPassedAfterRetry_un_echec_confirme_fait_echouer_la_suite()
+        // 1 seul exit final != 0 (echec confirme apres retry) -> suite rouge.
+        => Assert.False(LegacyParsing.AllPassedAfterRetry(new[] { 0, 0, 1, 0 }));
+
+    [Fact]
+    public void AllPassedAfterRetry_liste_vide_est_vert_par_vacuite()
+        => Assert.True(LegacyParsing.AllPassedAfterRetry(System.Array.Empty<int>()));
+
+    [Fact]
+    public void AllPassedAfterRetry_null_est_faux()
+        => Assert.False(LegacyParsing.AllPassedAfterRetry(null));
+
+    [Fact]
+    public void RetryAbsorbedLogLine_texte_exact()
+        // Texte EXACT attendu dans le log/UI quand le retry passe (flap absorbe) — verrouille le wording.
+        => Assert.Equal(
+            "RETRY dcademat-dca-validation-1 : flap transitoire absorbe (OK au 2e essai)",
+            LegacyParsing.RetryAbsorbedLogLine("dcademat-dca-validation-1"));
+
+    [Fact]
+    public void RetryConfirmedFailLogLine_texte_exact()
+        // Texte EXACT attendu quand le retry echoue aussi (echec confirme = vrai bug).
+        => Assert.Equal(
+            "RETRY alertes-int-form : echec confirme au 2e essai",
+            LegacyParsing.RetryConfirmedFailLogLine("alertes-int-form"));
+
+    [Fact]
+    public void RetryStartingLogLine_texte_exact()
+        // Texte EXACT de l'annonce de relance (visible dans le flux temps reel avant le 2e essai).
+        => Assert.Equal(
+            "RETRY dcademat-dca-reclamation-1 : echec au 1er essai (exit1), relance unique…",
+            LegacyParsing.RetryStartingLogLine("dcademat-dca-reclamation-1", 1));
+
+    // ── WATCHDOG par worker (filet anti-hang) : delai resolu + exit synthetique + texte de log ─────
+    // Un worker en hang (ne sort jamais, busy-poll) doit etre tue apres un plafond de temps PAR worker,
+    // avec un exit synthetique != 0 qui ALIMENTE le retry existant (pas un mecanisme parallele). Le delai
+    // par defaut (360s) laisse vivre un scenario lent (~3,5 min) mais attrape un hang (13+ min observe).
+
+    [Fact]
+    public void ResolveWatchdog_override_absent_donne_le_defaut()
+        => Assert.Equal(LegacyParsing.DefaultLegacyWorkerWatchdogSeconds, LegacyParsing.ResolveWatchdogSeconds(null));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("abc")]      // non numerique
+    [InlineData("12.5")]     // non entier
+    public void ResolveWatchdog_override_invalide_donne_le_defaut(string raw)
+        => Assert.Equal(LegacyParsing.DefaultLegacyWorkerWatchdogSeconds, LegacyParsing.ResolveWatchdogSeconds(raw));
+
+    [Fact]
+    public void ResolveWatchdog_override_valide_est_respecte()
+        // Un override raisonnable (au-dessus du min dur) est pris tel quel.
+        => Assert.Equal(600, LegacyParsing.ResolveWatchdogSeconds("600"));
+
+    [Theory]
+    [InlineData("10")]       // beaucoup trop bas
+    [InlineData("239")]      // juste sous le min dur (240)
+    [InlineData("0")]
+    [InlineData("-5")]
+    public void ResolveWatchdog_override_trop_bas_est_clampe_au_min_dur(string raw)
+        // INVARIANT CLE : ne JAMAIS descendre sous le temps d'un scenario normal, sinon on tuerait des
+        // workers vivants et le retry boucle a vide. Tout override < min est ramene au min dur.
+        => Assert.Equal(LegacyParsing.MinLegacyWorkerWatchdogSeconds, LegacyParsing.ResolveWatchdogSeconds(raw));
+
+    [Fact]
+    public void ResolveWatchdog_override_pile_au_min_dur_est_garde()
+        => Assert.Equal(LegacyParsing.MinLegacyWorkerWatchdogSeconds,
+            LegacyParsing.ResolveWatchdogSeconds(LegacyParsing.MinLegacyWorkerWatchdogSeconds.ToString()));
+
+    [Fact]
+    public void Watchdog_defaut_au_dessus_du_min_dur_et_min_au_dessus_dun_scenario_normal()
+    {
+        // Le defaut doit laisser vivre un scenario lent (> min dur), et le min dur doit etre au-dessus
+        // du temps d'un scenario normal (~3,5 min = 210s) pour ne jamais tuer un worker vivant.
+        Assert.True(LegacyParsing.DefaultLegacyWorkerWatchdogSeconds > LegacyParsing.MinLegacyWorkerWatchdogSeconds);
+        Assert.True(LegacyParsing.MinLegacyWorkerWatchdogSeconds >= 210);
+    }
+
+    [Fact]
+    public void Watchdog_exit_synthetique_est_non_nul_et_alimente_le_retry()
+    {
+        // L'exit synthetique du watchdog DOIT etre != 0 ET declencher le retry existant : c'est le
+        // couplage central (le hang devient un echec normal que le retry re-lance, pas un parallele).
+        Assert.NotEqual(0, LegacyParsing.WatchdogKillExitCode);
+        Assert.True(LegacyParsing.ShouldRetryAfterExit(LegacyParsing.WatchdogKillExitCode));
+        Assert.True(LegacyParsing.WatchdogExitFeedsRetry());
+    }
+
+    [Fact]
+    public void Watchdog_exit_synthetique_est_distinct_de_exit1_applicatif()
+        // 124 (convention `timeout`) pour distinguer un kill watchdog d'un FAIL applicatif (exit 1) dans les logs.
+        => Assert.Equal(124, LegacyParsing.WatchdogKillExitCode);
+
+    [Fact]
+    public void WatchdogTimeoutLogLine_texte_exact()
+        // Texte EXACT du log du watchdog (visible UI + log applicatif) : annonce « -> FAIL+retry ».
+        => Assert.Equal(
+            "WATCHDOG dcademat-dca-reclamation-1 : worker tue apres 360s (hang) -> FAIL+retry",
+            LegacyParsing.WatchdogTimeoutLogLine("dcademat-dca-reclamation-1", 360));
+
+    // ── DEADLINE de verification du step terminal ALERTES rec-form / rec-dca (anti-hang UIA) ──────────
+    // Apres le clic de l'item (« Reprendre les impressions » / « Lancer le pool d'editions »), RIG entre en
+    // REPRISE PROCESSUS (suivi D1 + facturation) et parke le focus sur HDESK -> les appels UIA de la verif
+    // bloquent sans timeout. On borne la verif post-clic par une deadline DURE, << watchdog, pour que le
+    // scenario SORTE par lui-meme (terminal-OK gracieux), jamais via le watchdog 360s.
+
+    [Fact]
+    public void ResolveReclamVerify_override_absent_donne_le_defaut()
+        => Assert.Equal(LegacyParsing.DefaultReclamationVerifyDeadlineSeconds,
+            LegacyParsing.ResolveReclamationVerifyDeadlineSeconds(null));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("abc")]      // non numerique
+    [InlineData("12.5")]     // non entier
+    [InlineData("0")]        // deadline nulle = absurde -> defaut
+    [InlineData("-3")]       // deadline negative -> defaut
+    public void ResolveReclamVerify_override_invalide_ou_nul_donne_le_defaut(string raw)
+        => Assert.Equal(LegacyParsing.DefaultReclamationVerifyDeadlineSeconds,
+            LegacyParsing.ResolveReclamationVerifyDeadlineSeconds(raw));
+
+    [Fact]
+    public void ResolveReclamVerify_override_valide_est_respecte()
+        // Un override raisonnable (entre 1 et le max dur) est pris tel quel.
+        => Assert.Equal(45, LegacyParsing.ResolveReclamationVerifyDeadlineSeconds("45"));
+
+    [Theory]
+    [InlineData("121")]      // juste au-dessus du max dur (120)
+    [InlineData("360")]      // = watchdog : interdit (on perdrait l'auto-sortie)
+    [InlineData("10000")]
+    public void ResolveReclamVerify_override_trop_haut_est_clampe_au_max_dur(string raw)
+        // INVARIANT CLE : ne JAMAIS s'approcher du watchdog (360s), sinon le scenario ne sort plus par
+        // lui-meme. Tout override > max dur est ramene au max dur.
+        => Assert.Equal(LegacyParsing.MaxReclamationVerifyDeadlineSeconds,
+            LegacyParsing.ResolveReclamationVerifyDeadlineSeconds(raw));
+
+    [Fact]
+    public void ResolveReclamVerify_override_pile_au_max_dur_est_garde()
+        => Assert.Equal(LegacyParsing.MaxReclamationVerifyDeadlineSeconds,
+            LegacyParsing.ResolveReclamationVerifyDeadlineSeconds(
+                LegacyParsing.MaxReclamationVerifyDeadlineSeconds.ToString()));
+
+    [Fact]
+    public void ReclamVerify_deadline_reste_largement_sous_le_watchdog()
+    {
+        // INVARIANT CENTRAL : la deadline de verif (defaut ET max dur) DOIT etre sous le watchdog, pour que
+        // rec-form/rec-dca sortent TOUJOURS par eux-memes avant le kill watchdog (anti-recidive du hang).
+        Assert.True(LegacyParsing.MaxReclamationVerifyDeadlineSeconds < LegacyParsing.DefaultLegacyWorkerWatchdogSeconds);
+        Assert.True(LegacyParsing.DefaultReclamationVerifyDeadlineSeconds < LegacyParsing.DefaultLegacyWorkerWatchdogSeconds);
+        Assert.True(LegacyParsing.ReclamationVerifyDeadlineIsBelowWatchdog());
+    }
+
+    // ── DELAI DE STABILISATION (settle) post-clic ALERTES rec-* — APPROCHE ZERO-UIA (tentative #3) ─────
+    // Apres le clic de l'item, le worker NE fait AUCUN appel UIA (les tentatives #1 « throw si pas de signal »
+    // et #2 « UIA sous deadline sur thread STA background » ont echoue : affinite STA -> l'appel UIA est
+    // marshale vers le thread STA proprietaire deja bloque). Le clic a DEJA declenche l'action metier (REPRISE
+    // PROCESSUS). On verifie UNIQUEMENT en NON-UIA (Process.HasExited) + un SETTLE borne (one-shot, pas un
+    // poll : aucune condition UIA-free a sonder) + screenshot PrintWindow + return OK. ResolveReclamationSettleMs
+    // est la SEULE logique parametrable -> testee ici.
+
+    [Fact]
+    public void ResolveReclamSettle_override_absent_donne_le_defaut()
+        => Assert.Equal(LegacyParsing.DefaultReclamationSettleMs,
+            LegacyParsing.ResolveReclamationSettleMs(null));
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   ")]
+    [InlineData("abc")]      // non numerique
+    [InlineData("3.5")]      // non entier
+    [InlineData("0")]        // settle nul = absurde -> defaut
+    [InlineData("-100")]     // settle negatif -> defaut
+    public void ResolveReclamSettle_override_invalide_ou_nul_donne_le_defaut(string raw)
+        => Assert.Equal(LegacyParsing.DefaultReclamationSettleMs,
+            LegacyParsing.ResolveReclamationSettleMs(raw));
+
+    [Fact]
+    public void ResolveReclamSettle_override_valide_est_respecte()
+        // Un override raisonnable (entre min et max) est pris tel quel.
+        => Assert.Equal(4000, LegacyParsing.ResolveReclamationSettleMs("4000"));
+
+    [Theory]
+    [InlineData("1")]        // bien en dessous du min (500)
+    [InlineData("250")]
+    [InlineData("499")]
+    public void ResolveReclamSettle_override_trop_bas_est_clampe_au_min(string raw)
+        => Assert.Equal(LegacyParsing.MinReclamationSettleMs,
+            LegacyParsing.ResolveReclamationSettleMs(raw));
+
+    [Theory]
+    [InlineData("10001")]    // juste au-dessus du max (10000)
+    [InlineData("60000")]
+    [InlineData("360000")]   // = watchdog en ms : interdit (on perdrait l'auto-sortie rapide)
+    public void ResolveReclamSettle_override_trop_haut_est_clampe_au_max(string raw)
+        // INVARIANT : meme un settle « pied-de-biche » reste tres en deca du watchdog -> le worker sort vite.
+        => Assert.Equal(LegacyParsing.MaxReclamationSettleMs,
+            LegacyParsing.ResolveReclamationSettleMs(raw));
+
+    [Theory]
+    [InlineData("500")]      // pile au min
+    [InlineData("10000")]    // pile au max
+    public void ResolveReclamSettle_override_pile_aux_bornes_est_garde(string raw)
+        => Assert.Equal(int.Parse(raw), LegacyParsing.ResolveReclamationSettleMs(raw));
+
+    [Fact]
+    public void ReclamSettle_reste_tres_en_deca_du_watchdog()
+    {
+        // INVARIANT CENTRAL : le settle (defaut ET max, en ms) DOIT etre tres sous le watchdog (en ms), pour
+        // que rec-form/rec-dca sortent par eux-memes en quelques secondes, jamais via le kill watchdog 360s.
+        Assert.True(LegacyParsing.MaxReclamationSettleMs < LegacyParsing.DefaultLegacyWorkerWatchdogSeconds * 1000);
+        Assert.True(LegacyParsing.DefaultReclamationSettleMs <= LegacyParsing.MaxReclamationSettleMs);
+        Assert.True(LegacyParsing.DefaultReclamationSettleMs >= LegacyParsing.MinReclamationSettleMs);
+        Assert.True(LegacyParsing.ReclamationSettleIsBelowWatchdog());
+    }
+
+    // ── dca-reclamation : RIG auto-ouvre un PROCESSUS DE SUIVI (MB1/facturation) apres une reclamation
+    // actee => SUCCES terminal (le driver doit SORTIR, pas busy-poller). Discriminant : ne PAS matcher
+    // l'ecran de reclamation lui-meme.
+
+    [Theory]
+    [InlineData("... Création processus ... MB1 ...")]                          // (A) evenement creation
+    [InlineData("CREATION PROCESSUS facturation")]                             // (A) majuscules
+    [InlineData("Entrée dans le RCS — chargement du dossier")]                 // (B) ecran MB1
+    [InlineData("entree dans le rcs")]                                          // (B) sans accents
+    [InlineData("Processus MB1 - facturation de la formalité")]                // (C) MB1 + facturation
+    [InlineData("Facturation automatique (processus MB1)")]                    // (C) facturation + MB1 (ordre inverse)
+    public void FollowupProcess_detecte_un_suivi_mb1_ouvert(string screenText)
+        => Assert.True(LegacyParsing.IsReclamationFollowupProcessOpened(screenText));
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData("   ")]
+    // L'ecran de reclamation lui-meme (titre de section + bouton) NE doit PAS declencher (faux positif).
+    [InlineData("Réclamation / Refus    Type de motif    Motif    Réclamer    Quitter")]
+    [InlineData("Configurer le dépôt — Exercices — DCA Ligne 1 — Valider")]
+    // « mb1 » isole sans contexte creation/facturation ne doit pas matcher (regex (C) exige le contexte).
+    [InlineData("référence interne mb1 du client")]
+    public void FollowupProcess_ne_sur_declenche_pas(string screenText)
+        => Assert.False(LegacyParsing.IsReclamationFollowupProcessOpened(screenText));
 }

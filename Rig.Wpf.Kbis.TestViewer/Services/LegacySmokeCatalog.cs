@@ -131,15 +131,18 @@ public static class LegacySmokeCatalog
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — DCA : Réclamation (motif INPMANQ)",
-            new[] { "DCA-RECLAMATION : Ouvrir demande" },
-            "Scenario --legacy-dcademat-dca-reclamation : alerte 'réclamation' → ouvrir une demande DCADEMAT. " +
-            "TODO Étape 3 : motif INPMANQ + modifier texte + Réclamer (Alt+R) + vérifier le courrier. " +
-            "⚠ aperçu avant impression → NE PAS IMPRIMER.",
+            new[] { "DCA-RECLAMATION : Action" },
+            "Scenario --legacy-dcademat-dca-reclamation : alerte 'réclamation' → ouvrir une demande DCADEMAT " +
+            "(robustesse anti-verrou) → motif INPMANQ + modifier texte (ajout 'TEST') + Réclamer (Alt+R) + " +
+            "vérifier le courrier (PdfPig / signal). ⚠ aperçu avant impression → NE PAS IMPRIMER.",
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — DCA : Refus",
-            new[] { "DCA-REFUS : Ouvrir demande" },
-            "Scenario --legacy-dcademat-dca-refus : ouvrir une demande DCADEMAT. TODO Étape 3 : mise en refus.",
+            new[] { "DCA-REFUS : Action" },
+            "Scenario --legacy-dcademat-dca-refus : alerte 'réclamation' (le bouton REFUS coexiste avec " +
+            "RECLAMATION sur l'étape Réclamation/Refus — PAS sur 'Configurer le dépôt') → ouvrir une demande " +
+            "DCADEMAT → Refuser (RigToolBar REFUS, Alt+F) + vérif (RIG vivant + courrier de refus). " +
+            "⚠ aperçu avant impression → NE PAS IMPRIMER. (refus = action, pas une alerte ; overridable RIG_DCADEMAT_ALERTE_DCA_REFUS.)",
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — DCA : Interrompue",
@@ -149,8 +152,10 @@ public static class LegacySmokeCatalog
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — Formalité Demat : Validation",
-            new[] { "FORM-VALIDATION : Ouvrir demande" },
-            "Scenario --legacy-dcademat-form-validation : ouvrir une formalité démat (J00). TODO Étape 3 : Valider.",
+            new[] { "FORM-VALIDATION : Action" },
+            "Scenario --legacy-dcademat-form-validation : alerte 'DEMAT INPI – Formalités' (overridable " +
+            "RIG_DCADEMAT_ALERTE_FORM_VALIDATION) → ouvrir une formalité démat (J00) → Valider la formalité " +
+            "(bouton RigToolBar, F12) + vérif sans aperçu (RIG vivant + n° demande best-effort). NE PAS IMPRIMER.",
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — Formalité Demat : Réclamation",
@@ -160,8 +165,11 @@ public static class LegacySmokeCatalog
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — Formalité Demat : Refus",
-            new[] { "FORM-REFUS : Ouvrir demande" },
-            "Scenario --legacy-dcademat-form-refus : ouvrir une formalité démat (J00). TODO Étape 3 : refus.",
+            new[] { "FORM-REFUS : Action" },
+            "Scenario --legacy-dcademat-form-refus : alerte 'réclamation' (réutilise le chemin J00 prouvé par " +
+            "form-reclamation ; Refuser est sur la toolbar principale de la formalité) → ouvrir une formalité " +
+            "démat (J00) → Refuser (RigToolBar REFUS, Alt+F) + vérif (RIG vivant + courrier de refus). " +
+            "NE PAS IMPRIMER. Overridable RIG_DCADEMAT_ALERTE_FORM_REFUS.",
             backend: "legacy", extraTags: new[] { "dcademat" }),
 
         new("UI", "DCADEMAT — Formalité Demat : Interrompue",

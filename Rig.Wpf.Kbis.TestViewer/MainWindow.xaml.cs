@@ -9,6 +9,22 @@ public partial class MainWindow : Window
 {
     private readonly MainWindowViewModel _vm;
 
+    // Cleanup à la fermeture : tue l'arbre worker (SmokeRunner) + RIG (RigClientAccueil) encore
+    // en vie, ce qui libère leurs HDESK isolés. Sans ça, fermer TestViewer EN PLEIN BATCH laissait
+    // les workers tourner invisibles (analyse 2026-06-04 : aucun Job Object, aucun handler Closing,
+    // aucun CancellationToken). On ne tue QUE les descendants de CE TV (pas TV lui-même, pas un
+    // autre agent). Force-kill ferme les handles → Windows détruit les HDESK.
+    protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
+    {
+        try
+        {
+            ProcessTreeControl.KillDescendants(System.Diagnostics.Process.GetCurrentProcess().Id);
+            Log.Info("OnClosing: arbre worker/RIG nettoye, HDESK liberes.");
+        }
+        catch (System.Exception ex) { Log.Info("OnClosing cleanup KO (non bloquant): " + ex.Message); }
+        base.OnClosing(e);
+    }
+
     public MainWindow()
     {
         InitializeComponent();

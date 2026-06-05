@@ -118,6 +118,21 @@ internal static class ProcessTreeControl
         }
     }
 
+    /// <summary>Tue tous les DESCENDANTS de <paramref name="rootPid"/> (workers SmokeRunner +
+    /// RigClientAccueil + petits-enfants) SANS tuer rootPid lui-même. Sert au cleanup à la
+    /// fermeture de TestViewer : force-killer les workers + RIG ferme leurs handles, donc
+    /// Windows détruit les HDESK isolés (un HDESK survit tant qu'un process l'utilise / a un
+    /// handle ouvert). Ne touche QUE l'arbre de CE TV (pas de cross-kill d'un autre agent).</summary>
+    public static void KillDescendants(int rootPid)
+    {
+        if (rootPid <= 0) return;
+        foreach (var pid in DescendantsAndSelf(rootPid))
+        {
+            if (pid == rootPid) continue;
+            try { Process.GetProcessById(pid).Kill(); } catch { }
+        }
+    }
+
     public static void SuspendTree(int rootPid) => ForEachInTree(rootPid, NtSuspendProcess);
     public static void ResumeTree(int rootPid) => ForEachInTree(rootPid, NtResumeProcess);
 

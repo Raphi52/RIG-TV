@@ -507,8 +507,10 @@ internal static class Program
             // ⚠ NE PAS IMPRIMER : on clique seulement l'item de menu et on OBSERVE l'aperçu (aucun bouton
             // Imprimer touché). Le menu est tenté via 4 API distinctes (VK_APPS / RealMouseClick HDESK /
             // WM_CONTEXTMENU / accDoDefaultAction) ; le menu S'OUVRE en pratique via VK_APPS (item lu +
-            // cliqué). L'aperçu lui-même ne peint pas sur HDESK (Mode B) → step FAIL "mur (b)" explicite,
-            // sans impression (cf. OpenReclamationViaMenuMultiTry).
+            // cliqué = action métier déclenchée). L'aperçu lui-même ne peint pas sur HDESK (Mode B) : c'est
+            // un mur d'ENVIRONNEMENT (partie b), pas un échec → terminal-OK gracieux si RIG reste vivant
+            // (FAIL seulement sur crash RIG), aligné sur RefuserDemande/ReclamerDcaAvecMotif (cf.
+            // OpenReclamationViaMenuMultiTry).
             TryStep("REC-FORM : Clic-droit → 'Reprendre les impressions' → courrier de réclamation affiché (sans imprimer)",
                 () => driver.OpenReclamationViaMenuMultiTry(dcademat: false, menuItemSub: "Reprendre les impressions", label: "Courrier de réclamation (formalités)"));
         });
@@ -523,7 +525,8 @@ internal static class Program
             TryStep("REC-DCA : Ouvrir 1re demande DCADEMAT (reprise)",
                 () => driver.OpenFirstDemandeAndVerify(dcademat: true));
             // Étape 3c — clic-droit demande → "Lancer le pool d'éditions" → Lettre de réclamation.
-            // ⚠ NE PAS IMPRIMER (idem REC-FORM). Menu tenté via 4 API distinctes ; mur HDESK explicite si KO.
+            // ⚠ NE PAS IMPRIMER (idem REC-FORM). Menu tenté via 4 API distinctes ; aperçu non peint sur HDESK
+            // = mur d'environnement (partie b) → terminal-OK gracieux si RIG vivant (FAIL seulement sur crash).
             TryStep("REC-DCA : Clic-droit → 'Lancer le pool d'éditions' → Lettre de réclamation affichée (sans imprimer)",
                 () => driver.OpenReclamationViaMenuMultiTry(dcademat: true, menuItemSub: "Lancer le pool", label: "Lettre de réclamation (DCADEMAT)"));
         });
@@ -544,11 +547,35 @@ internal static class Program
         var kind = arg.Substring("--legacy-dcademat-".Length).ToLowerInvariant();  // ex "dca-validation"
         var tag = kind.ToUpperInvariant();                                          // ex "DCA-VALIDATION"
         bool isDca = !kind.StartsWith("form");
-        string alerte =
-            kind.Contains("validation")  ? "en attente" :
-            kind.Contains("reclamation") ? "réclamation" :
-            kind.Contains("refus")       ? "refus" :
-                                           "interrompue";
+        // ── Alerte RCS source par kind ───────────────────────────────────────────────────────────────
+        // ⚠ CORRECTION 2026-06-04 (diagnostic des 4 FAIL, preuves : screenshots + liste réelle des alertes
+        //   + toolbar RigToolBar.cs). L'ancien mapping était faux sur 3 axes :
+        //   (1) « refus » N'EST PAS une alerte : aucune alerte « refus » dans lstAlertes (seules « Rejets … »
+        //       existent) → OpenAlerteRcs("refus") throw → FAIL sur l'Accueil. Le refus est une ACTION.
+        //   (2) le bouton REFUS (RigToolBar.cs:182, Alt+F) coexiste avec RECLAMATION sur la toolbar de
+        //       l'étape « Réclamation / Refus » — il n'est PAS sur la toolbar « Configurer le dépôt » DCA
+        //       (preuve screenshot dca-validation : Valider/Interrompre/Vérifier/Quitter, pas de Refuser).
+        //       → un DCA refus doit s'ouvrir sur l'étape Réclamation/Refus = alerte « réclamation » (comme
+        //       dca-reclamation), où le bouton Refuser est présent. Pour la formalité (J00), Refuser est sur
+        //       la toolbar principale (preuve screenshot form-reclamation A1_C) → on réutilise le MÊME chemin
+        //       d'ouverture J00 PROUVÉ par form-reclamation = alerte « réclamation ».
+        //   (3) form-validation cherchait du J00 dans « DCA démat en attente » (DCADEMAT-only) → 0 J00 → FAIL.
+        //       Les formalités démat « en attente de validation » sont sous « DEMAT INPI – Formalités ».
+        // Les alertes des kinds DÉJÀ verts (dca-validation→« DCA démat en attente », dca-interrompue +
+        // form-interrompue→« interrompue », form-reclamation + dca-reclamation→« réclamation ») sont
+        // INCHANGÉES. Tout est overridable par env RIG_DCADEMAT_ALERTE_<KIND> (ex RIG_DCADEMAT_ALERTE_FORM_VALIDATION).
+        string alerteDefault =
+            isDca
+                ? ( kind.Contains("reclamation") ? "réclamation"
+                  : kind.Contains("refus")       ? "réclamation"               // refus DCA : étape Réclamation/Refus (toolbar REFUS), via alerte réclamation
+                  : kind.Contains("interrompue") ? "interrompue"
+                  :                                 "DCA démat en attente" )   // validation DCA = demande en attente
+                : ( kind.Contains("reclamation") ? "réclamation"
+                  : kind.Contains("refus")       ? "réclamation"               // refus formalité : réutilise le chemin J00 prouvé par form-reclamation
+                  : kind.Contains("interrompue") ? "interrompue"
+                  :                                 "DEMAT INPI" );            // validation formalité = formalités démat en attente (« DEMAT INPI – Formalités »)
+        var alerteOverride = Environment.GetEnvironmentVariable("RIG_DCADEMAT_ALERTE_" + kind.Replace('-', '_').ToUpperInvariant());
+        string alerte = string.IsNullOrWhiteSpace(alerteOverride) ? alerteDefault : alerteOverride!;
         string famille = isDca ? "DCADEMAT" : "formalité J00";
         // Numéro de gestion utilisé pour la vérif (override RIG_LEGACY_NUM_GESTION, default 2024B00001).
         var numGestion = Environment.GetEnvironmentVariable("RIG_LEGACY_NUM_GESTION");
@@ -565,8 +592,30 @@ internal static class Program
                 //   n'a aucun sens : ses contrôles (combo « Type de motif », case DCA…) ne sont pas à l'écran.
                 //   Sans ce garde-fou, FindTypeMotifCombo balayait l'arbre UIA en boucle ~111 s avant null
                 //   (bug run live). On SKIP donc l'Action proprement au lieu de la lancer dans le vide.
+                // ⚠ 2026-06-05 (resolver #2, GROUND TRUTH = SQL RIG_DEV + RIG source + screenshot 11:16) : pour la
+                //   REPRISE d'une demande INTERROMPUE (kind *-interrompue, DCADEMAT comme FORMALITÉ), le terminal métier
+                //   est « rouvrir la demande » — y compris une déjà « en cours par MOI » → allowMyEnCours=true.
+                //   ✅ CAUSE RÉELLE de l'échec form-interrompue : les 10 formalités J00 interrompues portent TOUTES
+                //   DMND_EN_COURS=1 (SQL : GROUP BY EN_COURS = 1|10, AUCUNE à 0 ; colonne grille « En cours »=X).
+                //   FormRigClientAccueil._ReprendreProcessus (Accueil.cs:203) refuse TOUTE demande en cours :
+                //   `if (demande.IsEnCours) DialogBox("déjà en cours d'exécution")` AVANT le dispatch CODE_PROSS →
+                //   le double-clic (et l'Entrée) N'OUVRE RIEN. dca-interrompue PASSE car DCADEMAT a 1 candidate
+                //   EN_COURS=0 (K00213675804) ; les formalités n'en ont AUCUNE → aucune candidate ouvrable.
+                //   (L'ancienne hypothèse du resolver #1 « J00 ont En cours=(null) » était FAUSSE : SQL+screenshot
+                //   montrent En cours=X.) DEUX VERROUS distincts dans la grille (colonnes ';' concaténées) :
+                //     (a) « En cours »=X + Utilisateur vide/moi = verrou de MA session/orphelin → LEVABLE par moi
+                //         via le menu « Supprimer l'état en cours » (Demande.Cloturer → DMND_EN_COURS=0). IsMyEnCoursSelfLock.
+                //     (b) « En cours »=X + Utilisateur ≠ moi = verrou par un AUTRE user → skip pré-open (IsLockedByOtherUser).
+                //         ⚠ Une demande LIBRE (« En cours » vide) owned-by-other n'est PAS (b) : elle reste ouvrable
+                //         (correctif 2026-06-05 ; ne PAS exclure sur la seule colonne Utilisateur).
+                //   Comme (a) implique une ÉCRITURE SQL, OpenFirstDemandeAndVerify ne lève le verrou self QUE si
+                //   RIG_LEGACY_CLEAR_MY_ENCOURS=1 (défaut OFF, hard rule #13). Sinon : message HONNÊTE « toutes en cours
+                //   par moi → autoriser RIG_LEGACY_CLEAR_MY_ENCOURS=1 ou lever les verrous self ». Kinds MUTANTS
+                //   (validation/réclamation/refus) gardent allowMyEnCours=false (idempotence) ; le skip verrou-autrui
+                //   (b) s'applique à eux aussi.
+                bool reprise = kind.Contains("interrompue");
                 bool demandeOuverte = TryStepBool($"{tag} : Ouvrir demande ({famille}) → Configurer le dépôt",
-                    () => driver.OpenFirstDemandeAndVerify(dcademat: isDca));
+                    () => driver.OpenFirstDemandeAndVerify(dcademat: isDca, allowMyEnCours: reprise));
                 // Étape 3 — step "Action" métier. Implémenté pour dca-validation :
                 //   cocher la case 'DCA' (grille Exercices) + Valider + vérifier l'apparition des
                 //   n° de dépôt / facture / demande (preuve que le dépôt a été créé).
@@ -594,8 +643,34 @@ internal static class Program
                     else
                         Skip($"{tag} : Action (réclamation) SKIP — aucune demande ouverte (étape précédente échouée).");
                 }
-                // TODO Étape 3 (avec supervision) — autres kinds :
-                //   refus / interrompue : action correspondante.
+                // Étape 3 (validation formalité J00) — « Valider » sur la formalité ouverte + vérif sans
+                //   aperçu (RIG vivant + n° demande best-effort). Ne déclenche PAS d'impression.
+                //   ⚠ Action best-effort (TryStepActionable) : ValiderFormaliteDemat renvoie false si la
+                //   formalité n'est pas au stade « Valider » (l'alerte « DEMAT INPI – Formalités » mélange
+                //   des stades ; certaines s'ouvrent sur MB1 « Entrée dans le RCS » sans Valider en 1 clic)
+                //   → SKIP (pas FAIL), le terminal « demande ouverte » étant déjà prouvé, comme les autres
+                //   scénarios formalité « ouvrir = terminal ». Seul un crash RIG → FAIL.
+                else if (kind == "form-validation")
+                {
+                    if (demandeOuverte)
+                        TryStepActionable($"{tag} : Action (validation) - Valider la formalité + vérif (RIG vivant / n° demande)",
+                            () => driver.ValiderFormaliteDemat());
+                    else
+                        Skip($"{tag} : Action (validation) SKIP — aucune demande ouverte (étape précédente échouée).");
+                }
+                // Étape 3 (refus DCA ou formalité) — NOUVEAU : « Refuser » (Alt+F) sur la demande en attente +
+                //   vérif sans aperçu (RIG vivant + signal courrier). ⚠ NE PAS IMPRIMER (aucun bouton Imprimer touché).
+                else if (kind == "dca-refus" || kind == "form-refus")
+                {
+                    if (demandeOuverte)
+                        TryStep($"{tag} : Action (refus) - Refuser la demande + vérif (RIG vivant / courrier de refus)",
+                            () => driver.RefuserDemande());
+                    else
+                        Skip($"{tag} : Action (refus) SKIP — aucune demande ouverte (étape précédente échouée).");
+                }
+                // interrompue (dca/form) : la demande est déjà sur l'alerte « interrompue » → l'ouverture =
+                //   la reprise (terminal métier de ce kind, comme les scénarios ALERTES int-*). Pas d'action
+                //   mutante supplémentaire (Interrompre ré-interromprait une demande déjà interrompue).
             });
     }
 
@@ -2553,6 +2628,21 @@ internal static class Program
     {
         try { action(); Pass(description); return true; }
         catch (Exception ex) { Fail(description, ex); return false; }
+    }
+
+    /// <summary>Step dont l'action renvoie un bool « actionnable » : <c>true</c> → Pass (action exécutée),
+    /// <c>false</c> → Skip (cas de données légitime, pas une action à exécuter), exception → Fail (vrai
+    /// échec : crash RIG, etc.). Sert aux actions best-effort gatées sur l'état de la demande (ex : valider
+    /// une formalité seulement si elle est au stade « Valider » ; sinon SKIP plutôt que FAIL). Le message de
+    /// SKIP est suffixé pour expliciter « non actionnable ».</summary>
+    private static void TryStepActionable(string description, Func<bool> action)
+    {
+        try
+        {
+            if (action()) Pass(description);
+            else Skip(description + " — SKIP (formalité non au stade actionnable / cas de données, voir log driver)");
+        }
+        catch (Exception ex) { Fail(description, ex); }
     }
 
     private static void Pass(string description) { _passed++; Console.WriteLine($"  ✓ {description}"); }

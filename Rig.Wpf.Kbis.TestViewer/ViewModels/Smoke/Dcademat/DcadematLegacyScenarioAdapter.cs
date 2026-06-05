@@ -78,12 +78,19 @@ public sealed class DcadematLegacyScenarioAdapter : INotifyPropertyChanged, ISce
                 ($"{tag} : Ouvrir alerte",  "Alerte RCS + grille des demandes"),
                 ($"{tag} : Ouvrir demande", "Demande ouverte (Configurer le dépôt)"),
             };
-            // Étape 3 — dca-validation : step terminal "Action" (case DCA + Valider + n° dépôt/facture/
-            // demande). Le préfixe "{tag} : Action" matche la ligne émise par Program.cs
-            // ("DCA-VALIDATION : Action (validation) - …"). La tuile atteint Done sur cette Action.
-            // Les autres kinds (reclamation/refus/interrompue/form-*) restent en v1 : terminal =
-            // "Ouvrir demande" (l'Action métier sera ajoutée plus tard, avec supervision).
-            if (_kind == "dca-validation")
+            // Étape 3 — step terminal "Action" métier. Le préfixe "{tag} : Action" matche la ligne émise
+            // par Program.cs (ex "DCA-VALIDATION : Action (validation) - …", "FORM-REFUS : Action (refus) - …").
+            // La tuile atteint Done quand cette Action passe.
+            //   - validation  : case DCA + Valider + n° dépôt/facture/demande (DCA) ; Valider formalité (form).
+            //   - reclamation : motif INPMANQ + texte + Réclamer (DCA).
+            //   - refus       : Refuser (DCA + form) — NOUVEAU 2026-06-04.
+            //   - form-validation : Valider formalité — NOUVEAU 2026-06-04.
+            // Les kinds SANS action mutante (dca-interrompue, form-reclamation, form-interrompue) gardent
+            // pour terminal "Ouvrir demande" (l'ouverture = la reprise, comme les scénarios ALERTES).
+            bool hasActionStep =
+                _kind == "dca-validation" || _kind == "dca-reclamation"
+                || _kind == "dca-refus" || _kind == "form-validation" || _kind == "form-refus";
+            if (hasActionStep)
                 steps.Add(($"{tag} : Action", ActionLabel()));
             return steps;
         }

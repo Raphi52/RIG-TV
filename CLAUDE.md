@@ -1,7 +1,8 @@
 # Rig Testing — CLAUDE.md
 
 > **Rôle de ce fichier** : amorcer une session IA sur le harnais de test
-> `RigApplication-testing` (TestViewer + SmokeRunner + Rig.Rapture.Tests).
+> `RIG-TV` (TestViewer + SmokeRunner + Rig.Rapture.Tests) — repo à `C:\Code RIG\RIG-TV\`,
+> anciennement `RigApplication-testing\Source\Wpf\` (déplacé/aplati ; structure actuelle = `RIG-TV\<projet>\` sans `Source\Wpf\`).
 > Complète sans dupliquer `C:\Code RIG\CLAUDE.md` (workspace racine, règles
 > transverses) et `\\ged2\rig\Projets IA\Documentation\AI-Generated\Claude.md`
 > (codebase RIG legacy).
@@ -53,7 +54,7 @@ ajouts propres au harnais :
   builder Release séparément.
 * **Vérification timestamp avant de demander une relance** :
   ```powershell
-  Get-Item "C:\Code RIG\RigApplication-testing\Source\Wpf\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\Rig.Wpf.Kbis.TestViewer.exe" | Select LastWriteTime
+  Get-Item "C:\Code RIG\RIG-TV\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\Rig.Wpf.Kbis.TestViewer.exe" | Select LastWriteTime
   ```
   Si l'utilisateur signale « rien changé après relance » → vérifier en priorité :
   1. Le bon EXE (Debug **OU** Release selon le raccourci utilisé)
@@ -188,6 +189,59 @@ pour TestViewer WPF au setup (PostMessage WM_LBUTTON ne marche pas sur fenêtres
 
 ---
 
+## 🧪 Smoke par module (KBIS / ALERTES / DCADEMAT / RAPTURE)
+
+⚠️ Le harnais est **RAPTURE-centré** : seul RAPTURE a des scénarios JSON, un batch
+parallèle, le sentinel `last-batch-end.txt`, le JSON `last-batch-result.json` et le ML
+LOOP. Les 3 autres modules ont leurs scénarios définis **en dur dans le code**
+(`LegacySmokeCatalog.cs`), pilotés par bouton + CLI, mais **n'écrivent NI sentinel NI
+JSON** : leur verdict = exit code worker (0 = tous passent / 1 = ≥1 FAIL) + lignes
+`✓`/`✗` parsées du stdout redirigé.
+
+**Sélection du module** : env `RIG_TV_MODULE` avant lancement (pré-sélection ; évite le
+clic UIA sur le rail dont les ToggleButton n'ont pas d'AutomationId), ou `SelectModule(...)`
+/ `Invoke-RailModule` (clic souris). Modules `MANDATAIRE` / `IPE` = prévus mais
+`IsAvailable:false`. Réf : `MainWindowViewModel.cs:215-234` + `:422-426` (props `IsXxxModule`).
+
+| Module | Bouton (AutomationId) | Commande VM | Modes CLI SmokeRunner | Scénarios | Drive CLI ? |
+|---|---|---|---|---|---|
+| **KBIS** | `BtnKbisRunSmokeLegacy` | `RunLegacyCommand` → `RunKbisPlanAsync` | `--legacy-kbis-vk`, `--legacy-kbis-xex` | **2** (vk = PROC_VK, xex = PROC_XEX) | ✅ `--drive-testviewer-legacy-kbis`, `--drive-testviewer-kbis-stress` |
+| **ALERTES** | `BtnAlertesRunSmokeLegacy` | `RunAlertesCommand` → `RunAlertesPlanAsync` | `--legacy-alertes-{int-form,int-dca,rec-form,rec-dca}` | **4** | ❌ → piloter via `Invoke-TileButton` |
+| **DCADEMAT** | `BtnDcadematRunSmokeLegacy` | `RunDcadematCommand` → `RunDcadematPlanAsync` | `--legacy-dcademat-{dca,form}-{validation,reclamation,refus,interrompue}` | **8** (⚠️ v1 : la plupart s'arrêtent à « Ouvrir demande » ; seuls `dca-validation` et `dca-reclamation` ont le step terminal « Action ») | ❌ → `Invoke-TileButton` |
+| **RAPTURE** | `BtnRaptureProcessE2E` | `RunAllRaptureScenariosAsync` | `--legacy-rapture-process`, `--rapture-selfdrive`, `--drive-testviewer-rapture-process` | **16** (JSON dans `RaptureScenarios/`) | ✅ |
+
+**Où vivent les scénarios non-RAPTURE** : en dur dans
+`Rig.Wpf.Kbis.TestViewer\ViewModels\Smoke\LegacySmokeCatalog.cs` (tags `kbis`/`alertes`/`dcademat`),
+adapters par module sous `ViewModels\Smoke\<Module>\` (`KbisLegacyScenarioAdapter`,
+`AlertesLegacyScenarioAdapter`, `DcadematLegacyScenarioAdapter`). **Pas** de dossier
+`*Scenarios/` (contrairement à `RaptureScenarios/`).
+
+**Verdict / sortie par module** :
+* **RAPTURE** → `Audit\last-batch-result.json` (schema 3, `regressions`/`fixed_now`) +
+  `Audit\last-batch-end.txt`. Écrits **uniquement** par `RunAllRaptureScenariosAsync`
+  (`MainWindowViewModel.cs`). C'est le seul module exploitable par `ml-loop.ps1`.
+* **KBIS / ALERTES / DCADEMAT** → **ni JSON ni sentinel**. Verdict = exit code SmokeRunner
+  + `✓`/`✗` stdout. Self-snaps PNG sous `%LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\<RIG_RUN_STAMP>\<instanceId>\`
+  (instanceId ex. `kbis-vk`, `alertes-int-form`, `dcademat-dca-validation`).
+
+**Pilotage PS** : `kbis-harness.ps1` est générique → `Launch-TV -Module <X>`,
+`Invoke-TileButton <PID> <AidRegex>`, `Run-Scenario -Arg <flag>`, `Wait-MarkerCountAbove`.
+Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureTab`.
+**Pas** de `Run-KbisSuite`/`Run-AlertesSuite`/`Run-DcadematSuite` dédiées (à composer).
+
+**Asymétrie → ce qui manque pour une boucle unifiée des 3 modules** :
+1. Pas de verdict JSON/sentinel pour KBIS/ALERTES/DCADEMAT (seul RAPTURE) → pas de
+   `regressions`/`fixed_now` automatiques.
+2. Pas de mode `--drive-testviewer-legacy-{alertes,dcademat}` (seul KBIS a son drive CLI).
+3. Pas de run unifié enchaînant les 3 modules (ni bouton ni script) → 3 lancements séparés.
+4. `ml-loop.ps1` = RAPTURE-only (lit `last-batch-result.json`).
+5. DCADEMAT v1 partiel (6/8 kinds s'arrêtent à « Ouvrir demande »).
+
+> Source : cartographie harnais via sous-agent Explore + vérif grep des AutomationIds,
+> flags CLI et writers JSON. Le code (`LegacySmokeCatalog.cs`, `Program.cs`, `MainWindow.xaml`) fait foi.
+
+---
+
 ## ⚠️ Faux amis (TestViewer-specific)
 
 | Tu crois… | Réalité |
@@ -231,10 +285,10 @@ pour TestViewer WPF au setup (PostMessage WM_LBUTTON ne marche pas sur fenêtres
 
 | Path | Contenu | Lifecycle |
 |---|---|---|
-| `Source\Wpf\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\` | Binaire TestViewer | Build output, gitignored |
-| `Source\Wpf\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\RaptureScenarios\` | Copie des scénarios JSON post-build | Auto-copié, ne pas éditer ici |
-| `Source\Wpf\Rig.Wpf.Kbis.TestViewer\RaptureScenarios\*.json` | **Source** des 16 scénarios + sentinel `_all-scenarios.json` | Versionné |
-| `Source\Wpf\Rig.Wpf.Kbis.SmokeRunner\bin\Debug\net48\` | Binaire SmokeRunner | Build output |
+| `RIG-TV\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\` | Binaire TestViewer | Build output, gitignored |
+| `RIG-TV\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\RaptureScenarios\` | Copie des scénarios JSON post-build | Auto-copié, ne pas éditer ici |
+| `RIG-TV\Rig.Wpf.Kbis.TestViewer\RaptureScenarios\*.json` | **Source** des 16 scénarios + sentinel `_all-scenarios.json` | Versionné |
+| `RIG-TV\Rig.Wpf.Kbis.SmokeRunner\bin\Debug\net48\` | Binaire SmokeRunner | Build output |
 | `%LOCALAPPDATA%\rig-wpf-kbis\global-settings.json` | Settings utilisateur (parallelism, headless, cache) | Persisté, écrasé par UI |
 | `%LOCALAPPDATA%\rig-wpf-kbis\test-cache.json` | Cache ML Phase 4 | Persisté, vidable via UI |
 | `%LOCALAPPDATA%\rig-wpf-testviewer\testviewer-yyyyMMdd.log` | Log applicatif TestViewer | Append day-by-day |
@@ -265,7 +319,7 @@ pour TestViewer WPF au setup (PostMessage WM_LBUTTON ne marche pas sur fenêtres
 
 ### Ajouter un nouveau scénario Rapture
 
-1. Créer le JSON dans `Source\Wpf\Rig.Wpf.Kbis.TestViewer\RaptureScenarios\<id>.json`
+1. Créer le JSON dans `RIG-TV\Rig.Wpf.Kbis.TestViewer\RaptureScenarios\<id>.json`
 2. Ajouter l'entrée dans `manifest.json` (si présent) ou laisser auto-discovery
 3. `ensure-fresh.ps1 -Project TestViewer` (le post-build copie les JSON dans `bin\`)
 4. Lancer batch « All scenarios » via Rig Testing → vérifier scenario apparaît
@@ -287,7 +341,7 @@ pour TestViewer WPF au setup (PostMessage WM_LBUTTON ne marche pas sur fenêtres
 ### Lancer un batch en CLI (sans UI)
 
 ```powershell
-& "C:\Code RIG\RigApplication-testing\Source\Wpf\Rig.Wpf.Kbis.SmokeRunner\bin\Debug\net48\Rig.Wpf.Kbis.SmokeRunner.exe" `
+& "C:\Code RIG\RIG-TV\Rig.Wpf.Kbis.SmokeRunner\bin\Debug\net48\Rig.Wpf.Kbis.SmokeRunner.exe" `
   --drive-testviewer-rapture-process `
   --json "All scenarios" `
   [--visible]   # optionnel : RIG s'ouvre via legacy-rapture-process
@@ -372,7 +426,7 @@ par défaut (peut masquer une régression si invalidation rate un fichier influe
 
 ## 🧪 Tests xUnit (Rig.Rapture.Tests)
 
-Le projet `Source\Wpf\Rig.Rapture.Tests\` couvre la **logique pure** Rapture
+Le projet `RIG-TV\Rig.Rapture.Tests\` couvre la **logique pure** Rapture
 (parser, diff, validation). Exécuté par `RegressionRunner` dans TestViewer
 ou directement via `dotnet test`.
 

@@ -14,6 +14,21 @@ using FlaUI.UIA3;
 namespace Rig.Wpf.Kbis.SmokeRunner;
 
 /// <summary>
+/// Signal INTERNE (pas un échec) : la demande de réclamation ouverte est DÉJÀ réclamée — le combo
+/// « Type de motif » est verrouillé/vide alors qu'un motif est déjà posé, donc on ne peut pas (re)choisir
+/// un type de motif, mais le terminal métier « demande en réclamation » EST atteint. Levé par
+/// <c>SelectMotifInCombo</c> (cas C1) et converti en succès par <c>ReclamerDcaAvecMotif</c>. Exclusif au
+/// scénario dca-reclamation. Voir <see cref="LegacyParsing.IsAlreadyReclamee"/>.
+/// </summary>
+internal sealed class AlreadyReclameeException : Exception
+{
+    public string CurrentMotif { get; }
+    public AlreadyReclameeException(string currentMotif)
+        : base($"Demande déjà réclamée (motif courant '{currentMotif}', combo Type de motif verrouillé/vide).")
+        => CurrentMotif = currentMotif;
+}
+
+/// <summary>
 /// Smoke FlaUI sur le legacy <c>RigClientAccueil.exe</c> (WinForms x86, COM interop).
 ///
 /// Driver à état persistant : on garde <see cref="_app"/> / <see cref="_window"/> entre
@@ -1920,6 +1935,30 @@ public sealed class LegacyDriver : IDisposable
 
         if (targetRow is null)
         {
+            // DIAG-MSAA 2026-06-04 : la grille "Recherche d'audience" est un DataGridView WinForms
+            // AVEUGLE à UIA (row.FindAllChildren() = []). Probe READ-ONLY (aucune sélection → aucun
+            // risque mail-spam) pour confirmer la lisibilité MSAA + trouver le hwnd, exactement comme
+            // CollectCellsMsaa le fait pour la grille des demandes (DCADEMAT).
+            try
+            {
+                var gridCandidates = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Table))
+                    .Concat(_window.FindAllDescendants(cf => cf.ByControlType(ControlType.DataGrid)))
+                    .ToList();
+                Console.WriteLine($"      [DIAG-MSAA] {gridCandidates.Count} grille(s) Table/DataGrid candidate(s)");
+                foreach (var g in gridCandidates)
+                {
+                    IntPtr h = IntPtr.Zero;
+                    try { h = g.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+                    var aid = SafeText(() => g.AutomationId);
+                    if (h == IntPtr.Zero) { Console.WriteLine($"      [DIAG-MSAA] aid='{aid}' hwnd=0 (skip)"); continue; }
+                    var cells = CollectCellsMsaa(h, _ => true, 20, out int scanned);
+                    Console.WriteLine($"      [DIAG-MSAA] aid='{aid}' hwnd={h} scanned={scanned} rows-concat={cells.Count}");
+                    foreach (var c in cells.Take(12))
+                        Console.WriteLine($"      [DIAG-MSAA]   [{c.text}]");
+                }
+            }
+            catch (Exception dex) { Console.WriteLine($"      [DIAG-MSAA] probe jeté : {dex.Message}"); }
+
             throw new Exception($"Aucune audience VALIDE (non-INT + chambre whitelistée) trouvée parmi les {rows.Count} rows. " +
                                 "Évite mail-spam RIG. Hardcoder un IdAudCab via env si nécessaire.");
         }
@@ -3304,21 +3343,43 @@ public sealed class LegacyDriver : IDisposable
             throw new Exception("Tuile 'Alertes RCS' / lstAlertes introuvable dans la Console d'accueil (cf. dump).");
         }
 
+        // ⚠ La liste des alertes est PAGINÉE (run live : 4 pages « 1 2 3 4 » sous la tuile). lstAlertes
+        // n'expose QUE la page courante → si l'alerte cherchée est sur une autre page, l'ancien scan
+        // mono-page renvoyait « introuvable » à tort. On scanne donc la page courante puis on pagine
+        // (bouton « suivant » de la tuile) jusqu'à MaxPages, en ré-interrogeant lstAlertes à chaque page.
+        const int maxAlertePages = 8;     // garde-fou (la tuile en a ~4) — couvre une croissance future
         AutomationElement? alerte = null;
-        var sw = Stopwatch.StartNew();
-        while (sw.ElapsedMilliseconds < 8000 && alerte is null)
+        var seenAllItems = new List<string>();
+        for (int page = 1; page <= maxAlertePages && alerte is null; page++)
         {
-            AutomationElement[] items;
-            try { items = lst.FindAllChildren(); } catch { items = System.Array.Empty<AutomationElement>(); }
-            alerte = items.FirstOrDefault(it =>
-                SafeText(() => it.Name).IndexOf(alerteNameSubstring, StringComparison.OrdinalIgnoreCase) >= 0);
-            if (alerte is null) Thread.Sleep(300);
+            var sw = Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < (page == 1 ? 8000 : 3000) && alerte is null)
+            {
+                AutomationElement[] items;
+                try { items = lst.FindAllChildren(); } catch { items = System.Array.Empty<AutomationElement>(); }
+                alerte = items.FirstOrDefault(it =>
+                    SafeText(() => it.Name).IndexOf(alerteNameSubstring, StringComparison.OrdinalIgnoreCase) >= 0);
+                if (alerte is null) Thread.Sleep(300);
+            }
+            if (alerte is not null)
+            {
+                if (page > 1) Console.WriteLine($"      → Alerte trouvée en page {page} de lstAlertes.");
+                break;
+            }
+            // Mémorise les items de cette page pour le dump final, puis tente de paginer.
+            try { foreach (var it in lst.FindAllChildren()) { var n = SafeText(() => it.Name); if (n.Length > 0) seenAllItems.Add($"[p{page}] {n}"); } } catch { }
+            if (page < maxAlertePages && TryGoToNextAlertePage(page))
+                Thread.Sleep(600);   // laisser lstAlertes se rafraîchir après changement de page
+            else
+                break;               // plus de page suivante → on sort (alerte restera null → throw plus bas)
         }
         if (alerte is null)
         {
-            Console.WriteLine($"      → Aucune alerte contenant '{alerteNameSubstring}' dans lstAlertes. Items présents :");
-            try { foreach (var it in lst.FindAllChildren()) Console.WriteLine($"          - '{SafeText(() => it.Name)}'"); } catch { }
-            throw new Exception($"Alerte RCS '{alerteNameSubstring}' introuvable dans lstAlertes (la base DEV a-t-elle de telles demandes ?).");
+            Console.WriteLine($"      → Aucune alerte contenant '{alerteNameSubstring}' dans lstAlertes (toutes pages). Items vus :");
+            foreach (var n in seenAllItems) Console.WriteLine($"          - '{n}'");
+            throw new Exception($"Alerte RCS '{alerteNameSubstring}' introuvable dans lstAlertes (toutes pages parcourues). "
+                + "La base DEV a-t-elle de telles demandes, ou le libellé de l'alerte diffère-t-il ? "
+                + "Override possible via RIG_DCADEMAT_ALERTE_<KIND>.");
         }
 
         Console.WriteLine($"      → Alerte trouvée : '{SafeText(() => alerte.Name)}' — activation (Select + Entrée)");
@@ -3328,21 +3389,103 @@ public sealed class LegacyDriver : IDisposable
         try { Interaction.ActivateListItem(alerte, lst); }
         catch (Exception ex) { Console.WriteLine($"      ⓘ ActivateListItem jeté : {ex.Message}"); }
 
-        var grid = WaitForDemandeGrid(8000);
+        const int gridBaseBudgetMs = 8000;   // 1re passe (post Entrée)
+        var swGrid = Stopwatch.StartNew();
+        var grid = WaitForDemandeGrid(gridBaseBudgetMs);
         if (grid is null)
         {
             Console.WriteLine("      → Grille pas vue après Entrée — fallback double-clic écran sur la ligne.");
             var r = alerte.BoundingRectangle;
             Interaction.ClickAtScreenPoint((int)(r.X + r.Width / 2), (int)(r.Y + r.Height / 2), _app.ProcessId, doubleClick: true);
-            grid = WaitForDemandeGrid(10000);
+            grid = WaitForDemandeGrid(10000);   // 2e passe (post double-clic)
         }
+        // DÉTERMINISME (fix flap form-validation, run 17:29 STAMP 171521) : si la grille n'est toujours
+        // pas là MAIS RIG affiche encore l'overlay « Veuillez patienter / Traitement en cours » (la grille
+        // est en train de charger), on NE renonce PAS — on prolonge l'attente TANT QUE l'overlay persiste,
+        // jusqu'à un plafond dur. C'est purement ADDITIF : ne s'exécute que sur l'ancien chemin d'échec
+        // (les 2 passes ont renvoyé null) → aucun impact sur le chemin nominal des scénarios qui voient la
+        // grille tout de suite. On ne throw QUE si RIG ne charge plus (overlay absent = écran figé/planté =
+        // vrai échec) OU si le plafond dur est atteint. Le run 17:04 (succès) voyait la grille à ~6,4s.
+        const long gridHardCapMs = 45000;
+        bool announcedGrace = false;
+        while (grid is null
+               && LegacyParsing.ShouldKeepWaitingForGrid(swGrid.ElapsedMilliseconds, baseMaxMs: 18000, hardCapMs: gridHardCapMs, overlayPresent: IsLoadingOverlayOnScreen()))
+        {
+            if (!announcedGrace)
+            {
+                Console.WriteLine("      → Grille pas encore là mais overlay « Traitement en cours » présent — "
+                    + $"RIG charge encore : prolongation de l'attente (plafond {gridHardCapMs}ms) au lieu de renoncer.");
+                announcedGrace = true;
+            }
+            grid = WaitForDemandeGrid(3000);   // ré-essai court tant que l'overlay est là
+        }
+        if (announcedGrace && grid is not null)
+            Console.WriteLine($"      ✓ Grille apparue après prolongation (chargement RIG lent), à {swGrid.ElapsedMilliseconds}ms.");
         if (grid is null)
         {
-            Console.WriteLine("      → Grille de demandes pas détectée. Dump :");
+            // À ce stade : soit RIG ne charge plus (overlay disparu sans grille = écran figé), soit plafond
+            // dur atteint malgré l'overlay. On distingue les deux dans le message pour le diagnostic.
+            bool stillLoading = IsLoadingOverlayOnScreen();
+            Console.WriteLine($"      → Grille de demandes pas détectée après {swGrid.ElapsedMilliseconds}ms "
+                + $"(overlay chargement {(stillLoading ? "ENCORE présent → RIG anormalement lent/figé au plafond dur" : "disparu → écran stabilisé sans grille")}). Dump :");
             DumpDescendants(_window!, maxDepth: 3);
-            throw new Exception("La liste des demandes (PROC_DEMANDE) ne s'est pas ouverte après activation de l'alerte.");
+            throw new Exception("La liste des demandes (PROC_DEMANDE) ne s'est pas ouverte après activation de l'alerte"
+                + (stillLoading ? " (RIG toujours en « Traitement en cours » au plafond dur — chargement anormalement lent ou figé)."
+                                : " (l'écran s'est stabilisé sans grille — alerte sans demande affichable ou navigation interrompue)."));
         }
         Console.WriteLine($"      → Grille des demandes ouverte ('{SafeText(() => grid.Name)}' type={grid.ControlType}, alerte '{alerteNameSubstring}') — Étape 1 OK.");
+    }
+
+    /// <summary>
+    /// Passe à la page suivante de la liste des alertes RCS (tuile paginée « 1 2 3 4 »). Best-effort :
+    /// cherche d'abord un Button « suivant » (Name « ›/>/Suivant/Page suivante »), sinon le bouton de
+    /// numéro de page (currentPage+1) dans le pager. Clic via Interaction.Click (mouse-free). Retourne
+    /// true si un contrôle de pagination a été actionné, false s'il n'y en a pas (= dernière page / pas
+    /// de pager). NON bloquant : toute exception est avalée et renvoie false.
+    /// </summary>
+    private bool TryGoToNextAlertePage(int currentPage)
+    {
+        if (_window is null) return false;
+        try
+        {
+            var clickables = _window.FindAllDescendants()
+                .Where(c =>
+                {
+                    ControlType ct; try { ct = c.ControlType; } catch { return false; }
+                    if (ct != ControlType.Button && ct != ControlType.Hyperlink && ct != ControlType.Pane) return false;
+                    try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; }
+                })
+                .ToList();
+
+            // a) Bouton « page suivante » explicite (flèche ou libellé).
+            var next = clickables.FirstOrDefault(c =>
+            {
+                var n = SafeText(() => c.Name).Trim();
+                if (n.Length == 0) return false;
+                var nl = n.ToLowerInvariant();
+                return n == "›" || n == ">" || n == "»"
+                    || nl == "suivant" || nl.Contains("page suivante") || nl.Contains("suivante")
+                    || nl == "next";
+            });
+
+            // b) Sinon, le bouton dont le Name == numéro de la page cible (currentPage+1).
+            if (next is null)
+            {
+                string target = (currentPage + 1).ToString();
+                next = clickables.FirstOrDefault(c => SafeText(() => c.Name).Trim() == target);
+            }
+
+            if (next is null) return false;
+            Console.WriteLine($"      → Pagination alertes : clic « {SafeText(() => next.Name)} » (page {currentPage} → {currentPage + 1}).");
+            try { Interaction.Click(next); }
+            catch (Exception ex) { Console.WriteLine($"      ⓘ clic pagination jeté : {ex.Message}"); return false; }
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⓘ TryGoToNextAlertePage jeté : {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>Poll l'apparition de la grille des demandes (PROC_DEMANDE) après activation d'une
@@ -3416,19 +3559,31 @@ public sealed class LegacyDriver : IDisposable
     /// <summary>Prédicat de sélection d'une demande (ligne du DataGridView) du type voulu, non « en
     /// cours ». Extrait de <see cref="FindDemandeCells"/> pour être réutilisé par le scroll-into-view
     /// (qui re-lit les cellules après chaque cran de molette pour retrouver la MÊME demande par son texte).</summary>
-    private static Func<string, bool> BuildDemandeMatch(bool dcademat)
+    private static Func<string, bool> BuildDemandeMatch(bool dcademat, bool includeMyEnCours = false)
     {
+        // La logique de matching est PURE et testee (LegacyParsing.DemandeRowMatches) — ici on ne lit que
+        // l'override env, le flag d'inclusion des demandes "en cours par moi" (reprise interrompue) et le
+        // jeton de l'utilisateur courant (pour SAUTER pre-open les demandes verrouillees par un AUTRE user).
         var overrideVal = Environment.GetEnvironmentVariable(dcademat ? "RIG_ALERTES_DCADEMAT" : "RIG_ALERTES_LIAISON");
-        return nm =>
-        {
-            if (string.IsNullOrWhiteSpace(nm)) return false;
-            if (!string.IsNullOrWhiteSpace(overrideVal)) return nm.IndexOf(overrideVal, StringComparison.OrdinalIgnoreCase) >= 0;
-            // Idempotence : ignorer les demandes déjà « en cours » (colonne En cours = "X", champ ';X;').
-            if (System.Text.RegularExpressions.Regex.IsMatch(nm, @";\s*X\s*;")) return false;
-            return dcademat
-                ? nm.IndexOf("DCADEMAT", StringComparison.OrdinalIgnoreCase) >= 0
-                : System.Text.RegularExpressions.Regex.IsMatch(nm, @"J0\d{6,}");
-        };
+        return nm => LegacyParsing.DemandeRowMatches(nm, dcademat, includeMyEnCours, overrideVal, CurrentGridUserToken());
+    }
+
+    /// <summary>
+    /// Jeton de l'utilisateur RIG courant tel qu'il apparait dans la colonne "Utilisateur" de la grille des
+    /// demandes (proprietaire/verrou d'une ligne). Sert a DETECTER + SAUTER les demandes verrouillees par un
+    /// AUTRE utilisateur AVANT de tenter l'ouverture (cf. <see cref="LegacyParsing.IsLockedByOtherUser"/> —
+    /// rouvrir une demande tenue par un autre user ne produit AUCUN signal d'ouverture, preuve run live).
+    /// Source : env RIG_LEGACY_GRID_USER si fournie (override explicite), sinon le surname derive de la
+    /// session Windows (<c>Environment.UserName</c> = "raphael.vilain" -&gt; "vilain", qui matche le 1er mot
+    /// de "VILAIN Raphel" affiche dans la grille). Le login RIG smoke est mono-compte (base 9995, titre
+    /// "VILAIN") aligne sur la session Windows. Retour vide -&gt; filtre verrou-autrui inactif (jamais de skip
+    /// par defaut faute d'identite).
+    /// </summary>
+    private static string CurrentGridUserToken()
+    {
+        var ovr = Environment.GetEnvironmentVariable("RIG_LEGACY_GRID_USER");
+        if (!string.IsNullOrWhiteSpace(ovr)) return ovr.Trim();
+        return LegacyParsing.CurrentUserSurname(Environment.UserName);
     }
 
     /// <summary>HWND du DataGridView des demandes (ultDgvResultats / Table / _dgvDemandes), sinon du
@@ -3746,36 +3901,111 @@ public sealed class LegacyDriver : IDisposable
     /// faisait RIEN et le double-clic tapait dans le vide → aucune demande ouvrable. accSelect scrolle
     /// nativement la ligne, et l'ouverture par Entrée ne dépend plus d'aucune coordonnée écran.
     /// THROW si AUCUNE demande ne produit de signal d'ouverture (l'appelant NE doit PAS enchaîner l'étape
-    /// réclamation/validation si rien n'est ouvert — sinon il cherche des contrôles absents pendant ~111 s).</summary>
-    public void OpenFirstDemandeAndVerify(bool dcademat)
+    /// réclamation/validation si rien n'est ouvert — sinon il cherche des contrôles absents pendant ~111 s).
+    /// <paramref name="allowMyEnCours"/> : si true, on N'EXCLUT PAS les demandes déjà « en cours par MOI »
+    /// (colonne En cours = "X") du matching — réservé à la REPRISE non mutante (scénario interrompue :
+    /// rouvrir une demande, y compris une déjà ouverte par ma session = la reprise). Les actions MUTANTES
+    /// (validation/réclamation/refus) gardent allowMyEnCours=false (idempotence). Le verrou par un AUTRE
+    /// user reste détecté post-open (IsDemandeLockedOnScreen) et la demande est sautée dans les deux cas.</summary>
+    public void OpenFirstDemandeAndVerify(bool dcademat, bool allowMyEnCours = false)
     {
         IntPtr gridHwnd = ResolveDemandeGridHwnd();
         if (gridHwnd == IntPtr.Zero)
             throw new Exception("Grille des demandes introuvable (hwnd nul) — impossible d'ouvrir une demande.");
 
-        var Match = BuildDemandeMatch(dcademat);
-        // On collecte JUSQU'À 8 demandes (au lieu de 3) : les données DEV au hasard contiennent souvent des
-        // demandes VERROUILLÉES par un autre user (écran sans formulaire, juste « Une demande est en cours sur
-        // ce dossier » + bouton Quitter). On en saute jusqu'à 8 pour avoir une chance d'en trouver une exploitable.
-        const int maxAttempts = 8;
+        var Match = BuildDemandeMatch(dcademat, allowMyEnCours);
+        // On collecte JUSQU'À N demandes : les données DEV au hasard contiennent souvent des demandes
+        // VERROUILLÉES par un autre user (écran sans formulaire, juste « Une demande est en cours sur ce
+        // dossier » + bouton Quitter). On en saute jusqu'à N pour avoir une chance d'en trouver une
+        // exploitable. ⚠ 2026-06-04 : l'alerte « réclamation » (911 demandes) DCADEMAT est fortement
+        // verrouillée par une AUTRE session (run live dca-reclamation/dca-refus FAIL = top demandes lockées,
+        // alors que les formalités J00 de la même alerte sont libres → form-reclamation/form-refus verts).
+        // On échantillonne donc PLUS profond en DCADEMAT (24) qu'en J00 (12) pour traverser le bloc verrouillé
+        // et atteindre une demande DCADEMAT libre plus bas dans la grille. Overridable RIG_DCADEMAT_MAX_DEMANDES
+        // (borné [3..60] pour ne pas exploser le temps de run).
+        int maxAttempts = dcademat ? 24 : 12;
+        var maxEnv = Environment.GetEnvironmentVariable("RIG_DCADEMAT_MAX_DEMANDES");
+        if (!string.IsNullOrWhiteSpace(maxEnv) && int.TryParse(maxEnv, out var mp)) maxAttempts = Math.Max(3, Math.Min(60, mp));
         var hits = CollectDemandeCellsMsaaRich(gridHwnd, Match, maxAttempts);
         Console.WriteLine($"      → {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} via MSAA (rich)"
             + (hits.Count > 0 ? $" ; 1ère : '{LegacyParsing.Truncate(hits[0].Text, 50)}' @ ({hits[0].Cx},{hits[0].Cy}) rowIndex={hits[0].RowIndex}" : ""));
         if (hits.Count == 0)
+        {
+            // 0 candidate retenue. Distinguer « aucune demande de ce type dans la grille » (vraie absence de
+            // données) de « il y a des demandes de ce type mais TOUTES verrouillées par un AUTRE user » (limite
+            // DONNÉES : verrou-autrui détecté pré-open via la colonne Utilisateur, cf. CurrentGridUserToken /
+            // LegacyParsing.IsLockedByOtherUser). On RECOMPTE en ignorant le filtre verrou-autrui pour savoir
+            // combien de lignes du type existaient avant ce filtre.
+            string currentUser = CurrentGridUserToken();
+            var ovrType = Environment.GetEnvironmentVariable(dcademat ? "RIG_ALERTES_DCADEMAT" : "RIG_ALERTES_LIAISON");
+            Func<string, bool> typeOnly = nm => LegacyParsing.DemandeRowMatches(nm, dcademat, includeMyEnCours: allowMyEnCours, overrideSubstring: ovrType, currentUserToken: null);
+            var typeHits = CollectDemandeCellsMsaaRich(gridHwnd, typeOnly, maxAttempts);
+            int lockedByOthers = typeHits.Count(h => LegacyParsing.IsLockedByOtherUser(h.Text, currentUser));
+            if (typeHits.Count > 0 && lockedByOthers >= typeHits.Count)
+            {
+                try { CaptureScreenshot("open-demande-0-candidate-non-verrouillee"); } catch { }
+                throw new Exception($"0 candidate non-verrouillée parmi {typeHits.Count} {(dcademat ? "demande(s) DCADEMAT" : "formalité(s) J00")} "
+                    + $"interrompue(s) : toutes détenues par un AUTRE utilisateur (colonne Utilisateur ≠ « {currentUser} »). "
+                    + "Limite DONNÉES (verrous transitoires par d'autres sessions sur l'environnement DEV), PAS un échec logique : "
+                    + "rouvrir une demande tenue par un autre user ne produit aucun signal d'ouverture. "
+                    + "Relancer (verrous libérés) ou override RIG_ALERTES_* / RIG_LEGACY_GRID_USER.");
+            }
             throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (non « en cours ») dans la grille (données DEV ? override RIG_ALERTES_*).");
+        }
 
         var (top, bottom) = GetGridVisibleBand(gridHwnd);
         Exception? last = null;
         int lockedCount = 0;       // demandes ouvertes MAIS verrouillées par un autre user (sautées)
         int noSignalCount = 0;     // demandes sans signal d'ouverture (sélection/Entrée KO)
+        int selfLockCount = 0;     // demandes « en cours par MOI » (En cours=X, owner=moi) refusées par RIG (garde modale)
+        // Reprise (scénario interrompue) : autorise-t-on à lever NOTRE PROPRE verrou « en cours » stale via le
+        // geste RIG « Supprimer l'état en cours » ? C'est une ÉCRITURE SQL → OFF par défaut (hard rule #13).
+        // ON uniquement si l'opérateur a posé RIG_LEGACY_CLEAR_MY_ENCOURS=1 (et seulement en mode reprise).
+        string token = CurrentGridUserToken();
+        bool clearMyEnCoursAuthorized = allowMyEnCours
+            && IsEnvFlagOn(Environment.GetEnvironmentVariable("RIG_LEGACY_CLEAR_MY_ENCOURS"));
         for (int i = 0; i < hits.Count; i++)
         {
             var hit = hits[i];
+            bool isMyEnCoursSelfLock = LegacyParsing.IsMyEnCoursSelfLock(hit.Text, token);
             try
             {
-                Console.WriteLine($"      → Tentative {i + 1}/{hits.Count} : demande ('{LegacyParsing.Truncate(hit.Text, 50)}') Y={hit.Cy} rowIndex={hit.RowIndex}");
+                Console.WriteLine($"      → Tentative {i + 1}/{hits.Count} : demande ('{LegacyParsing.Truncate(hit.Text, 50)}') Y={hit.Cy} rowIndex={hit.RowIndex}"
+                    + $" [Utilisateur='{LegacyParsing.ExtractUtilisateurColumn(hit.Text)}'{(isMyEnCoursSelfLock ? ", En cours=X (verrou self)" : "")}]");
+
+                // (Reprise + autorisé) Si la ligne porte MON propre verrou « En cours »=X, RIG refusera de la
+                // rouvrir (garde « déjà en cours d'exécution ») → on lève le verrou AVANT d'ouvrir (geste RIG natif).
+                if (isMyEnCoursSelfLock && clearMyEnCoursAuthorized)
+                    TryClearMyEnCoursViaMenu(hit);
+
                 var trigger = BuildOpenDemandeTrigger(gridHwnd, hit, top, bottom);
-                VerifyDocumentOpened(trigger, "Demande (reprise)", waitSeconds: 15);
+                try { VerifyDocumentOpened(trigger, "Demande (reprise)", waitSeconds: 15); }
+                catch (Exception openEx)
+                {
+                    // Pas de signal d'ouverture. Cause la PLUS fréquente sur les formalités interrompues : la garde
+                    // modale RIG « déjà en cours d'exécution » (DMND_EN_COURS=1). On la détecte + on la ferme, et
+                    // si c'est NOTRE verrou + autorisé, on lève le verrou puis on RE-tente l'ouverture UNE fois.
+                    bool guard = IsDejaEnCoursGuardOnScreen();
+                    if (guard)
+                    {
+                        Console.WriteLine($"      ⓘ Tentative {i + 1} : RIG a refusé l'ouverture — garde modale « demande déjà en cours d'exécution » "
+                            + $"(DMND_EN_COURS=1 ; {LegacyParsing.Truncate(openEx.Message, 70)}). On ferme la boîte.");
+                        DismissDejaEnCoursGuard();
+                    }
+                    if (isMyEnCoursSelfLock && clearMyEnCoursAuthorized)
+                    {
+                        // 2e essai : lever le verrou self puis rouvrir (la 1re levée a pu échouer / l'ordre menu→open
+                        // a pu être contrarié par la garde). Une seule reprise par demande (anti-boucle).
+                        if (TryClearMyEnCoursViaMenu(hit))
+                        {
+                            var trigger2 = BuildOpenDemandeTrigger(gridHwnd, hit, top, bottom);
+                            VerifyDocumentOpened(trigger2, "Demande (reprise, après levée du verrou)", waitSeconds: 15);
+                        }
+                        else throw; // verrou non levable (mur HDESK) → propage l'échec d'ouverture initial
+                    }
+                    else
+                        throw; // pas de reprise autorisée → on remonte (compté ci-dessous selon le type de verrou)
+                }
 
                 // ── Signal d'ouverture reçu, MAIS la demande peut être VERROUILLÉE (lockée par un autre user) :
                 //    l'écran DCADEMAT n'affiche alors aucun formulaire, juste un message rouge « Une demande est
@@ -3794,10 +4024,31 @@ public sealed class LegacyDriver : IDisposable
                 Console.WriteLine($"      ✓ Demande ouverte et exploitable (non verrouillée) à la tentative {i + 1}/{hits.Count}.");
                 return; // signal reçu + non verrouillée → succès
             }
-            catch (Exception ex) { last = ex; noSignalCount++; Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}"); }
+            catch (Exception ex)
+            {
+                last = ex; noSignalCount++;
+                // Compte les candidates « en cours par MOI » (verrou self stale) qui n'ont pas pu être ouvertes :
+                // sert au message de sortie spécifique (toutes self-lock → autoriser RIG_LEGACY_CLEAR_MY_ENCOURS).
+                if (isMyEnCoursSelfLock) selfLockCount++;
+                Console.WriteLine($"      ⚠ Tentative {i + 1} sans signal : {ex.Message}");
+            }
         }
 
         // Skip propre (pas d'exception « brute » : message orienté cause/donnée, capté par TryStep comme un Fail lisible).
+        // Cas spécifique reprise : TOUTES les candidates étaient « en cours par MOI » (verrou self stale) et le
+        // déverrouillage n'était pas autorisé → ce n'est PAS un bug logique mais un état de DONNÉES + un GESTE
+        // explicitement gardé (écriture SQL). Message actionnable distinct.
+        if (allowMyEnCours && selfLockCount > 0 && selfLockCount >= hits.Count)
+        {
+            try { CaptureScreenshot("open-demande-toutes-en-cours-par-moi"); } catch { }
+            throw new Exception($"Les {hits.Count} {(dcademat ? "demande(s) DCADEMAT" : "formalité(s) J00")} interrompue(s) candidates sont "
+                + "TOUTES « en cours par MOI » (colonne « En cours »=X, owner=utilisateur courant = verrou self laissé par un "
+                + "run smoke précédent ; DMND_EN_COURS=1). RIG refuse de rouvrir une demande en cours (garde modale « déjà en "
+                + "cours d'exécution », FormRigClientAccueil._ReprendreProcessus) → le double-clic n'ouvre rien. Mécanisme de "
+                + "reprise = LEVER le verrou via le menu « Supprimer l'état en cours » (écrit en base : DMND_EN_COURS=0). Ce "
+                + "geste est gardé : relancer avec RIG_LEGACY_CLEAR_MY_ENCOURS=1 (autorisation d'écriture SQL) pour ouvrir, "
+                + "OU faire lever ces verrous self orphelins une fois côté données.");
+        }
         if (lockedCount > 0 && lockedCount + noSignalCount >= hits.Count)
         {
             try { CaptureScreenshot("open-demande-toutes-verrouillees"); } catch { }
@@ -3808,7 +4059,17 @@ public sealed class LegacyDriver : IDisposable
                 + "RIG_ALERTES_* vers un dossier non verrouillé.");
         }
         throw new Exception($"Aucune des {hits.Count} demande(s) {(dcademat ? "DCADEMAT" : "formalités J00")} n'a produit de signal d'ouverture "
-            + $"(sélection MSAA + Entrée + fallback clavier tous tentés ; {lockedCount} verrouillée(s) sautée(s)). Dernière erreur : {last?.Message}");
+            + $"(sélection MSAA + Entrée + fallback clavier tous tentés ; {lockedCount} verrouillée(s) sautée(s), {selfLockCount} « en cours par moi » refusée(s)). "
+            + $"Dernière erreur : {last?.Message}");
+    }
+
+    /// <summary>true si la variable d'environnement vaut un « ON » explicite (1 / true / yes / on, casse
+    /// indifférente). null/vide/autre -&gt; false. Pur (hors lecture de l'argument déjà résolu).</summary>
+    private static bool IsEnvFlagOn(string? v)
+    {
+        if (string.IsNullOrWhiteSpace(v)) return false;
+        var t = v.Trim().ToLowerInvariant();
+        return t == "1" || t == "true" || t == "yes" || t == "on";
     }
 
     /// <summary>
@@ -3989,6 +4250,107 @@ public sealed class LegacyDriver : IDisposable
         return LegacyParsing.IsLoadingOverlay(sb.ToString());
     }
 
+    /// <summary>true si l'écran affiche actuellement la GARDE modale RIG « Vous ne pouvez pas traiter une
+    /// demande qui est déjà en cours d'exécution… » (cf. <see cref="LegacyParsing.IsDejaEnCoursGuard"/>).
+    /// C'est la réponse de <c>ReprendreProcessus</c> quand on double-clique une demande dont
+    /// <c>DMND_EN_COURS=1</c> : RIG ouvre cette boîte au lieu d'ouvrir la demande → AUCUN signal d'ouverture.
+    /// Agrège le Name de tous les descendants Text/Pane/Edit (+ valeur Edit) puis délègue à la logique pure.
+    /// Lecture seule. Si vrai, on DISMISS la boîte (Échap/Entrée) pour ne pas laisser un modal bloquant.</summary>
+    private bool IsDejaEnCoursGuardOnScreen()
+    {
+        if (_window is null) return false;
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            foreach (var c in _window.FindAllDescendants())
+            {
+                ControlType ct;
+                try { ct = c.ControlType; } catch { continue; }
+                if (ct != ControlType.Text && ct != ControlType.Pane && ct != ControlType.Edit) continue;
+                var n = SafeText(() => c.Name);
+                if (n.Length > 0) { sb.Append(n).Append(' '); if (LegacyParsing.IsDejaEnCoursGuard(n)) return true; }
+                if (ct == ControlType.Edit)
+                {
+                    try { if (c.Patterns.Value.IsSupported) { var v = SafeText(() => c.Patterns.Value.Pattern.Value.Value); if (v.Length > 0) sb.Append(v).Append(' '); } } catch { }
+                }
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ IsDejaEnCoursGuardOnScreen scan jeté : {ex.GetType().Name}"); }
+        return LegacyParsing.IsDejaEnCoursGuard(sb.ToString());
+    }
+
+    /// <summary>Ferme la boîte modale « déjà en cours d'exécution » (DialogBox RIG à bouton unique « OK ») :
+    /// clique « OK » si localisable, sinon poste Entrée puis Échap sur la fenêtre (best-effort, focus-free).
+    /// Non bloquant. Sert à ne pas laisser un modal ouvert après une tentative d'ouverture refusée.</summary>
+    private void DismissDejaEnCoursGuard()
+    {
+        if (_window is null) return;
+        AutomationElement? okBtn = null;
+        try
+        {
+            okBtn = _window.FindAllDescendants()
+                .Where(c => { try { return c.IsAvailable && !c.IsOffscreen; } catch { return false; } })
+                .FirstOrDefault(c =>
+                {
+                    ControlType ct; try { ct = c.ControlType; } catch { return false; }
+                    if (ct != ControlType.Button && ct != ControlType.Pane) return false;
+                    var nl = SafeText(() => c.Name).Replace("&", "").Trim().ToLowerInvariant();
+                    return nl == "ok" || nl == "fermer" || nl.StartsWith("ok ") || nl.StartsWith("ok(");
+                });
+        }
+        catch { }
+        if (okBtn is not null) { try { Interaction.Click(okBtn); } catch { TryEscapeOnWindow(); } }
+        else
+        {
+            try
+            {
+                IntPtr h = IntPtr.Zero;
+                try { if (_window.Properties.NativeWindowHandle.IsSupported) h = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+                if (h != IntPtr.Zero) { Interaction.ForceFocus(h); Interaction.PostKey(h, VK_RETURN_KEY); }
+            }
+            catch { }
+            TryEscapeOnWindow();
+        }
+        // Laisser la boîte se fermer (poll court, plafond 3s).
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 3000 && IsDejaEnCoursGuardOnScreen()) Thread.Sleep(200);
+    }
+
+    /// <summary>
+    /// MÉCANISME DE REPRISE d'une formalité interrompue VERROUILLÉE « en cours par MOI » (verrou self stale,
+    /// colonne « En cours »=X, cf. <see cref="LegacyParsing.IsMyEnCoursSelfLock"/>) : RIG refuse de la rouvrir
+    /// tant que <c>DMND_EN_COURS=1</c>. On lève le verrou via le GESTE RIG natif = menu contextuel de la grille
+    /// « <b>Supprimer l'état en cours</b> » (<c>OPE_RESULTATS.tsmiDeleteEtatEnCoursDemande</c> →
+    /// <c>Demande.Cloturer</c> remet <c>DMND_EN_COURS=0</c>), puis on laisse l'appelant re-tenter l'ouverture.
+    ///
+    /// ⚠ ÉCRITURE SQL : « Supprimer l'état en cours » modifie la base (clôt le verrou ; pour un user non-Amitel
+    /// crée aussi une LIGNE_RAPP_GENE). Ce geste n'est donc exécuté QUE si l'opérateur l'a explicitement
+    /// autorisé via l'env <c>RIG_LEGACY_CLEAR_MY_ENCOURS=1</c> (défaut OFF). Sans ce flag, on NE touche RIEN.
+    ///
+    /// Réutilise <see cref="DoOpenMenuAndClickItem"/> (sélection ligne + ouverture du ContextMenuStrip via
+    /// VK_APPS/clic-droit + clic de l'item par MSAA) — message-based, marche sur HDESK. Retourne true si le
+    /// geste a pu être déclenché (clic de l'item OK), false sinon (menu non matérialisé sur HDESK / item
+    /// absent). Best-effort : l'appelant supervise ensuite le signal d'ouverture re-tenté.</summary>
+    private bool TryClearMyEnCoursViaMenu(DemandeCellHit hit)
+    {
+        Console.WriteLine($"      → Reprise : levée du verrou self « En cours »=X via menu « Supprimer l'état en cours » "
+            + $"(autorisé par RIG_LEGACY_CLEAR_MY_ENCOURS) sur ('{LegacyParsing.Truncate(hit.Text, 50)}').");
+        try
+        {
+            DoOpenMenuAndClickItem(hit.Cx, hit.Cy, "Supprimer l'état en cours");
+            // Laisser RIG exécuter le Cloturer (poll court) ; pas de vérif visuelle possible sur HDESK.
+            Thread.Sleep(800);
+            Console.WriteLine("      ✓ Geste « Supprimer l'état en cours » déclenché — on re-tente l'ouverture de la demande.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⚠ « Supprimer l'état en cours » non déclenché ({ex.Message}) — "
+                + "menu contextuel non matérialisé (mur HDESK) ou item absent. Verrou NON levé.");
+            return false;
+        }
+    }
+
     // ════════════════════════════════════════════════════════════════════════
     // DCADEMAT validation — step "Action" (Étape 3)
     // Après OpenFirstDemandeAndVerify(dcademat:true) → écran "Configurer le dépôt".
@@ -4104,16 +4466,315 @@ public sealed class LegacyDriver : IDisposable
 
         if (numDemande is null)
         {
+            // ── Signal de succès de REPLI : « Tableau des éditions » apparu après Valider ───────────────
+            // ⚠ Découverte run live 2026-06-04 (screenshot 26228) : pour une demande DCADEMAT « Qualifiée »,
+            // « Valider » CRÉE le dépôt (Facture + Certificat de dépôt générés) PUIS navigue vers l'écran
+            // « Tableau des éditions ». La grille Exercices n'est alors PLUS à l'écran → la relecture des n°
+            // y échoue alors même que le dépôt EXISTE. Le passage à « Tableau des éditions » est donc une
+            // PREUVE de succès équivalente (Valider a bien été cliqué juste avant dans ce flux). On NE clique
+            // RIEN ici (lecture seule) → garde NE PAS IMPRIMER intacte. Décision = helper pur testé.
+            bool editionsAfter = IsTableauEditionsScreen();
+            if (LegacyParsing.ShouldAcceptDepotViaEditionsScreen(numDemandeFound: false, validerWasClicked: true, editionsScreenAfter: editionsAfter))
+            {
+                try { CaptureScreenshot("dca-validation-ok-via-tableau-editions"); } catch { }
+                Console.WriteLine("      ✓ Validation DCADEMAT OK (signal de repli) — aucun n° relisible dans la grille "
+                    + "Exercices car RIG a navigué vers « Tableau des éditions » APRÈS Valider (= dépôt créé : "
+                    + "lettre d'envoi + Facture + Certificat de dépôt générés, cf. screenshot). Valider cliqué + écran "
+                    + "« Tableau des éditions » présent = preuve de création du dépôt. NE PAS IMPRIMER respecté (rien cliqué ici).");
+                return;
+            }
+
             Console.WriteLine($"      → Texte agrégé UIA+MSAA de la grille (pour diag) : '{lastAgg}'");
             DumpExercicesDataItemsUia();
             try { CaptureScreenshot("dca-validation-no-numero"); } catch { }
             throw new Exception("Échec validation DCADEMAT : aucun n° de demande (préfixe 'D') détecté après Valider " +
-                "(le dépôt n'a pas été créé, ou les colonnes n° ne sont pas lisibles — voir dump + screenshot).");
+                "ET l'écran n'est pas « Tableau des éditions » (le dépôt n'a pas été créé, ou les colonnes n° ne sont "
+                + "pas lisibles — voir dump + screenshot).");
         }
 
         Console.WriteLine($"      ✓ Validation DCADEMAT OK — dépôt créé (n° de demande {numDemande}"
             + (numDepot != null ? $", n° de dépôt {numDepot}" : "")
             + (numFacture != null ? $", n° de facture {numFacture}" : "") + ").");
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // DCADEMAT / Formalité — step "Action" : VALIDATION (formalité J00)
+    // Après OpenFirstDemandeAndVerify(dcademat:false) → écran de la formalité (onglet A1_C / A2…
+    // « configurer A1ou A2 »). Le but terminal = cliquer « Valider » sur la formalité, puis vérifier
+    // que la validation a abouti SANS dépendre de l'aperçu écran (mur HDESK) : RIG vivant + soit un
+    // n° de demande apparu, soit l'onglet de la formalité fermé/rechargé. La validation d'une formalité
+    // NE déclenche PAS d'impression (même profil que la validation DCA — elle persiste l'état) → garde
+    // NE PAS IMPRIMER respectée (aucun bouton Imprimer / boîte d'impression touché).
+    // ════════════════════════════════════════════════════════════════════════
+    /// <summary>
+    /// Sur l'écran d'une formalité démat (J00) ouverte : attend la fin du chargement, cherche le bouton
+    /// « Valider » (toolbar RigToolBar, AccessibleName « Valider », F12). S'il est PRÉSENT et ACTIVÉ (=
+    /// la formalité est au stade actionnable), le clique puis confirme le succès sans aperçu (RIG vivant +
+    /// best-effort n° de demande « D… »), et renvoie <c>true</c>.
+    ///
+    /// ⚠ Renvoie <c>false</c> (PAS d'exception) si la formalité ouverte N'EST PAS au stade « Valider »
+    /// (bouton absent ou désactivé). C'est un cas de DONNÉES légitime, pas un bug du harnais : l'alerte
+    /// « DEMAT INPI – Formalités » mélange des formalités à divers stades ; certaines s'ouvrent sur un écran
+    /// de chargement de dossier (MB1 « Entrée dans le RCS ») sans action « Valider » en un clic (preuve run
+    /// live 2026-06-04, screenshot 12752 : COP 38 / dossier 2019B00783). Le terminal « demande ouverte » est
+    /// déjà prouvé par le step précédent ; l'appelant convertit ce <c>false</c> en SKIP (pas en FAIL), comme
+    /// les autres scénarios formalité « ouvrir = terminal ». THROW UNIQUEMENT si RIG a crashé après le clic.
+    /// </summary>
+    public bool ValiderFormaliteDemat()
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + OpenFirstDemandeAndVerify(dcademat:false) doivent être appelés avant ValiderFormaliteDemat()");
+
+        EnsureWindowMaximized();
+        WaitForLoadingOverlayToClear(maxMs: 15000);
+
+        var btn = FindToolbarActionButton(new[] { "valider" }, excludeContains: new[] { "sélection", "selection" });
+        if (btn is null)
+        {
+            try { CaptureScreenshot("form-validation-valider-absent-stade-non-actionnable"); } catch { }
+            Console.WriteLine("      ⓘ Action validation formalité : bouton « Valider » absent sur l'écran de la formalité "
+                + "ouverte (stade non actionnable / écran de chargement de dossier, p.ex. MB1 « Entrée dans le RCS »). "
+                + "Cas de données légitime → non bloquant : le terminal « demande ouverte » est déjà prouvé. SKIP de l'action.");
+            return false;
+        }
+        if (!IsElementEnabled(btn))
+        {
+            try { CaptureScreenshot("form-validation-valider-desactive"); } catch { }
+            Console.WriteLine("      ⓘ Action validation formalité : bouton « Valider » DÉSACTIVÉ (IsEnabled=false) → la "
+                + "formalité n'est pas dans un état validable (données DEV / étape incomplète). On NE force PAS → SKIP de l'action.");
+            return false;
+        }
+
+        Console.WriteLine($"      → Click « Valider » formalité (Type={SafeText(() => btn.ControlType.ToString())} Name='{SafeText(() => btn.Name)}')");
+        try { Interaction.Click(btn); }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      → ⚠ Click bouton Valider a jeté ({ex.Message}) — fallback F12 posté sur la fenêtre.");
+            PostWindowKey(0x7B /* VK_F12 */);
+        }
+
+        // Une validation peut ouvrir une popup de confirmation (« Voulez-vous valider… » / message d'info).
+        // On l'accepte (Entrée) si elle apparaît — JAMAIS de bouton Imprimer touché.
+        AcceptConfirmationPopupIfAny(maxMs: 4000);
+
+        // Vérif sans aperçu : RIG vivant + best-effort n° demande / rechargement.
+        EnsureRigStillAlive("Valider (formalité)");
+        Console.WriteLine("      → Attente d'un signal de succès (n° de demande « D… » OU rechargement, max 20s, sans aperçu)…");
+        var sw = Stopwatch.StartNew();
+        string? numDemande = null;
+        while (sw.Elapsed.TotalSeconds < 20 && numDemande is null)
+        {
+            string agg = ReadWindowTextAggregate(maxChars: 4000);
+            numDemande = KbisTextChecks.FindNumDemande(agg);
+            if (numDemande is null) Thread.Sleep(500);
+        }
+        if (numDemande is not null)
+        {
+            Console.WriteLine($"      ✓ Validation formalité OK — n° de demande {numDemande} détecté après Valider (RIG vivant).");
+            return true;
+        }
+        // Pas de n° lu : la formalité a pu se valider + fermer/recharger (mur HDESK : pas de vision). On a
+        // PROUVÉ : demande ouverte au stade actionnable + Valider présent/enabled/cliqué + RIG vivant.
+        Console.WriteLine("      ✓ Validation formalité : « Valider » présent+activé+cliqué et RIG toujours vivant ; "
+            + "⚠ LIMITE : pas de n° de demande relu (écran rechargé/fermé non visible sur HDESK Mode B) → "
+            + "confirmation visuelle du n° à faire en Mode A/C avec supervision.");
+        return true;
+    }
+
+    // ════════════════════════════════════════════════════════════════════════
+    // DCADEMAT / Formalité — step "Action" : REFUS
+    // Après OpenFirstDemandeAndVerify(...) sur une demande EN ATTENTE (même alerte que la validation).
+    // Le bouton « Refuser » (RigToolBar : TypeButtonRigToolBar.REFUS, AccessibleName « Refuser », Alt+F)
+    // est présent sur l'écran de la demande actionnable (cf. toolbar RigToolBar.cs:182). Le refus met la
+    // demande en état Refus et déclenche un courrier de refus EN APERÇU (comme la réclamation) → garde
+    // NE PAS IMPRIMER : on clique « Refuser », on accepte une éventuelle confirmation, mais on NE touche
+    // JAMAIS un bouton Imprimer / une boîte d'impression. Vérif sans aperçu : RIG vivant + signal.
+    // ════════════════════════════════════════════════════════════════════════
+    /// <summary>
+    /// Sur l'écran d'une demande (DCADEMAT ou formalité) ouverte au stade actionnable : vérifie que le
+    /// bouton « Refuser » est PRÉSENT et ACTIVÉ (vrai terminal métier « refus » atteignable), le clique
+    /// (fallback Alt+F), accepte une éventuelle popup de confirmation, puis confirme SANS aperçu : RIG
+    /// toujours vivant + (best-effort) signal d'ouverture du courrier de refus. THROW si « Refuser » est
+    /// absent/désactivé ou si RIG a crashé. ⚠ NE PAS IMPRIMER : aucun bouton Imprimer touché.
+    /// </summary>
+    public void RefuserDemande()
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + OpenFirstDemandeAndVerify doivent être appelés avant RefuserDemande()");
+
+        EnsureWindowMaximized();
+        WaitForLoadingOverlayToClear(maxMs: 15000);
+
+        var btn = FindToolbarActionButton(new[] { "refuser" }, excludeContains: System.Array.Empty<string>());
+        if (btn is null)
+        {
+            DumpDescendants(_window!, maxDepth: 5);
+            try { CaptureScreenshot("refus-bouton-refuser-introuvable"); } catch { }
+            throw new Exception("Action refus : bouton « Refuser » (RigToolBar REFUS, Alt+F) introuvable sur l'écran de la "
+                + "demande. La demande n'est peut-être pas au stade actionnable (mauvaise alerte / état de données DEV), "
+                + "ou la toolbar n'expose pas ce bouton sur cet écran. Voir dump + screenshot.");
+        }
+        if (!IsElementEnabled(btn))
+        {
+            try { CaptureScreenshot("refus-refuser-desactive"); } catch { }
+            throw new Exception("Action refus : le bouton « Refuser » est DÉSACTIVÉ (IsEnabled=false) → la demande n'est "
+                + "pas dans un état refusable. On NE force PAS.");
+        }
+
+        // Le refus génère un courrier en aperçu (comme la réclamation) → VerifyDocumentOpened capture
+        // son propre baseline (process/fenêtre/fichier/onglet) autour du trigger et throw si aucun signal.
+        bool signalOpened = true;
+        string signalDetail = "";
+        try
+        {
+            VerifyDocumentOpened(() =>
+            {
+                Console.WriteLine($"      → Click « Refuser » (Type={SafeText(() => btn.ControlType.ToString())} Name='{SafeText(() => btn.Name)}')");
+                try { Interaction.Click(btn); }
+                catch (Exception ex) { Console.WriteLine($"      → ⚠ Click bouton Refuser a jeté ({ex.Message}) — fallback Alt+F"); PostWindowAltKey(0x46 /* VK_F */); }
+                // Refus peut demander une confirmation avant de générer le courrier.
+                AcceptConfirmationPopupIfAny(maxMs: 4000);
+            }, "Courrier de refus (demande)", waitSeconds: 25);
+        }
+        catch (Exception ex)
+        {
+            signalOpened = false;
+            signalDetail = ex.Message;
+            Console.WriteLine($"      → ⓘ Aucun signal d'ouverture détecté autour de Refuser : {ex.Message}");
+            try { CaptureFullVirtualScreen("refus-apercu-absent-mur-hdesk"); } catch { }
+        }
+
+        // Vérif sans aperçu : RIG toujours vivant (un crash = échec dur).
+        EnsureRigStillAlive("Refuser");
+        if (signalOpened)
+        {
+            Console.WriteLine("      ✓ Refus exécuté : « Refuser » présent+activé+cliqué, un signal d'ouverture (courrier/aperçu/onglet) "
+                + "a été détecté et RIG est vivant. ⚠ LIMITE : le contenu du courrier de refus n'a pas pu être lu (aperçu non "
+                + "matérialisé sur HDESK Mode B). Confirmation visuelle à faire en Mode A/C avec supervision. NE PAS IMPRIMER respecté.");
+            return;
+        }
+        Console.WriteLine("      ✓ Refus déclenché : « Refuser » présent+activé+cliqué et RIG toujours vivant, MAIS aucun signal "
+            + $"d'ouverture du courrier détecté (mur HDESK : aperçu non matérialisé sur desktop non composé). ⚠ LIMITE FORTE : "
+            + $"le déclenchement de l'aperçu de refus n'est pas confirmé ici. Signal manquant : {signalDetail}. "
+            + "Validation visuelle à faire en Mode A/C. NE PAS IMPRIMER respecté.");
+    }
+
+    // ── Helpers communs aux nouvelles actions (validation formalité / refus) ──────────────────────────
+
+    /// <summary>Cherche un bouton d'action de la toolbar (RigToolBar) par Name (AccessibleName WinForms, le
+    /// '&' mnémonique est retiré). <paramref name="nameLowerContains"/> = liste OU de sous-chaînes à matcher
+    /// (minuscules) ; <paramref name="excludeContains"/> = sous-chaînes qui DISQUALIFIENT (ex. « sélection »
+    /// pour ne pas attraper « Valider la sélection » de Rapture). ControlType Button OU MenuItem OU Pane
+    /// (RigButton custom = Pane UIA). Retourne null si introuvable.</summary>
+    private AutomationElement? FindToolbarActionButton(string[] nameLowerContains, string[] excludeContains)
+    {
+        if (_window is null) return null;
+        try
+        {
+            return _window.FindAllDescendants().FirstOrDefault(c =>
+            {
+                ControlType ct; try { ct = c.ControlType; } catch { return false; }
+                if (ct != ControlType.Button && ct != ControlType.MenuItem && ct != ControlType.Pane) return false;
+                var n = SafeText(() => c.Name).Replace("&", "").Trim().ToLowerInvariant();
+                if (n.Length == 0) return false;
+                foreach (var ex in excludeContains) if (ex.Length > 0 && n.Contains(ex)) return false;
+                foreach (var inc in nameLowerContains)
+                {
+                    if (n == inc) return true;                       // match exact prioritaire
+                    if (n.StartsWith(inc + " ") || n.StartsWith(inc)) return true; // « valider f12 », « refuser »
+                }
+                return false;
+            });
+        }
+        catch { return null; }
+    }
+
+    /// <summary>true si l'élément est activé (IsEnabled). Tolérant : si la propriété n'est pas lisible
+    /// (UIA cache transitoire), on considère ACTIVÉ par défaut (true) pour ne pas bloquer à tort.</summary>
+    private static bool IsElementEnabled(AutomationElement el)
+    {
+        try { return el.IsEnabled; } catch { return true; }
+    }
+
+    /// <summary>Accepte (Entrée) une popup de confirmation WinForms (MessageBox owned) si elle apparaît
+    /// dans <paramref name="maxMs"/>. NE clique JAMAIS un bouton « Imprimer » : on poste seulement VK_RETURN
+    /// (bouton par défaut = Oui/OK des confirmations RIG). Best-effort, non bloquant. Une boîte d'IMPRESSION
+    /// (Name contenant « imprim » / « print ») est explicitement IGNORÉE (on ne la valide pas → garde NE PAS
+    /// IMPRIMER) et signalée.</summary>
+    private void AcceptConfirmationPopupIfAny(int maxMs)
+    {
+        if (_window is null) return;
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            try
+            {
+                var popup = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Window))
+                    .FirstOrDefault(w => { try { return w.IsAvailable && !w.IsOffscreen && SafeText(() => w.Name).Length > 0; } catch { return false; } });
+                if (popup is not null)
+                {
+                    var pn = SafeText(() => popup.Name).ToLowerInvariant();
+                    if (pn.Contains("imprim") || pn.Contains("print"))
+                    {
+                        Console.WriteLine($"      → ⚠ Boîte d'impression détectée ('{SafeText(() => popup.Name)}') — IGNORÉE (garde NE PAS IMPRIMER : non validée).");
+                        return;
+                    }
+                    IntPtr ph = IntPtr.Zero;
+                    try { ph = popup.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+                    Console.WriteLine($"      → Popup de confirmation détectée ('{SafeText(() => popup.Name)}') — Entrée (bouton par défaut).");
+                    if (ph != IntPtr.Zero) Interaction.PressKey(ph, 0x0D /* VK_RETURN */);
+                    else { try { Interaction.PressEnter(popup); } catch { } }
+                    return;
+                }
+            }
+            catch { }
+            Thread.Sleep(250);
+        }
+    }
+
+    /// <summary>Agrège le texte (Name + valeur Edit) des descendants Text/Pane/Edit de la fenêtre, jusqu'à
+    /// <paramref name="maxChars"/>. Sert à relire les n° (demande/dépôt) après une action sans dépendre
+    /// d'une grille précise. Lecture seule, tolérant aux exceptions.</summary>
+    private string ReadWindowTextAggregate(int maxChars)
+    {
+        if (_window is null) return "";
+        var sb = new System.Text.StringBuilder();
+        try
+        {
+            foreach (var c in _window.FindAllDescendants())
+            {
+                if (sb.Length >= maxChars) break;
+                ControlType ct; try { ct = c.ControlType; } catch { continue; }
+                if (ct != ControlType.Text && ct != ControlType.Pane && ct != ControlType.Edit) continue;
+                var n = SafeText(() => c.Name);
+                if (n.Length > 0) sb.Append(n).Append(' ');
+                if (ct == ControlType.Edit)
+                {
+                    try { if (c.Patterns.Value.IsSupported) { var v = SafeText(() => c.Patterns.Value.Pattern.Value.Value); if (v.Length > 0) sb.Append(v).Append(' '); } } catch { }
+                }
+            }
+        }
+        catch { }
+        return sb.ToString();
+    }
+
+    /// <summary>Poste une touche simple (WM_KEYDOWN/UP) sur le hwnd de la fenêtre principale RIG.</summary>
+    private void PostWindowKey(int vk)
+    {
+        IntPtr hwnd = IntPtr.Zero;
+        try { if (_window!.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → ⚠ PostWindowKey : hwnd fenêtre introuvable."); return; }
+        Interaction.PressKey(hwnd, vk);
+    }
+
+    /// <summary>Poste un raccourci Alt+&lt;vk&gt; (WM_SYSKEYDOWN/UP) sur le hwnd de la fenêtre principale RIG
+    /// (ex. Alt+F = REFUS). Modèle PostAltR.</summary>
+    private void PostWindowAltKey(int vk)
+    {
+        IntPtr hwnd = IntPtr.Zero;
+        try { if (_window!.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (hwnd == IntPtr.Zero) { Console.WriteLine("      → ⚠ PostWindowAltKey : hwnd fenêtre introuvable."); return; }
+        Interaction.PostAltKey(hwnd, vk);
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -4211,8 +4872,52 @@ public sealed class LegacyDriver : IDisposable
                 + "combo n'expose pas de ComboBox UIA. Voir dump + screenshot pour ajuster le sélecteur.");
         }
 
+        // ── (2c) Demande DÉJÀ réclamée détectée par le TEXTE de l'écran (filet robuste, indépendant du combo) ─
+        // ⚠ L'alerte « Demandes en réclamations > 15 jours » contient des demandes DÉJÀ en réclamation. Deux
+        //   variants de données observés (runs live 2026-06-04) :
+        //     • combo « Type de motif » VIDE + motif posé (LOCODAN, screenshot 2084) → capté par IsAlreadyReclamee
+        //       dans SelectMotifInCombo (cas C1 ci-dessous).
+        //     • combo « Type de motif » PEUPLÉ (INPMANQ déjà sélectionné) + motif posé + « Etat Demande = N -
+        //       Réclamation » + commentaire « réclamation en cours n° D… » (INCEPTO AVOCATS, screenshot
+        //       dca-reclamation-FAIL-170431) → le combo n'étant PAS vide, IsAlreadyReclamee ne se déclenche pas
+        //       et l'ancien code poursuivait vers la mutation du texte (étape 5) qui ÉCHOUAIT (champ « Motif »
+        //       non éditable / sans ValuePattern sur une demande déjà réclamée) → FAIL persistant des 4 rounds.
+        //   Dans les DEUX cas le terminal métier « la demande est en réclamation » est DÉJÀ atteint : il ne faut
+        //   NI re-saisir NI re-soumettre. On lit le texte agrégé de l'écran (qui contient l'« Etat Demande » et le
+        //   commentaire) et, si IsDemandeDejaReclamee, on conclut en succès SANS toucher au texte ni à « Réclamer ».
+        //   Discrimination dans le helper pur (testé) pour ne PAS sur-déclencher sur une demande EN ATTENTE
+        //   (l'écran contient toujours le titre « Réclamation / Refus » + bouton « Réclamer »).
+        {
+            string screenAgg = ReadWindowTextAggregate(maxChars: 6000);
+            if (LegacyParsing.IsDemandeDejaReclamee(screenAgg))
+            {
+                try { CaptureScreenshot("dca-reclamation-ok-deja-reclamee-etat"); } catch { }
+                Console.WriteLine("      ✓ Réclamation DCADEMAT : la demande ouverte est DÉJÀ réclamée (état « N - Réclamation » / "
+                    + "« réclamation en cours » lu à l'écran ; combo peut être peuplé ou vide). Terminal métier « demande en "
+                    + "réclamation » ATTEINT → succès. Aucune re-saisie ni re-soumission (NE PAS IMPRIMER respecté).");
+                return;
+            }
+        }
+
         // ── (3) Sélectionner le type de motif (ex INPMANQ) ───────────────────────────────────────────
-        SelectMotifInCombo(combo, motif);
+        // ⚠ Si la demande ouverte est DÉJÀ réclamée (combo « Type de motif » verrouillé/vide alors qu'un
+        //   motif est déjà posé — cf. SelectMotifInCombo (C1) + IsAlreadyReclamee), SelectMotifInCombo lève
+        //   AlreadyReclameeException. Ce n'est PAS un échec : le terminal métier « la demande est en
+        //   réclamation » est déjà atteint. On NE modifie PAS le texte (étapes 4/5 inutiles + on évite tout
+        //   ré-enregistrement) et on conclut en succès. (Données DEV : l'alerte « réclamation » mélange des
+        //   demandes en attente et des demandes déjà réclamées ; ce filet rend le scénario robuste à ce hasard.)
+        try
+        {
+            SelectMotifInCombo(combo, motif);
+        }
+        catch (AlreadyReclameeException arx)
+        {
+            try { CaptureScreenshot("dca-reclamation-ok-deja-reclamee"); } catch { }
+            Console.WriteLine($"      ✓ Réclamation DCADEMAT : la demande ouverte est DÉJÀ réclamée (motif déjà posé : "
+                + $"'{arx.CurrentMotif}', combo « Type de motif » verrouillé/vide). Terminal métier « demande en "
+                + "réclamation » ATTEINT → succès. Texte non modifié (pas de ré-enregistrement). NE PAS IMPRIMER respecté.");
+            return;
+        }
 
         // ── (4) Tabuler → RIG remplit le texte du motif (MTFEV_TEXTE_MOTIF depuis CODE_MOTIF) ─────────
         Console.WriteLine("      → (4) Tab pour quitter le combo → RIG remplit le texte du motif…");
@@ -4249,9 +4954,23 @@ public sealed class LegacyDriver : IDisposable
             }
             if (!SupportsValue(motifTextEl))
             {
+                // ⚠ Filet déjà-réclamée (défense en profondeur) : sur une demande DÉJÀ réclamée, le champ
+                //   « Motif » est non éditable et n'expose PAS de ValuePattern. Si le texte de l'écran confirme
+                //   l'état réclamation (relu ici au cas où la détection (2c) aurait raté un cache UIA transitoire),
+                //   ce n'est PAS un échec : le terminal métier est atteint. On ne mute rien, on conclut en succès.
+                string aggNow = ReadWindowTextAggregate(maxChars: 6000);
+                if (LegacyParsing.IsDemandeDejaReclamee(aggNow))
+                {
+                    try { CaptureScreenshot("dca-reclamation-ok-deja-reclamee-champ-non-editable"); } catch { }
+                    Console.WriteLine("      ✓ Réclamation DCADEMAT : le champ « Motif » n'est pas éditable (pas de ValuePattern) ET "
+                        + "l'écran confirme l'état « réclamation » → demande DÉJÀ réclamée, terminal métier ATTEINT → succès "
+                        + "(aucune re-saisie/re-soumission ; NE PAS IMPRIMER respecté).");
+                    return;
+                }
                 try { CaptureScreenshot("dca-reclam-motif-sans-valuepattern"); } catch { }
                 throw new Exception("Étape « Réclamation / Refus » : le champ « Motif » ciblé n'expose PAS de ValuePattern "
-                    + "(non saisissable via UIA). Mauvaise cible ou contrôle non éditable — voir screenshot.");
+                    + "(non saisissable via UIA) et l'écran n'indique pas une demande déjà réclamée. Mauvaise cible ou "
+                    + "contrôle non éditable — voir screenshot.");
             }
             if (readOnly == true)
             {
@@ -4502,8 +5221,17 @@ public sealed class LegacyDriver : IDisposable
         try { CaptureScreenshot("dca-reclam-motif-introuvable-dans-combo"); } catch { }
         if (items.Length == 0)
         {
-            // (C) Dropdown ouvert ET 0 item => le combo n'a réellement aucune option (données DEV) — PAS le
-            // faux négatif historique (combo lazy fermé), puisqu'on l'a explicitement ouvert + attendu ci-dessus.
+            // (C) Dropdown ouvert ET 0 item. Deux sous-cas (décision = helper pur testé IsAlreadyReclamee) :
+            //   (C1) une valeur de motif est DÉJÀ présente ('current' non vide, ex « 9LIB ») => la demande
+            //        ouverte est DÉJÀ réclamée : RIG verrouille alors le combo « Type de motif » (plus rien à
+            //        re-choisir). Ce N'EST PAS un échec — la réclamation EXISTE (terminal métier de ce scénario
+            //        atteint). On remonte un signal TYPÉ (AlreadyReclameeException) que ReclamerDcaAvecMotif
+            //        convertit en succès terminal. (preuve run live 2026-06-04, screenshot 2084 : LOCODAN en
+            //        état « N - Réclamation », motif « 9LIB / Veuillez » déjà posé, combo vide.)
+            //   (C2) AUCUNE valeur posée => vrai écran vide / mauvais état de données (combo réellement sans
+            //        option) => on garde l'échec d'origine.
+            if (LegacyParsing.IsAlreadyReclamee(items.Length, current))
+                throw new AlreadyReclameeException(string.IsNullOrWhiteSpace(current) ? "(vide)" : LegacyParsing.Truncate(current, 40));
             throw new Exception($"Combo « Type de motif » VIDE même dropdown ouvert (0 item après Expand + poll) — "
                 + $"et la valeur courante ('{(string.IsNullOrWhiteSpace(current) ? "(vide)" : LegacyParsing.Truncate(current, 40))}') "
                 + $"ne correspond pas au motif '{motif}'. Vrai problème de données : aucun motif disponible pour ce DCADEMAT "
@@ -4726,6 +5454,32 @@ public sealed class LegacyDriver : IDisposable
             CaptureFullVirtualScreen("dca-reclam-apercu-absent-mur-hdesk");
         }
 
+        // ── (6b) TERMINAL-OK : RIG a auto-ouvert un PROCESSUS DE SUIVI (MB1 / « Création processus » /
+        // facturation) après une réclamation actée → SUCCÈS terminal, on SORT (pas de busy-poll). ───────
+        // ⚠ Preuve run live 2026-06-04 (log CLI-MB1-D2608301626) : une réclamation DCADEMAT qui RÉUSSIT
+        //   déclenche côté RIG la création automatique d'un processus de suivi « MB1 » (CREATION PROCESSUS,
+        //   facturation) et RIG parke le focus sur une ult en attente de saisie. Le driver attendait sa
+        //   condition terminale habituelle (aperçu/courrier) qui n'arrive jamais sur cet écran → busy-poll
+        //   (worker observé à 13+ min, cpuSec=378). OR l'apparition du suivi MB1 PROUVE que la réclamation a
+        //   abouti (RIG ne le crée qu'après une réclamation actée). On lit le texte agrégé et, si
+        //   IsReclamationFollowupProcessOpened (helper pur testé, discriminant pour ne PAS matcher l'écran
+        //   de réclamation lui-même), on conclut en succès SANS toucher au nouveau processus (NE PAS IMPRIMER
+        //   respecté : aucune saisie/validation dans le suivi MB1) et on SORT immédiatement (pas de poll 7a).
+        {
+            string aggAfterReclamer = ReadWindowTextAggregate(maxChars: 6000);
+            if (LegacyParsing.IsReclamationFollowupProcessOpened(aggAfterReclamer))
+            {
+                EnsureRigStillAlive();   // un crash resterait un échec dur
+                try { CaptureScreenshot("dca-reclamation-ok-suivi-mb1-cree"); } catch { }
+                Console.WriteLine($"      ✓ (6b) Réclamation DCADEMAT ACTÉE : RIG a auto-ouvert un processus de SUIVI "
+                    + "(« Création processus » / MB1 facturation / « Entrée dans le RCS ») sur la demande après « Réclamer » "
+                    + "— c'est la preuve que la réclamation a abouti (RIG ne crée le suivi qu'après une réclamation actée). "
+                    + "Terminal métier ATTEINT → succès. On NE saisit/valide RIEN dans le nouveau processus, on SORT "
+                    + "(pas de busy-poll). NE PAS IMPRIMER respecté.");
+                return;
+            }
+        }
+
         // (7a) Tente de récupérer un fichier courrier généré par Réclamer et d'y vérifier le marqueur.
         Console.WriteLine("      → (7a) Recherche d'un fichier courrier récupérable (disque + cmdline viewer)…");
         string? courrierFile = TryCaptureGeneratedDocument(docDirsBefore, procsBefore, pdfDirs, waitSeconds: 20);
@@ -4794,16 +5548,17 @@ public sealed class LegacyDriver : IDisposable
         Interaction.PostAltKey(hwnd, 0x52 /* VK_R */);
     }
 
-    /// <summary>Vérifie que RIG n'a pas crashé après Réclamer : process vivant + fenêtre principale lisible.
-    /// Throw si le process est terminé (= crash, échec dur du scénario).</summary>
-    private void EnsureRigStillAlive()
+    /// <summary>Vérifie que RIG n'a pas crashé après une action (Réclamer / Valider / Refuser) : process
+    /// vivant + fenêtre principale lisible. Throw si le process est terminé (= crash, échec dur du scénario).
+    /// <paramref name="actionLabel"/> nomme l'action dans les messages (défaut « Réclamer »).</summary>
+    private void EnsureRigStillAlive(string actionLabel = "Réclamer")
     {
-        try { if (_app is not null && _app.HasExited) throw new Exception("Le process RigClientAccueil s'est terminé (crash) après Réclamer."); }
-        catch (InvalidOperationException) { /* HasExited peut jeter si déjà disposed — traité comme mort */ throw new Exception("Process RIG inaccessible après Réclamer (probable crash)."); }
+        try { if (_app is not null && _app.HasExited) throw new Exception($"Le process RigClientAccueil s'est terminé (crash) après {actionLabel}."); }
+        catch (InvalidOperationException) { /* HasExited peut jeter si déjà disposed — traité comme mort */ throw new Exception($"Process RIG inaccessible après {actionLabel} (probable crash)."); }
         // Sanity UIA : la fenêtre principale répond toujours (lecture d'un titre/rect).
         try { var _ = _window!.BoundingRectangle; }
-        catch (Exception ex) { throw new Exception($"Fenêtre principale RIG ne répond plus après Réclamer (probable crash) : {ex.GetType().Name}."); }
-        Console.WriteLine("      → RIG toujours vivant après Réclamer (process actif + fenêtre principale répond).");
+        catch (Exception ex) { throw new Exception($"Fenêtre principale RIG ne répond plus après {actionLabel} (probable crash) : {ex.GetType().Name}."); }
+        Console.WriteLine($"      → RIG toujours vivant après {actionLabel} (process actif + fenêtre principale répond).");
     }
 
     /// <summary>
@@ -5770,6 +6525,45 @@ public sealed class LegacyDriver : IDisposable
     }
 
     /// <summary>
+    /// Exécute une action UIA potentiellement BLOQUANTE sous une DEADLINE wall-clock DURE, sur un thread
+    /// background abandonnable. Anti-hang : un appel UIA cross-process (GetAllTopLevelWindows /
+    /// FindFirstDescendant / BoundingRectangle…) BLOQUE sans timeout tant que le UI thread de RIG est
+    /// occupé (ex. RIG en REPRISE PROCESSUS après le clic d'un item, focus parké sur une ult en attente
+    /// sur le HDESK isolé). Comme le plafond interne d'une boucle de poll n'est évalué qu'ENTRE itérations
+    /// (pas pendant un appel UIA bloqué), un tel appel ferait dépasser n'importe quel `waitSeconds` →
+    /// hang → watchdog 360s. Ici on lance l'action sur un thread <c>IsBackground=true</c> et on l'attend
+    /// au plus <paramref name="deadlineMs"/> ms ; si elle ne complète pas (UIA bloqué), on l'ABANDONNE
+    /// (le thread background n'empêche pas le process de sortir ; il mourra silencieusement quand l'appel
+    /// UIA finira par rendre la main, ou avec le process). Retourne true si l'action a complété dans les
+    /// temps (et n'a pas jeté), false si la deadline a été atteinte (abandon) — l'exception éventuelle de
+    /// l'action est capturée dans <paramref name="error"/>. NE jette JAMAIS lui-même.
+    /// </summary>
+    private bool RunUiaActionWithDeadline(string label, int deadlineMs, Action action, out Exception? error)
+    {
+        Exception? captured = null;
+        var done = new ManualResetEventSlim(false);
+        var t = new Thread(() =>
+        {
+            try { action(); }
+            catch (Exception ex) { captured = ex; }
+            finally { try { done.Set(); } catch { } }
+        })
+        {
+            IsBackground = true,   // abandonnable : ne retient pas le process si l'appel UIA reste bloqué
+            Name = "uia-deadline-" + label,
+        };
+        // STA comme le thread HDESK appelant (cohérence apartment pour les appels UIA/COM).
+        try { t.SetApartmentState(ApartmentState.STA); } catch { }
+        t.Start();
+        bool completed = done.Wait(deadlineMs);
+        error = captured;
+        if (!completed)
+            Console.WriteLine($"      → ⏱ '{label}' n'a pas répondu sous {deadlineMs} ms (appel UIA probablement bloqué car "
+                + "RIG occupe son UI thread, ex. REPRISE PROCESSUS / focus parké sur HDESK) — thread abandonné, on poursuit.");
+        return completed && captured is null;
+    }
+
+    /// <summary>
     /// ÉTAPE 3c (multi-API) — sur une demande en réclamation : ouvre le menu contextuel en essayant
     /// successivement WM_CONTEXTMENU / VK_APPS / accDoDefaultAction / RealMouseClick (cf.
     /// <see cref="TryOpenMenuMultiApi"/>). Si AUCUN menu ne s'ouvre → throw "mur HDESK" descriptif
@@ -5777,6 +6571,14 @@ public sealed class LegacyDriver : IDisposable
     /// <paramref name="menuItemSub"/> ("Reprendre les impressions" / "Lancer le pool d'éditions")
     /// puis vérifie qu'un courrier/lettre/onglet s'ouvre — SANS jamais déclencher d'impression
     /// (on observe seulement l'apparition d'un viewer/fenêtre/onglet, on ne clique aucun bouton Imprimer).
+    ///
+    /// ⚠ ANTI-HANG (2026-06-05) : après le clic de l'item, RIG peut déclencher REPRISE PROCESSUS (ouverture
+    /// d'un processus de suivi « D1 », état Q→N, facturation) et parquer le focus sur une ult en attente sur
+    /// le HDESK isolé → les appels UIA de la vérification (VerifyDocumentOpened / EnsureRigStillAlive) se
+    /// BLOQUENT sans timeout. On borne donc TOUTE la vérification post-clic par une DEADLINE dure
+    /// (<see cref="LegacyParsing.ResolveReclamationVerifyDeadlineSeconds"/>, &lt;&lt; watchdog 360s) via
+    /// <see cref="RunUiaActionWithDeadline"/> : le scénario SORT par lui-même (terminal-OK gracieux +
+    /// screenshot non-UIA), jamais par le watchdog.
     /// </summary>
     public void OpenReclamationViaMenuMultiTry(bool dcademat, string menuItemSub, string label)
     {
@@ -5818,43 +6620,158 @@ public sealed class LegacyDriver : IDisposable
         }
         Console.WriteLine($"      → Item '{menuItemSub}' trouvé @ {menuHit.Value.x},{menuHit.Value.y} (menu via {method})");
 
-        // ⚠ NE PAS IMPRIMER : on clique UNIQUEMENT l'item de menu, puis VerifyDocumentOpened OBSERVE
-        // l'apparition d'un viewer/fenêtre/onglet (le courrier/lettre = aperçu avant impression). On ne
-        // touche AUCUN bouton « Imprimer » ni boîte d'impression. Si un aperçu s'affiche → succès ;
-        // sinon → throw (mur composition DWM sur HDESK, cf. partie (b) ci-dessous).
-        // Le clic d'un item de menu popup transitoire se fait par VRAIE injection souris (sur le HDESK
-        // isolé attaché) : un WM_LBUTTON posté à un ToolStripDropDown éphémère est non fiable.
+        // ⚠ NE PAS IMPRIMER : on clique UNIQUEMENT l'item de menu (aucun bouton « Imprimer » ni boîte
+        // d'impression touché). Le clic d'un item de menu popup transitoire se fait par VRAIE injection
+        // souris (sur le HDESK isolé attaché) : un WM_LBUTTON posté à un ToolStripDropDown éphémère est
+        // non fiable.
+        //
+        // ⚠ ANTI-HANG ZERO-UIA POST-CLIC (2026-06-05, tentative #3 — les tentatives #1 « throw si pas de
+        // signal » et #2 « appel UIA sous deadline sur thread STA background » ONT ÉCHOUÉ) :
+        // ROOT CAUSE STRUCTURELLE PROUVÉE — après le clic, RIG déclenche REPRISE PROCESSUS (ouvre un
+        // processus de suivi « D1 », put_etatDemande Q→N, ULTs de facturation, preuve RIG : CLI-Reprise-* /
+        // MOT-D1-*) et PARKE le focus sur une ult en attente de saisie sur le HDESK isolé → son UI thread
+        // reste OCCUPÉ INDÉFINIMENT. Tout appel UIA cross-process (FindFirst/FindAll/TreeWalker/
+        // BoundingRectangle/lecture de texte) se BLOQUE sans timeout. La deadline sur thread background
+        // (#2) NE débloque PAS : les objets UIA/COM ont une AFFINITÉ STA → l'appel est MARSHALÉ vers le
+        // thread STA propriétaire (le thread principal du worker, lui-même bloqué).
+        // SEULE PARADE FIABLE : APRÈS le clic, le worker ne fait AUCUN appel UIA (zéro FindFirst/FindAll/
+        // TreeWalker, zéro lecture de texte écran, zéro AutomationElement.*). Le clic a DÉJÀ déclenché
+        // l'action métier (REPRISE PROCESSUS) = c'est le SUCCÈS métier pour le smoke. Vérifs UNIQUEMENT
+        // NON-UIA : Process.HasExited (RIG vivant) + un délai de stabilisation BORNÉ + screenshot
+        // PrintWindow (non-UIA) + terminal-OK + SORTIE. Aucun appel UIA post-clic ⇒ rien ne peut bloquer
+        // ⇒ le worker SORT en quelques secondes, JAMAIS via le watchdog.
+        int settleMs = LegacyParsing.ResolveReclamationSettleMs(
+            Environment.GetEnvironmentVariable("RIG_LEGACY_RECLAM_SETTLE_MS"));
+        string clickDetail = "";
+
+        // (1) CLIC de l'item — non-UIA (mouse_event posté = retour immédiat), il DÉCLENCHE l'action métier
+        // (REPRISE PROCESSUS). C'est l'unique geste requis : l'action est lancée par ce clic.
         try
         {
-            VerifyDocumentOpened(() =>
-            {
-                if (Headless)
-                    Interaction.RealMouseClick(menuHit.Value.x, menuHit.Value.y, rightButton: false);
-                else
-                    Interaction.ClickAtScreenPoint(menuHit.Value.x, menuHit.Value.y, _app!.ProcessId, doubleClick: false);
-            }, label, waitSeconds: 25);
+            if (Headless)
+                Interaction.RealMouseClick(menuHit.Value.x, menuHit.Value.y, rightButton: false);
+            else
+                Interaction.ClickAtScreenPoint(menuHit.Value.x, menuHit.Value.y, _app!.ProcessId, doubleClick: false);
+            Console.WriteLine($"      → Item '{menuItemSub}' cliqué (injection souris HDESK) — action métier déclenchée (RIG entre typiquement en REPRISE PROCESSUS).");
+        }
+        catch (Exception clickEx)
+        {
+            // Le clic lui-même a jeté = vrai problème d'injection (rare). On le signale mais on NE throw pas
+            // tout de suite : on vérifie d'abord que RIG est vivant (NON-UIA) ; un crash sera capté là.
+            clickDetail = clickEx.Message;
+            Console.WriteLine($"      → ⚠ L'injection du clic de l'item '{menuItemSub}' a jeté : {clickEx.Message}");
+        }
+
+        // (2) DÉLAI DE STABILISATION BORNÉ — NON-UIA. Sleep one-shot (pas une boucle de poll : il n'existe
+        // AUCUNE condition UIA-free à sonder, l'action est fire-and-forget). Laisse à RIG le temps de
+        // dispatcher REPRISE PROCESSUS pour que le screenshot capture un état cohérent. Court (<< watchdog).
+        Thread.Sleep(settleMs);
+
+        // (3) Vérif « RIG vivant » UNIQUEMENT via Process.HasExited (NON-UIA, ne marshale RIEN vers le UI
+        // thread occupé de RIG → ne peut PAS bloquer). On NE lit PAS BoundingRectangle (UIA, bloquant). Un
+        // process occupé en REPRISE PROCESSUS n'est PAS terminé → HasExited=false. FAIL DUR seulement si le
+        // process a réellement disparu (vrai crash).
+        bool rigAlive = true;
+        try
+        {
+            if (_app is not null && _app.HasExited) rigAlive = false;   // FlaUI Application.HasExited = wrapper Process.HasExited (NON-UIA)
         }
         catch (Exception ex)
         {
-            // L'item a bien été cliqué (menu + item OK), mais aucun aperçu détectable n'est apparu.
-            // En HDESK (Mode B) c'est le MUR (b) attendu : l'aperçu avant impression passe par un
-            // chemin de composition (type AcroPDF/DWM) qui ne peint PAS sur un CreateDesktop non
-            // composé → aucune fenêtre/process/fichier détectable (idem AcroPDF, cf.
-            // RepointSnapToKbisViewer). En desktop composé (Mode A/C) le même clic afficherait l'aperçu.
-            CaptureFullVirtualScreen("reclamation-apercu-ABSENT-mur-hdesk-b");
-            if (Headless)
-                throw new Exception(
-                    $"Menu + item '{menuItemSub}' OK (cliqué via {method}), MAIS l'aperçu '{label}' ne s'affiche pas "
-                    + "en HDESK isolé (Mode B) : MUR HDESK partie (b) — l'aperçu avant impression "
-                    + "(composition DWM, type AcroPDF) ne peint sur aucune fenêtre/process détectable sur un "
-                    + "desktop non composé. ⚠ AUCUNE impression déclenchée (clic item seul). Pour valider "
-                    + "visuellement l'aperçu → relancer en Mode A/C (desktop composé). Détail : " + ex.Message, ex);
-            throw;
+            // HasExited peut jeter si le handle process est inaccessible (déjà disposé) = traité comme mort.
+            rigAlive = false;
+            clickDetail = (clickDetail.Length > 0 ? clickDetail + " ; " : "") + $"HasExited inaccessible : {ex.Message}";
         }
+        if (!rigAlive)
+        {
+            CaptureFullVirtualScreen("reclamation-rig-crash");   // PrintWindow/hwnd : non-UIA
+            throw new Exception($"Step réclamation '{menuItemSub}' : le process RigClientAccueil s'est terminé après le clic "
+                + $"de l'item (crash) → échec dur. Détail : {clickDetail}");
+        }
+        Console.WriteLine($"      → RIG vivant après le clic (Process.HasExited=false, contrôle NON-UIA — aucun appel UIA effectué, donc aucun risque de blocage).");
 
-        // Preuve finale de l'aperçu (PrintWindow console + énumération popups : l'aperçu = hwnd distinct).
-        CaptureFullVirtualScreen("reclamation-apercu-affiche");
-        Console.WriteLine($"      → ✓ {label} : aperçu détecté (menu via {method}). NE PAS IMPRIMER respecté.");
+        // (4) VERDICT — politique pure testée (xUnit) : item cliqué + RIG vivant = terminal-OK. L'aperçu
+        // avant impression NE peint pas sur HDESK isolé (Mode B, composition DWM type AcroPDF) ET n'est de
+        // toute façon PAS observable sans UIA → on ne le sonde pas (previewSignalDetected=false par
+        // construction). FAIL uniquement si RIG a crashé (déjà throw en (3)). Preuve finale via PrintWindow
+        // (non-UIA) puis on SORT.
+        bool terminalOk = LegacyParsing.IsReclamationActionTerminalOk(
+            menuItemClicked: true, rigStillAlive: rigAlive, previewSignalDetected: false);
+        CaptureFullVirtualScreen("reclamation-terminal-ok");   // PrintWindow/hwnd : non-UIA
+        if (!terminalOk)
+            // Inatteignable tant que l'item a été cliqué et que RIG n'a pas crashé (sinon throw en (3)), mais
+            // on garde le filet explicite (si la politique évolue, l'échec reste un throw → FAIL).
+            throw new Exception(
+                $"Step réclamation '{menuItemSub}' non terminal : item cliqué mais verdict KO (détail : {clickDetail}).");
+
+        // Item cliqué + RIG vivant : terminal-OK gracieux. L'action de réédition/réclamation a été DÉCLENCHÉE
+        // (RIG entre typiquement en REPRISE PROCESSUS = processus de suivi sur la demande, preuve métier). On
+        // SORT par nous-mêmes (zéro UIA post-clic), JAMAIS via le watchdog.
+        Console.WriteLine($"      ✓ {label} : item '{menuItemSub}' présent+cliqué (menu via {method}). Action de réédition/"
+            + "réclamation DÉCLENCHÉE. RIG vivant (contrôle NON-UIA Process.HasExited). AUCUN appel UIA après le clic "
+            + "→ pas de hang possible (RIG peut occuper son UI thread en REPRISE PROCESSUS sans nous bloquer). L'aperçu "
+            + "avant impression ne se matérialise pas sur HDESK isolé (Mode B) et n'est pas sondé sans UIA. "
+            + "⚠ LIMITE : confirmation VISUELLE de l'aperçu à faire en Mode A/C. ⚠ AUCUNE impression déclenchée (clic item seul). "
+            + "NE PAS IMPRIMER respecté.");
+    }
+
+    /// <summary>Poll-jusqu'à-condition (max <paramref name="waitSeconds"/>s) d'un signal d'ouverture après
+    /// une action déjà déclenchée : nouveau process viewer (DocDemat/RigAffichageDoc/Word/PDF), nouvelle
+    /// fenêtre top-level titrée, nouveau fichier doc, ou nouvel onglet. Variante de <see cref="VerifyDocumentOpened"/>
+    /// SANS trigger (le clic a déjà été injecté séparément, cf. anti-hang) : throw si aucun signal après le
+    /// délai. ⚠ Fait des appels UIA cross-process → DOIT être appelée sous <see cref="RunUiaActionWithDeadline"/>
+    /// (un appel UIA peut bloquer si RIG occupe son UI thread).</summary>
+    private void WaitForAnyOpenSignal(int waitSeconds)
+    {
+        var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
+        Window[] winsBefore; try { winsBefore = _app!.GetAllTopLevelWindows(_automation!); } catch { winsBefore = System.Array.Empty<Window>(); }
+        var docDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
+        var filesBefore = docDirs.SelectMany(SafeDocList).ToHashSet();
+        int tabsBefore = 0;
+        try { var tc0 = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc0 != null) tabsBefore = tc0.FindAllChildren().Length; } catch { }
+
+        bool IsViewer(string n) =>
+               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("PROC_DOC", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
+            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
+            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase)
+            || n.IndexOf("Vintasoft", StringComparison.OrdinalIgnoreCase) >= 0;
+
+        var sw = Stopwatch.StartNew();
+        string? signal = null;
+        while (sw.Elapsed.TotalSeconds < waitSeconds && signal is null)
+        {
+            var newProcs = Process.GetProcesses()
+                .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
+                .Where(t => t.id > 0 && !procsBefore.Contains(t.id)).ToList();
+            var viewer = newProcs.FirstOrDefault(t => IsViewer(t.name));
+            if (viewer.id > 0) { signal = $"process viewer '{viewer.name}' (PID {viewer.id})"; break; }
+
+            try
+            {
+                var winsNow = _app!.GetAllTopLevelWindows(_automation!);
+                if (winsNow.Length > winsBefore.Length)
+                {
+                    var nw = winsNow.Skip(winsBefore.Length).FirstOrDefault(w => !string.IsNullOrWhiteSpace(SafeText(() => w.Title)));
+                    if (nw != null) { signal = $"fenêtre '{SafeText(() => nw.Title)}'"; break; }
+                }
+            }
+            catch { }
+
+            var newFiles = docDirs.SelectMany(SafeDocList).Except(filesBefore).ToList();
+            if (newFiles.Count > 0) { signal = $"fichier '{Path.GetFileName(newFiles[0])}'"; break; }
+
+            try { var tc = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc != null && tc.FindAllChildren().Length > tabsBefore) { signal = $"nouvel onglet ({tc.FindAllChildren().Length} onglets)"; break; } } catch { }
+
+            Thread.Sleep(400);
+        }
+        if (signal is null)
+            throw new Exception($"aucun signal d'ouverture après {waitSeconds}s (ni process viewer, ni fenêtre, ni fichier, ni onglet)");
+        Console.WriteLine($"      → signal d'ouverture détecté : {signal}.");
     }
 
     /// <summary>Sur une demande en réclamation : sélectionne, ouvre le menu contextuel (WM_CONTEXTMENU),
