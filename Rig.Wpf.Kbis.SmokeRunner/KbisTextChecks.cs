@@ -41,6 +41,7 @@ public static class KbisTextChecks
             || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
             || n.Equals("msedge", StringComparison.OrdinalIgnoreCase)
             || n.Equals("chrome", StringComparison.OrdinalIgnoreCase)
+            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)         // courrier/lettre généré ouvert dans Word (.doc)
             || n.IndexOf("Vintasoft", StringComparison.OrdinalIgnoreCase) >= 0;
     }
 

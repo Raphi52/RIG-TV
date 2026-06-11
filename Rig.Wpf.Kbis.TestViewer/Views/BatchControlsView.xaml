@@ -58,7 +58,7 @@
         </ComboBox>
         <Button Grid.Row="1" Grid.Column="2" Style="{StaticResource SecondaryButton}"
                 Margin="8,12,0,0" Padding="10,0" Height="32"
-                Command="{Binding ReloadRaptureScenariosCommandCommand}"
+                Command="{Binding ReloadRaptureScenariosCommand}"
                 ToolTip="Recharge le manifest.json depuis le dossier scenarios.">
             <TextBlock Text="↻"/>
         </Button>

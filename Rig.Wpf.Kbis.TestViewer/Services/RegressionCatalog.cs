@@ -126,7 +126,7 @@ public sealed class RegressionCatalog
         @"^\s*public\s+(?:async\s+)?(?:Task|void)\s+(?<name>\w+)\s*\(",
         RegexOptions.Compiled);
 
-    private static void ExtractFromFile(string path, Dictionary<string, string> bucket)
+    internal static void ExtractFromFile(string path, Dictionary<string, string> bucket)
     {
         var lines = File.ReadAllLines(path);
         var current = new List<string>();
@@ -177,7 +177,7 @@ public sealed class RegressionCatalog
         }
     }
 
-    private static string ClassifyByClassName(string className) => className switch
+    internal static string ClassifyByClassName(string className) => className switch
     {
         "FoundActiveScenarios"      => "Lecture",
         "ShapeScenarios"            => "Lecture (patterns)",

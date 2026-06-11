@@ -2,18 +2,39 @@
 # Si stale -> rebuild auto. Si build fail -> throw (le pilote ne lance pas un binaire stale).
 # Usage : powershell -File ensure-fresh.ps1 -Project TestViewer
 #         powershell -File ensure-fresh.ps1 -Project SmokeRunner
+#         powershell -File ensure-fresh.ps1 -Project TestViewer -Config Release
 
 param(
-    [Parameter(Mandatory)] [string] $Project
+    [Parameter(Mandatory)] [string] $Project,
+    [ValidateSet('Debug','Release')] [string] $Config = 'Debug'
 )
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = $PSScriptRoot   # repo root (RIG-TV) ; auto-correct dans chaque worktree
 $projectDir = Join-Path $repoRoot ("Rig.Wpf.Kbis.{0}" -f $Project)
 $csproj = Join-Path $projectDir ("Rig.Wpf.Kbis.{0}.csproj" -f $Project)
-$exe = Join-Path $projectDir ("bin\Release\net48\Rig.Wpf.Kbis.{0}.exe" -f $Project)
+$exe = Join-Path $projectDir ("bin\{0}\net48\Rig.Wpf.Kbis.{1}.exe" -f $Config, $Project)
 
 if (-not (Test-Path $csproj)) { throw ("csproj introuvable : {0}" -f $csproj) }
+
+# Collecte les sources du projet cible (hors bin/obj).
+$sources = Get-ChildItem $projectDir -Recurse -Include *.cs,*.xaml,*.csproj -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' }
+
+# FIX dependance transitoire : quand on cible TestViewer, son .csproj reference SmokeRunner
+# (ProjectReference). dotnet build rebuildera aussi SmokeRunner. Si une source SmokeRunner
+# est plus recente que l'exe TestViewer, on doit declarer TestViewer STALE.
+if ($Project -eq 'TestViewer') {
+    $smokeDir = Join-Path $repoRoot 'Rig.Wpf.Kbis.SmokeRunner'
+    if (Test-Path $smokeDir) {
+        $smokeSrc = Get-ChildItem $smokeDir -Recurse -Include *.cs,*.csproj -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' }
+        if ($smokeSrc) {
+            # Fusionner les deux collections pour le calcul du max
+            $sources = @($sources) + @($smokeSrc)
+        }
+    }
+}
 
 $stale = $false
 if (-not (Test-Path $exe)) {
@@ -21,8 +42,6 @@ if (-not (Test-Path $exe)) {
     $stale = $true
 } else {
     $exeTime = (Get-Item $exe).LastWriteTime
-    $sources = Get-ChildItem $projectDir -Recurse -Include *.cs,*.xaml,*.csproj -File -ErrorAction SilentlyContinue |
-        Where-Object { $_.FullName -notmatch '\\(bin|obj)\\' }
     if (-not $sources) {
         Write-Host ("[{0}] aucune source detectee - skip check" -f $Project) -ForegroundColor Yellow
     } else {
@@ -37,8 +56,8 @@ if (-not (Test-Path $exe)) {
 }
 
 if ($stale) {
-    Write-Host ("[{0}] dotnet build -c Release -v minimal ..." -f $Project)
-    $buildOutput = & dotnet build $csproj -c Release -v minimal 2>&1
+    Write-Host ("[{0}] dotnet build -c {1} -v minimal ..." -f $Project, $Config)
+    $buildOutput = & dotnet build $csproj -c $Config -v minimal 2>&1
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
         $buildOutput | Select-Object -Last 30 | ForEach-Object { Write-Host $_ }

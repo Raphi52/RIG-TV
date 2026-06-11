@@ -65,6 +65,14 @@ public sealed class LegacyDriver : IDisposable
     private volatile bool _snapStopped;
 
     /// <summary>
+    /// Dossiers où RIG dépose un document généré (courrier de réclamation, pièce dématérialisée,
+    /// K-bis PDF…). Baseline de détection « un document est apparu » (cf. <see cref="SafeDocList"/>).
+    /// Version la PLUS complète (inclut DocDemat) — unifiée pour éviter les copies divergentes.
+    /// </summary>
+    private static readonly string[] DocOutputDirs =
+        { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
+
+    /// <summary>
     /// ML LOOP S1.2 — Helper retry+ProcessId filter pour les FindDescendants en mode //.
     /// Le mode visible-parallel ouvre N RigClientAccueil simultanés ; UIA peut
     /// jeter ou retourner un élément d'une AUTRE instance (cross-process shortcut).
@@ -5414,8 +5422,7 @@ public sealed class LegacyDriver : IDisposable
     private void ClickReclamerEtVerifier(string marker)
     {
         // Baseline disque/process AVANT le clic (modèle OpenKbisDocument).
-        var pdfDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
-        var docDirsBefore = pdfDirs.SelectMany(SafeDocList).ToHashSet();
+        var docDirsBefore = DocOutputDirs.SelectMany(SafeDocList).ToHashSet();
         var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
 
         var reclamerBtn = FindReclamerButton();
@@ -5482,7 +5489,7 @@ public sealed class LegacyDriver : IDisposable
 
         // (7a) Tente de récupérer un fichier courrier généré par Réclamer et d'y vérifier le marqueur.
         Console.WriteLine("      → (7a) Recherche d'un fichier courrier récupérable (disque + cmdline viewer)…");
-        string? courrierFile = TryCaptureGeneratedDocument(docDirsBefore, procsBefore, pdfDirs, waitSeconds: 20);
+        string? courrierFile = TryCaptureGeneratedDocument(docDirsBefore, procsBefore, DocOutputDirs, waitSeconds: 20);
         if (!string.IsNullOrEmpty(courrierFile))
         {
             Console.WriteLine($"      → (7a) Fichier courrier candidat : {courrierFile}");
@@ -5570,15 +5577,6 @@ public sealed class LegacyDriver : IDisposable
     /// </summary>
     private string? TryCaptureGeneratedDocument(HashSet<string> docsBefore, HashSet<int> procsBefore, string[] docDirs, int waitSeconds)
     {
-        bool IsViewer(string n) =>
-               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
-            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase);
-
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed.TotalSeconds < waitSeconds)
         {
@@ -5594,11 +5592,13 @@ public sealed class LegacyDriver : IDisposable
             catch { }
 
             // 2) Nouveau process viewer → chemin via cmdline (PDF). Modèle GetPdfPathFromProcessCmdline.
+            // Helper pur testé en xUnit (KbisTextChecks) : couvre RigAffichageDoc/PROC_DOC_DEMAT/WINWORD/
+            // Vintasoft/Acro/Foxit/Sumatra/msedge/chrome/DocDemat (corrige l'oubli historique PROC_DOC + Vintasoft).
             try
             {
                 var newViewers = Process.GetProcesses()
                     .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
-                    .Where(t => t.id > 0 && !procsBefore.Contains(t.id) && IsViewer(t.name))
+                    .Where(t => t.id > 0 && !procsBefore.Contains(t.id) && KbisTextChecks.IsMeaningfulDocDematProc(t.name))
                     .ToList();
                 foreach (var v in newViewers)
                 {
@@ -6525,45 +6525,6 @@ public sealed class LegacyDriver : IDisposable
     }
 
     /// <summary>
-    /// Exécute une action UIA potentiellement BLOQUANTE sous une DEADLINE wall-clock DURE, sur un thread
-    /// background abandonnable. Anti-hang : un appel UIA cross-process (GetAllTopLevelWindows /
-    /// FindFirstDescendant / BoundingRectangle…) BLOQUE sans timeout tant que le UI thread de RIG est
-    /// occupé (ex. RIG en REPRISE PROCESSUS après le clic d'un item, focus parké sur une ult en attente
-    /// sur le HDESK isolé). Comme le plafond interne d'une boucle de poll n'est évalué qu'ENTRE itérations
-    /// (pas pendant un appel UIA bloqué), un tel appel ferait dépasser n'importe quel `waitSeconds` →
-    /// hang → watchdog 360s. Ici on lance l'action sur un thread <c>IsBackground=true</c> et on l'attend
-    /// au plus <paramref name="deadlineMs"/> ms ; si elle ne complète pas (UIA bloqué), on l'ABANDONNE
-    /// (le thread background n'empêche pas le process de sortir ; il mourra silencieusement quand l'appel
-    /// UIA finira par rendre la main, ou avec le process). Retourne true si l'action a complété dans les
-    /// temps (et n'a pas jeté), false si la deadline a été atteinte (abandon) — l'exception éventuelle de
-    /// l'action est capturée dans <paramref name="error"/>. NE jette JAMAIS lui-même.
-    /// </summary>
-    private bool RunUiaActionWithDeadline(string label, int deadlineMs, Action action, out Exception? error)
-    {
-        Exception? captured = null;
-        var done = new ManualResetEventSlim(false);
-        var t = new Thread(() =>
-        {
-            try { action(); }
-            catch (Exception ex) { captured = ex; }
-            finally { try { done.Set(); } catch { } }
-        })
-        {
-            IsBackground = true,   // abandonnable : ne retient pas le process si l'appel UIA reste bloqué
-            Name = "uia-deadline-" + label,
-        };
-        // STA comme le thread HDESK appelant (cohérence apartment pour les appels UIA/COM).
-        try { t.SetApartmentState(ApartmentState.STA); } catch { }
-        t.Start();
-        bool completed = done.Wait(deadlineMs);
-        error = captured;
-        if (!completed)
-            Console.WriteLine($"      → ⏱ '{label}' n'a pas répondu sous {deadlineMs} ms (appel UIA probablement bloqué car "
-                + "RIG occupe son UI thread, ex. REPRISE PROCESSUS / focus parké sur HDESK) — thread abandonné, on poursuit.");
-        return completed && captured is null;
-    }
-
-    /// <summary>
     /// ÉTAPE 3c (multi-API) — sur une demande en réclamation : ouvre le menu contextuel en essayant
     /// successivement WM_CONTEXTMENU / VK_APPS / accDoDefaultAction / RealMouseClick (cf.
     /// <see cref="TryOpenMenuMultiApi"/>). Si AUCUN menu ne s'ouvre → throw "mur HDESK" descriptif
@@ -6574,11 +6535,12 @@ public sealed class LegacyDriver : IDisposable
     ///
     /// ⚠ ANTI-HANG (2026-06-05) : après le clic de l'item, RIG peut déclencher REPRISE PROCESSUS (ouverture
     /// d'un processus de suivi « D1 », état Q→N, facturation) et parquer le focus sur une ult en attente sur
-    /// le HDESK isolé → les appels UIA de la vérification (VerifyDocumentOpened / EnsureRigStillAlive) se
-    /// BLOQUENT sans timeout. On borne donc TOUTE la vérification post-clic par une DEADLINE dure
-    /// (<see cref="LegacyParsing.ResolveReclamationVerifyDeadlineSeconds"/>, &lt;&lt; watchdog 360s) via
-    /// <see cref="RunUiaActionWithDeadline"/> : le scénario SORT par lui-même (terminal-OK gracieux +
-    /// screenshot non-UIA), jamais par le watchdog.
+    /// le HDESK isolé → tout appel UIA de vérification se BLOQUERAIT sans timeout (les objets UIA/COM ont une
+    /// affinité STA, donc même une deadline sur thread background ne débloque pas — l'appel est marshalé vers
+    /// le thread STA propriétaire, lui-même bloqué). SEULE PARADE FIABLE : APRÈS le clic, le worker ne fait
+    /// AUCUN appel UIA (zéro FindFirst/FindAll/TreeWalker, zéro lecture d'écran) ; vérifs UNIQUEMENT non-UIA
+    /// (Process.HasExited + délai de stabilisation borné + screenshot PrintWindow) → le scénario SORT par
+    /// lui-même (terminal-OK gracieux), jamais par le watchdog 360s.
     /// </summary>
     public void OpenReclamationViaMenuMultiTry(bool dcademat, string menuItemSub, string label)
     {
@@ -6715,78 +6677,6 @@ public sealed class LegacyDriver : IDisposable
             + "NE PAS IMPRIMER respecté.");
     }
 
-    /// <summary>Poll-jusqu'à-condition (max <paramref name="waitSeconds"/>s) d'un signal d'ouverture après
-    /// une action déjà déclenchée : nouveau process viewer (DocDemat/RigAffichageDoc/Word/PDF), nouvelle
-    /// fenêtre top-level titrée, nouveau fichier doc, ou nouvel onglet. Variante de <see cref="VerifyDocumentOpened"/>
-    /// SANS trigger (le clic a déjà été injecté séparément, cf. anti-hang) : throw si aucun signal après le
-    /// délai. ⚠ Fait des appels UIA cross-process → DOIT être appelée sous <see cref="RunUiaActionWithDeadline"/>
-    /// (un appel UIA peut bloquer si RIG occupe son UI thread).</summary>
-    private void WaitForAnyOpenSignal(int waitSeconds)
-    {
-        var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
-        Window[] winsBefore; try { winsBefore = _app!.GetAllTopLevelWindows(_automation!); } catch { winsBefore = System.Array.Empty<Window>(); }
-        var docDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
-        var filesBefore = docDirs.SelectMany(SafeDocList).ToHashSet();
-        int tabsBefore = 0;
-        try { var tc0 = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc0 != null) tabsBefore = tc0.FindAllChildren().Length; } catch { }
-
-        bool IsViewer(string n) =>
-               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("PROC_DOC", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
-            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase)
-            || n.IndexOf("Vintasoft", StringComparison.OrdinalIgnoreCase) >= 0;
-
-        var sw = Stopwatch.StartNew();
-        string? signal = null;
-        while (sw.Elapsed.TotalSeconds < waitSeconds && signal is null)
-        {
-            var newProcs = Process.GetProcesses()
-                .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
-                .Where(t => t.id > 0 && !procsBefore.Contains(t.id)).ToList();
-            var viewer = newProcs.FirstOrDefault(t => IsViewer(t.name));
-            if (viewer.id > 0) { signal = $"process viewer '{viewer.name}' (PID {viewer.id})"; break; }
-
-            try
-            {
-                var winsNow = _app!.GetAllTopLevelWindows(_automation!);
-                if (winsNow.Length > winsBefore.Length)
-                {
-                    var nw = winsNow.Skip(winsBefore.Length).FirstOrDefault(w => !string.IsNullOrWhiteSpace(SafeText(() => w.Title)));
-                    if (nw != null) { signal = $"fenêtre '{SafeText(() => nw.Title)}'"; break; }
-                }
-            }
-            catch { }
-
-            var newFiles = docDirs.SelectMany(SafeDocList).Except(filesBefore).ToList();
-            if (newFiles.Count > 0) { signal = $"fichier '{Path.GetFileName(newFiles[0])}'"; break; }
-
-            try { var tc = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc != null && tc.FindAllChildren().Length > tabsBefore) { signal = $"nouvel onglet ({tc.FindAllChildren().Length} onglets)"; break; } } catch { }
-
-            Thread.Sleep(400);
-        }
-        if (signal is null)
-            throw new Exception($"aucun signal d'ouverture après {waitSeconds}s (ni process viewer, ni fenêtre, ni fichier, ni onglet)");
-        Console.WriteLine($"      → signal d'ouverture détecté : {signal}.");
-    }
-
-    /// <summary>Sur une demande en réclamation : sélectionne, ouvre le menu contextuel (WM_CONTEXTMENU),
-    /// clique l'item <paramref name="menuItemSub"/> ("Reprendre les impressions" / "Lancer le pool
-    /// d'éditions") et vérifie qu'un document/fenêtre/onglet s'ouvre (courrier/lettre de réclamation,
-    /// tableau d'édition, ou POOL_EDIT). ÉTAPE 3c.</summary>
-    public void OpenReclamationViaMenu(bool dcademat, string menuItemSub, string label)
-    {
-        var hit = FindDemandeCell(dcademat);
-        if (hit is null) throw new Exception($"Aucune demande {(dcademat ? "DCADEMAT" : "formalités J00")} (réclamation) trouvée.");
-        var (cx, cy, txt) = hit.Value;
-        Console.WriteLine($"      → Demande réclamation ('{txt}') @ {cx},{cy} ; menu → '{menuItemSub}'");
-        VerifyDocumentOpened(() => DoOpenMenuAndClickItem(cx, cy, menuItemSub), label, waitSeconds: 25);
-    }
-
     /// <summary>Capture baseline (process / fenêtres top-level RIG / fichiers doc) → exécute
     /// <paramref name="trigger"/> → poll un signal d'ouverture : nouveau process viewer
     /// (DocDemat/RigAffichageDoc/Word/PDF), nouvelle fenêtre titrée, nouveau fichier doc, ou
@@ -6795,23 +6685,11 @@ public sealed class LegacyDriver : IDisposable
     {
         var procsBefore = Process.GetProcesses().Select(p => { try { return p.Id; } catch { return -1; } }).Where(i => i > 0).ToHashSet();
         Window[] winsBefore; try { winsBefore = _app!.GetAllTopLevelWindows(_automation!); } catch { winsBefore = System.Array.Empty<Window>(); }
-        var docDirs = new[] { Path.GetTempPath(), @"C:\rig\Temp", @"C:\rig\Cache", @"C:\rig\PDF", @"C:\rig\DocDemat" };
-        var filesBefore = docDirs.SelectMany(SafeDocList).ToHashSet();
+        var filesBefore = DocOutputDirs.SelectMany(SafeDocList).ToHashSet();
         int tabsBefore = 0;
         try { var tc0 = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc0 != null) tabsBefore = tc0.FindAllChildren().Length; } catch { }
 
         trigger();
-
-        bool IsViewer(string n) =>
-               n.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("PROC_DOC", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("WINWORD", StringComparison.OrdinalIgnoreCase)
-            || n.IndexOf("Acro", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Foxit", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.IndexOf("Sumatra", StringComparison.OrdinalIgnoreCase) >= 0
-            || n.Equals("msedge", StringComparison.OrdinalIgnoreCase)
-            || n.IndexOf("Vintasoft", StringComparison.OrdinalIgnoreCase) >= 0;
 
         var sw = Stopwatch.StartNew();
         string? signal = null;
@@ -6820,7 +6698,7 @@ public sealed class LegacyDriver : IDisposable
             var newProcs = Process.GetProcesses()
                 .Select(p => { try { return (id: p.Id, name: p.ProcessName); } catch { return (id: -1, name: ""); } })
                 .Where(t => t.id > 0 && !procsBefore.Contains(t.id)).ToList();
-            var viewer = newProcs.FirstOrDefault(t => IsViewer(t.name));
+            var viewer = newProcs.FirstOrDefault(t => KbisTextChecks.IsMeaningfulDocDematProc(t.name));
             if (viewer.id > 0) { signal = $"process viewer '{viewer.name}' (PID {viewer.id})"; break; }
 
             try
@@ -6834,7 +6712,7 @@ public sealed class LegacyDriver : IDisposable
             }
             catch { }
 
-            var newFiles = docDirs.SelectMany(SafeDocList).Except(filesBefore).ToList();
+            var newFiles = DocOutputDirs.SelectMany(SafeDocList).Except(filesBefore).ToList();
             if (newFiles.Count > 0) { signal = $"fichier '{Path.GetFileName(newFiles[0])}'"; break; }
 
             try { var tc = _window!.FindFirstDescendant(cf => cf.ByAutomationId("tabControl")); if (tc != null && tc.FindAllChildren().Length > tabsBefore) { signal = $"nouvel onglet (demande ouverte, {tc.FindAllChildren().Length} onglets)"; break; } } catch { }

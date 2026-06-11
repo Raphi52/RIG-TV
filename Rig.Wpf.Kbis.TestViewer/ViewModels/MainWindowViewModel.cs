@@ -3539,6 +3539,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// sélection courante si possible (match par Id), sinon sélectionne l'entrée
     /// synthétique "All scenarios" placée en tête.
     /// </summary>
+    [RelayCommand]
     private void ReloadRaptureScenarios()
     {
         try
@@ -3612,10 +3613,6 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// <summary>True si le scénario sélectionné est le sentinel "All scenarios".</summary>
     public bool IsAllScenariosSelected =>
         SelectedRaptureScenario?.Id == AllScenariosSentinelId;
-
-    /// <summary>Refresh manuel via le bouton ↻ à côté du picker.</summary>
-    [RelayCommand]
-    private void ReloadRaptureScenariosCommand() => ReloadRaptureScenarios();
 
     private void DumpRaptureSmokeRunToDisk()
     {
