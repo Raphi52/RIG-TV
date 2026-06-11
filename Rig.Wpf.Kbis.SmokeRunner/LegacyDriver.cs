@@ -1981,6 +1981,153 @@ public sealed class LegacyDriver : IDisposable
     }
 
     /// <summary>
+    /// Dans la fenêtre 'Recherche d'audience' (phase Recherche PROC_PREAUD/RETAUD),
+    /// règle la période Du/Au sur <paramref name="dateFr"/> (dd/MM/yyyy), clique
+    /// 'Rechercher' et attend que la grille liste au moins une row portant cette date.
+    /// Nécessaire dès que l'audience cible est HORS de la fenêtre de recherche par
+    /// défaut (semaine courante) — ex. export d'audiences passées. Les champs Du/Au
+    /// sont identifiés comme les 2 premiers Edit dont la valeur est une date
+    /// dd/MM/yyyy (ordre de tabulation WinForms : Du puis Au).
+    /// </summary>
+    public void SearchAudiencesByDate(string dateFr)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        var searchWin = _window.FindFirstDescendant(cf => cf.ByName("Recherche d'audience")) ?? _window;
+
+        var edits = searchWin.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit));
+        var dateEdits = new System.Collections.Generic.List<AutomationElement>();
+        foreach (var e in edits)
+        {
+            string v = SafeText(() =>
+                e.Patterns.Value.IsSupported ? e.Patterns.Value.Pattern.Value.ValueOrDefault : e.Name);
+            if (!string.IsNullOrEmpty(v) &&
+                System.Text.RegularExpressions.Regex.IsMatch(v.Trim(), @"^\d{2}/\d{2}/\d{4}$"))
+            {
+                dateEdits.Add(e);
+                if (dateEdits.Count == 2) break;
+            }
+        }
+        if (dateEdits.Count < 2)
+            throw new Exception($"Champs date Du/Au introuvables dans 'Recherche d'audience' ({dateEdits.Count}/2 détectés).");
+
+        Console.WriteLine($"      → Période de recherche : Du={dateFr} Au={dateFr}");
+        // ⚠ Ult_Date ne committe le texte vers .Valeur (lu par la requête) QUE sur
+        // perte de focus (DoMetierMajFromScreen, cf. Ult_Date_Internal.cs:190) — un
+        // SetText seul change l'AFFICHAGE mais la recherche repart sur les anciennes
+        // dates. On force donc le cycle focus : click Du → set → click Au (Leave Du
+        // committe) → set → re-click Du (Leave Au committe). Les clicks PostMessage
+        // suffisent : RIG déplace son focus interne en traitant WM_LBUTTONDOWN.
+        Interaction.Click(dateEdits[0]);
+        Thread.Sleep(150);
+        Interaction.SetText(dateEdits[0], dateFr);
+        Interaction.Click(dateEdits[1]);
+        Thread.Sleep(150);
+        Interaction.SetText(dateEdits[1], dateFr);
+        Interaction.Click(dateEdits[0]);
+        Thread.Sleep(300);
+
+        // 'Rechercher' est un bouton custom RIG (souvent ControlType=Pane, comme
+        // BtnExportJsonPlum) → cherche Button PUIS Pane par Name. "Rechercher" ne
+        // matche pas la window "Recherche d'audience" (pas de 'r' final).
+        AutomationElement? btnRechercher = null;
+        var swBtn = Stopwatch.StartNew();
+        while (swBtn.Elapsed.TotalSeconds < 10 && btnRechercher is null)
+        {
+            btnRechercher = searchWin.FindAllDescendants()
+                .FirstOrDefault(el =>
+                {
+                    try
+                    {
+                        var ct = el.ControlType.ToString();
+                        if (ct != "Button" && ct != "Pane") return false;
+                        return SafeText(() => el.Name).IndexOf("Rechercher", StringComparison.OrdinalIgnoreCase) >= 0;
+                    }
+                    catch { return false; }
+                });
+            if (btnRechercher is null) Thread.Sleep(250);
+        }
+        if (btnRechercher is null)
+            throw new Exception("Bouton 'Rechercher' introuvable dans 'Recherche d'audience' (10s)");
+        Console.WriteLine($"      → 'Rechercher' trouvé : Type={SafeText(() => btnRechercher.ControlType.ToString())} " +
+                          $"AutomationId='{SafeText(() => btnRechercher.AutomationId)}' Name='{SafeText(() => btnRechercher.Name)}'");
+
+        // Poll-jusqu'à-condition locale : la grille contient une row datée dateFr.
+        bool WaitGridShowsDate(double maxSec)
+        {
+            var swPoll = Stopwatch.StartNew();
+            while (swPoll.Elapsed.TotalSeconds < maxSec)
+            {
+                var rows = _window.FindAllDescendants().Where(c =>
+                {
+                    try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+                    catch { return false; }
+                }).ToList();
+                bool found = rows.Any(r =>
+                {
+                    try
+                    {
+                        return r.FindAllChildren().Any(c =>
+                            (SafeText(() => c.Name) ?? "").IndexOf(dateFr, StringComparison.OrdinalIgnoreCase) >= 0);
+                    }
+                    catch { return false; }
+                });
+                if (found) return true;
+                Thread.Sleep(400);
+            }
+            return false;
+        }
+
+        // Déclenchement multi-API (modèle OpenReclamationViaMenuMultiTry).
+        // 1) F7 dans le champ Du — chemin utilisateur OFFICIEL : operation_KeyIntercepted
+        //    (OPE_RECHERCHE_AUDCAB.cs:244) fait Focus() (→ LostFocus → COMMITTE la date,
+        //    cf. son commentaire « Il faut faire appeler le ChangementValeur de l'ult »)
+        //    PUIS Processus.Rechercher(). 2) click PostMessage toolbar ; 3) Invoke ;
+        //    4) Entrée. Après chaque essai, on vérifie que la grille liste dateFr.
+        const int VK_F7 = 0x76;
+        Console.WriteLine("      → F7 dans le champ Du (déclencheur officiel, committe la date)");
+        try
+        {
+            Interaction.Click(dateEdits[0]);
+            Thread.Sleep(150);
+            Interaction.PressKey(dateEdits[0], VK_F7);
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ F7 a jeté : {ex.Message}"); }
+        if (WaitGridShowsDate(8))
+        {
+            Console.WriteLine($"      → Grille rafraîchie (F7) : audience(s) du {dateFr} listée(s).");
+            return;
+        }
+        Console.WriteLine("      → Pas de refresh après F7 — essai click 'Rechercher' (PostMessage)");
+        try { Interaction.Click(btnRechercher); } catch (Exception ex) { Console.WriteLine($"      ⓘ Click a jeté : {ex.Message}"); }
+        if (WaitGridShowsDate(8))
+        {
+            Console.WriteLine($"      → Grille rafraîchie : audience(s) du {dateFr} listée(s).");
+            return;
+        }
+        Console.WriteLine("      → Pas de refresh après click — essai InvokePattern");
+        try
+        {
+            if (btnRechercher.Patterns.Invoke.IsSupported)
+                btnRechercher.Patterns.Invoke.Pattern.Invoke();
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ InvokePattern a jeté : {ex.Message}"); }
+        if (WaitGridShowsDate(8))
+        {
+            Console.WriteLine($"      → Grille rafraîchie (Invoke) : audience(s) du {dateFr} listée(s).");
+            return;
+        }
+        Console.WriteLine("      → Pas de refresh après Invoke — essai touche Entrée dans le champ Du");
+        try { Interaction.Click(dateEdits[0]); Thread.Sleep(150); Interaction.PressKey(dateEdits[0], 0x0D); }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ PressKey a jeté : {ex.Message}"); }
+        if (WaitGridShowsDate(8))
+        {
+            Console.WriteLine($"      → Grille rafraîchie (Entrée) : audience(s) du {dateFr} listée(s).");
+            return;
+        }
+        throw new Exception($"Après 'Rechercher' (click + Invoke + Entrée), aucune row du {dateFr} dans la grille — date correcte ? audience visible en PREAUD ?");
+    }
+
+    /// <summary>
     /// Sélectionne dans la grille RETAUD la ligne dont les cellules contiennent À LA FOIS
     /// la date (ex "15/05/2026") ET l'heure (ex "09:00"). Sert au process E2E où l'on
     /// veut cibler une audience PRÉCISE (peuplée, dans la fenêtre RETAUD) pour qu'un

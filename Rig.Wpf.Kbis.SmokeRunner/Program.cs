@@ -1547,14 +1547,75 @@ internal static class Program
         Console.WriteLine("╚══════════════════════════════════════════════════════════════════════╝");
         Console.WriteLine();
 
+        string ArgVal(string name)
+        {
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i].Equals(name, StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length) return args[i + 1];
+                if (args[i].StartsWith(name + "=", StringComparison.OrdinalIgnoreCase)) return args[i].Substring(name.Length + 1);
+            }
+            return null;
+        }
+
         var rigExe = Environment.GetEnvironmentVariable("RIG_LEGACY_EXE");
         if (string.IsNullOrWhiteSpace(rigExe)) rigExe = @"C:\rig\exe\RigClientAccueil.exe";
 
-        var jsonDir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Desktop", "JsonRapture");
-        var jsonOutPath = Path.Combine(jsonDir, $"smoke-plumitif-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        // Ciblage optionnel d'une audience précise — mêmes args que le mode process
+        // (--audience-date YYYY-MM-DD / --audience-heure HH:MM / --audience-id <int>
+        // résolu en date+heure via DB). Sans args : 1ère audience valide (compat
+        // bouton Smoke Export TestViewer, inchangé).
+        var dateIso = ArgVal("--audience-date");
+        var heure = ArgVal("--audience-heure");
+        var audienceIdRaw = ArgVal("--audience-id");
+        if (!string.IsNullOrEmpty(audienceIdRaw) && int.TryParse(audienceIdRaw, out var audId))
+        {
+            try
+            {
+                var resolved = LookupAudienceDateHeureById(audId);
+                if (resolved.HasValue)
+                {
+                    dateIso = resolved.Value.date.ToString("yyyy-MM-dd");
+                    heure = resolved.Value.heure.ToString(@"hh\:mm");
+                    Console.WriteLine($"   Audience #{audId} résolue en DB : date={dateIso} heure={heure}");
+                }
+                else
+                {
+                    Console.WriteLine($"   ⚠ Audience #{audId} introuvable en DB — fallback --audience-date/--audience-heure ou 1ère audience");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"   ⚠ Lookup audience #{audId} a échoué ({ex.GetType().Name}) — fallback --audience-date/--audience-heure ou 1ère audience");
+            }
+        }
+        string dateFr = null;
+        if (!string.IsNullOrEmpty(dateIso))
+        {
+            try { dateFr = DateTime.ParseExact(dateIso, "yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture).ToString("dd/MM/yyyy"); }
+            catch { dateFr = dateIso; }
+        }
+        bool cibleAudience = !string.IsNullOrEmpty(dateFr) && !string.IsNullOrEmpty(heure);
+
+        // Sortie : --out <path> sinon nom horodaté par défaut dans Desktop\JsonRapture.
+        var jsonOutPath = ArgVal("--out");
+        if (string.IsNullOrEmpty(jsonOutPath))
+        {
+            jsonOutPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Desktop", "JsonRapture", $"smoke-plumitif-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+        }
+        else if (string.IsNullOrEmpty(Path.GetDirectoryName(jsonOutPath)))
+        {
+            // --out avec nom de fichier nu : ancré dans Desktop\JsonRapture (sinon
+            // Directory.CreateDirectory("") jette dans le Sanity).
+            jsonOutPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Desktop", "JsonRapture", jsonOutPath);
+        }
+        var jsonDir = Path.GetDirectoryName(jsonOutPath);
 
         Console.WriteLine($"   RIG exe   : {rigExe}");
+        Console.WriteLine($"   Audience  : {(cibleAudience ? $"{dateFr} {heure}" : "(première valide)")}");
         Console.WriteLine($"   Sortie JSON : {jsonOutPath}");
 
         TryStep("Sanity", () =>
@@ -1577,7 +1638,19 @@ internal static class Program
                     TryStep("Launch", () => driver.Launch());
                     TryStep("Login", () => driver.ClickSeConnecter());
                     TryStep("Open PROC_PREAUD", () => driver.OpenProcPreaud());
-                    TryStep("Sélectionner une audience (active Export JSON)", () => driver.SelectFirstAudienceInRetaud());
+                    TryStep(cibleAudience
+                            ? $"Sélectionner l'audience {dateFr} {heure}"
+                            : "Sélectionner une audience (active Export JSON)", () =>
+                    {
+                        if (cibleAudience)
+                        {
+                            // La recherche par défaut ne couvre que la semaine courante :
+                            // re-cherche sur le jour cible avant de sélectionner.
+                            driver.SearchAudiencesByDate(dateFr);
+                            driver.SelectAudienceInRetaudByDateHeure(dateFr, heure);
+                        }
+                        else driver.SelectFirstAudienceInRetaud();
+                    });
                     TryStep("Bouton 'Export JSON Plumitif' présent + enabled", () =>
                         driver.VerifyButtonPresent("Export JSON Plumitif", "export json", "exporter json", "BtnExportJsonPlum"));
                     TryStep($"Click 'Export JSON' → écrit {Path.GetFileName(jsonOutPath)}", () =>
