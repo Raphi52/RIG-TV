@@ -3127,6 +3127,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 // updater Phase live, pas seulement à la fin.
                 var stdoutSb = new System.Text.StringBuilder();
                 var stderrSb = new System.Text.StringBuilder();
+                var lastPhase = ScenarioPhase.Queued;   // #6 : dédup des transitions pour phases.jsonl
                 var screenshotRegex = new System.Text.RegularExpressions.Regex(@"📸 Screenshot\s*:\s*(.+\.png)",
                     System.Text.RegularExpressions.RegexOptions.Compiled);
 
@@ -3139,6 +3140,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                         liveState.AppendLog(ev.Data);
                         if (ScenarioPhaseParser.TryParse(ev.Data, out var phase))
                         {
+                            if (phase != lastPhase) { ObservabilityFiles.AppendPhase(s.Id, ev.Data, phase.ToString()); lastPhase = phase; }  // #6
                             Application.Current?.Dispatcher.BeginInvoke((Action)(() =>
                             {
                                 liveState.Phase = phase;
@@ -3187,6 +3189,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     foreach (var line in stdout.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
                         Emit($"      [{s.Id}] {line}");
                 }
+                ObservabilityFiles.WriteWorkerStdout(s.Id, stdout);   // #5 : log par-scénario co-localisé avec les self-snaps
                 results.Add((s.Id, ok, sw.Elapsed, detail, false));
                 Emit($"   {(ok ? "✓" : "✗")} [{s.Id}] {(ok ? "PASS" : "FAIL")} en {sw.Elapsed.TotalSeconds:F1}s ({detail})");
 

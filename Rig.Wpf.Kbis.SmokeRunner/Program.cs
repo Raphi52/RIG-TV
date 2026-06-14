@@ -40,6 +40,11 @@ internal static class Program
         // → caractères remplacés par '?' à la lecture.
         try { Console.OutputEncoding = System.Text.Encoding.UTF8; } catch { /* best-effort */ }
 
+        // #1 — Tee stdout vers un fichier : que TOUT mode standalone (--drive-*, --legacy-*)
+        // laisse un log lisible, même lancé hors TestViewer (qui ne dumpe que ses runs proxy).
+        // Nom distinct (sr-…) → pas de collision avec les legacy-*.stdout.log du Dump TV.
+        InstallStdoutTee(args);
+
         // ── Dispatch CLI : cascade de routes, PREMIÈRE qui matche gagne ────────
         // L'ORDRE est significatif (certains flags se chevauchent par préfixe) :
         //   --legacy-rapture-{import,process,export} AVANT --legacy-rapture
@@ -2718,14 +2723,48 @@ internal static class Program
         catch (Exception ex) { Fail(description, ex); }
     }
 
-    private static void Pass(string description) { _passed++; Console.WriteLine($"  ✓ {description}"); }
+    /// <summary>#1 — installe un tee de Console.Out vers
+    /// %LOCALAPPDATA%\rig-wpf-testviewer\sr-&lt;mode&gt;-&lt;stamp&gt;-&lt;pid&gt;.stdout.log.
+    /// Best-effort : n'altère jamais le run (le mode redirigé par TestViewer continue de recevoir stdout
+    /// via le tee, qui réécrit aussi sur la console d'origine).</summary>
+    private static void InstallStdoutTee(string[] args)
+    {
+        try
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var dir = System.IO.Path.Combine(local, "rig-wpf-testviewer");
+            System.IO.Directory.CreateDirectory(dir);
+            var mode = "run";
+            foreach (var a in args) { if (!string.IsNullOrEmpty(a) && a.StartsWith("--")) { mode = a.TrimStart('-'); break; } }
+            var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var pid = System.Diagnostics.Process.GetCurrentProcess().Id;
+            var logPath = System.IO.Path.Combine(dir, $"sr-{mode}-{stamp}-{pid}.stdout.log");
+            var fileWriter = new System.IO.StreamWriter(logPath, append: false, encoding: new System.Text.UTF8Encoding(false)) { AutoFlush = true };
+            Console.SetOut(new TeeTextWriter(Console.Out, fileWriter));
+            AppDomain.CurrentDomain.ProcessExit += (sender, e) => { try { fileWriter.Flush(); fileWriter.Dispose(); } catch { } };
+            Console.WriteLine($"      ⓘ stdout tee → {logPath}");
+        }
+        catch { /* best-effort, jamais bloquer le run pour du logging */ }
+    }
+
+    // #1 — TeeTextWriter (multiplexage Console→console+fichier) déplacé dans Observability.cs (public, testable xUnit).
+
+    /// <summary>#2 — préfixe [hh:mm:ss.fff] [snap=NNNN] pour corréler chaque ligne d'event
+    /// au self-snap PNG exact. snap=---- si aucun self-snap actif (LegacyDriver.LastSnapSeq = -1).</summary>
+    private static string Stamp()
+    {
+        int s = LegacyDriver.LastSnapSeq;
+        var snap = s >= 0 ? s.ToString("D4") : "----";
+        return $"[{DateTime.Now:HH:mm:ss.fff}] [snap={snap}] ";
+    }
+    private static void Pass(string description) { _passed++; Console.WriteLine($"  ✓ {Stamp()}{description}"); }
     private static void Fail(string description, Exception ex)
     {
         _failed++;
-        Console.WriteLine($"  ✗ {description}");
+        Console.WriteLine($"  ✗ {Stamp()}{description}");
         Console.WriteLine($"      {ex.GetType().Name}: {ex.Message}");
     }
-    private static void Skip(string description) { _skipped++; Console.WriteLine($"  ⊘ {description}"); }
+    private static void Skip(string description) { _skipped++; Console.WriteLine($"  ⊘ {Stamp()}{description}"); }
 
     private static void Banner()
     {

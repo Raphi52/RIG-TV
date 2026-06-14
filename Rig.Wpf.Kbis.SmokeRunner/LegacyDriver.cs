@@ -64,6 +64,12 @@ public sealed class LegacyDriver : IDisposable
     private int _snapSeq;
     private volatile bool _snapStopped;
 
+    /// <summary>#2 — dernier index de self-snap publié (le NNNN du PNG snap-…-NNNN.png).
+    /// Lu par Program.Pass/Fail/Skip pour tagger chaque ligne d'event d'un [snap=NNNN]
+    /// corrélable au screenshot exact. -1 = aucun self-snap actif. Statique = portée process
+    /// (un worker = un scénario), cohérent avec les compteurs statiques _passed/_failed.</summary>
+    internal static volatile int LastSnapSeq = -1;
+
     /// <summary>
     /// Dossiers où RIG dépose un document généré (courrier de réclamation, pièce dématérialisée,
     /// K-bis PDF…). Baseline de détection « un document est apparu » (cf. <see cref="SafeDocList"/>).
@@ -3208,7 +3214,10 @@ public sealed class LegacyDriver : IDisposable
         try
         {
             StopPeriodicSnap(); // fige le timer self-snap pour que le rendu PDF soit le snap le plus récent
-            var outPng = Path.Combine(_snapDir!, $"snap-{DateTime.Now:HHmmss}-{System.Threading.Interlocked.Increment(ref _snapSeq):D4}.png");
+            var pdfSnapSeq = System.Threading.Interlocked.Increment(ref _snapSeq);
+            var pdfSnapNow = DateTime.Now;
+            var pdfSnapName = Observability.SnapFileName(pdfSnapSeq, pdfSnapNow);   // #4 (source unique)
+            var outPng = Path.Combine(_snapDir!, pdfSnapName);
             var psi = new ProcessStartInfo
             {
                 FileName = "powershell.exe",
@@ -3223,7 +3232,15 @@ public sealed class LegacyDriver : IDisposable
                 string so = proc!.StandardOutput.ReadToEnd();
                 string se = proc.StandardError.ReadToEnd();
                 proc.WaitForExit(30000);
-                if (File.Exists(outPng)) Console.WriteLine($"      → Snap final = rendu du VRAI PDF K-bis de RIG (moteur Windows) : {so.Trim()}");
+                if (File.Exists(outPng))
+                {
+                    // #2/#3 : publie l'index et écrit la ligne JSONL UNIQUEMENT après que le PNG existe
+                    // réellement sur disque — sinon un [snap=NNNN] tagué par un Pass/Fail pendant le rendu
+                    // pointerait une entrée d'index vers un fichier pas encore écrit (ou jamais, si échec PS).
+                    LastSnapSeq = pdfSnapSeq;
+                    AppendSnapIndex(pdfSnapSeq, pdfSnapNow, pdfSnapName);
+                    Console.WriteLine($"      → Snap final = rendu du VRAI PDF K-bis de RIG (moteur Windows) : {so.Trim()}");
+                }
                 else Console.WriteLine($"      ⚠ rendu PDF K-bis sans PNG. out='{so.Trim()}' err='{se.Trim()}'");
             }
         }
@@ -3400,6 +3417,7 @@ public sealed class LegacyDriver : IDisposable
         }
         catch (Exception exDisco) { Console.WriteLine($"      ⓘ hwnd.txt write a jete : {exDisco.GetType().Name}: {exDisco.Message}"); }
         _snapSeq = 0;
+        LastSnapSeq = -1;   // #2 : reset le tag [snap=] au début d'un nouveau cycle de self-snap
         _snapStopped = false;
         Console.WriteLine($"      ⓘ Self-snap demarre : hwnd=0x{hwnd.ToInt64():X} interval={intervalMs}ms dir={_snapDir}");
         _snapTimer = new System.Threading.Timer(_ => SnapTick(), null, intervalMs, intervalMs);
@@ -3411,9 +3429,35 @@ public sealed class LegacyDriver : IDisposable
         try
         {
             int seq = System.Threading.Interlocked.Increment(ref _snapSeq);
-            var stamp = DateTime.Now.ToString("HHmmss");
-            var path = System.IO.Path.Combine(_snapDir!, $"snap-{stamp}-{seq:D4}.png");
+            var now = DateTime.Now;
+            var fileName = Observability.SnapFileName(seq, now);   // #4 : ms dans le nom (source unique)
+            var path = System.IO.Path.Combine(_snapDir!, fileName);
             Interaction.CaptureWindowByHwnd(_snapHwnd, path);
+            LastSnapSeq = seq;                            // #2 : publie l'index courant pour le tag [snap=NNNN]
+            AppendSnapIndex(seq, now, fileName);          // #3 : ligne JSONL ts↔fichier
+        }
+        catch { /* best-effort, ne pas casser le scenario */ }
+    }
+
+    private readonly object _snapIndexLock = new object();
+
+    /// <summary>#3 — append une ligne JSONL {seq, ts (ms), file} dans snap-index.jsonl du dossier de
+    /// snaps, pour une corrélation déterministe index→fichier→horodatage (lisible par Claude / jq / Node).
+    /// Best-effort : un échec d'écriture ne casse jamais le scénario. Sérialisé par _snapIndexLock : le
+    /// callback Timer SnapTick (threadpool) et le snap PDF (thread principal) peuvent se chevaucher — car
+    /// Timer.Dispose() ne draine PAS un callback déjà en vol — et sans lock FileShare.None ferait perdre
+    /// une ligne (IOException silencieusement avalée).</summary>
+    private void AppendSnapIndex(int seq, DateTime ts, string fileName)
+    {
+        if (string.IsNullOrEmpty(_snapDir)) return;
+        try
+        {
+            var line = Observability.SnapIndexLine(seq, ts, fileName);   // #3 (source unique)
+            lock (_snapIndexLock)
+            {
+                System.IO.File.AppendAllText(System.IO.Path.Combine(_snapDir!, "snap-index.jsonl"),
+                    line + System.Environment.NewLine);
+            }
         }
         catch { /* best-effort, ne pas casser le scenario */ }
     }

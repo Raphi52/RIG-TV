@@ -184,7 +184,27 @@ public sealed class TestViewerDriver : IDisposable
     {
         var ovr = Environment.GetEnvironmentVariable("RIG_TESTVIEWER_EXE");
         if (!string.IsNullOrEmpty(ovr)) return ovr;
-        // Suppose le checkout standard
+
+        // Résout relativement à l'exe SmokeRunner courant, en conservant la MÊME config + TFM :
+        //   <root>\Rig.Wpf.Kbis.SmokeRunner\bin\<cfg>\<tfm>\  →  <root>\Rig.Wpf.Kbis.TestViewer\bin\<cfg>\<tfm>\…TestViewer.exe
+        // Robuste au clone aplati RIG-TV comme à l'arbo historique (le path en dur ci-dessous ne valait plus
+        // que pour l'ancien checkout RigApplication-testing\Source\Wpf — d'où le « TestViewer.exe introuvable »).
+        try
+        {
+            var tfmDir = System.IO.Path.GetDirectoryName(typeof(TestViewerDriver).Assembly.Location)?.TrimEnd('\\', '/');
+            var tfm    = System.IO.Path.GetFileName(tfmDir);                                  // net48
+            var cfgDir = System.IO.Path.GetDirectoryName(tfmDir);                             // …\bin\<cfg>
+            var cfg    = System.IO.Path.GetFileName(cfgDir);                                  // Debug / Release
+            var binDir = System.IO.Path.GetDirectoryName(cfgDir);                             // …\bin
+            var root   = System.IO.Path.GetDirectoryName(System.IO.Path.GetDirectoryName(binDir)); // <root>
+            if (root != null)
+            {
+                var candidate = System.IO.Path.Combine(root, "Rig.Wpf.Kbis.TestViewer", "bin", cfg, tfm, "Rig.Wpf.Kbis.TestViewer.exe");
+                if (System.IO.File.Exists(candidate)) return candidate;
+            }
+        }
+        catch { /* retombe sur le checkout historique ci-dessous */ }
+
         return @"C:\Code RIG\RigApplication-testing\Source\Wpf\Rig.Wpf.Kbis.TestViewer\bin\Debug\net48\Rig.Wpf.Kbis.TestViewer.exe";
     }
 
