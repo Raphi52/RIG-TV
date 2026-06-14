@@ -102,6 +102,12 @@ internal static class Program
         // audience → click 'Export JSON Plumitif' → écrit le JSON sur disque.
         if (HasFlag(args, "--legacy-rapture-export"))
             return RunLegacyRaptureExport(args);
+        // --drive-retaud-pubs = navigation READ-ONLY vers l'écran "Publicités en attente"
+        // de PROC_RETAUD pour une audience donnée (--audience-id <N> obligatoire),
+        // puis capture un screenshot. Aucun import, aucune mutation de données.
+        // Usage : --drive-retaud-pubs --audience-id 28590
+        if (HasFlag(args, "--drive-retaud-pubs"))
+            return RunDriveRetaudPubs(args);
         // --reset-smoke-db = panic restore SQL : restaure tout résidu écrit par les
         // scénarios smoke (audit, notes RAPTURE_*, cas C leftover audiences). Permet
         // de partir d'une DB propre pour rejouer les mêmes scénarios.
@@ -149,7 +155,8 @@ internal static class Program
         // appartient au repo WPF-RIG, pas au harnais. RIG-TV ne pilote que des apps EXTERNES.
         Console.WriteLine("Rig.Wpf.Kbis.SmokeRunner : aucun mode reconnu.");
         Console.WriteLine("Modes : --legacy-kbis-vk|xex, --legacy-alertes-*, --legacy-dcademat-*,");
-        Console.WriteLine("        --legacy-rapture-*, --rapture-selfdrive, --loop, --drive-testviewer-*.");
+        Console.WriteLine("        --legacy-rapture-*, --rapture-selfdrive, --loop, --drive-testviewer-*,");
+        Console.WriteLine("        --drive-retaud-pubs --audience-id <N>.");
         return 0;
     }
 
@@ -1668,6 +1675,96 @@ internal static class Program
                         Console.WriteLine($"      → Fichier OK : {size} octets");
                     });
                     driver.CaptureScreenshot($"e2e-export-{Path.GetFileNameWithoutExtension(jsonOutPath)}-{(_failed > 0 ? "FAIL" : "OK")}");
+                } // end using driver
+            }); // end desktop.RunAttached
+        }
+        finally
+        {
+            try { desktop.Dispose(); } catch { }
+        }
+
+        return PrintSummaryAndExit(sw);
+    }
+
+    /// <summary>
+    /// Mode --drive-retaud-pubs : navigation READ-ONLY vers l'écran
+    /// "Publicités en attente" de PROC_RETAUD pour une audience donnée.
+    ///
+    /// Séquence : Login → OpenProcRetaud → SelectAudience → Click radio
+    /// "Publicités en attente" → attendre la grille → CaptureScreenshot.
+    /// AUCUN import, AUCUNE mutation de données.
+    ///
+    /// Args : --audience-id &lt;N&gt; (obligatoire — AUDNC_ID_ADNC dans AUDIENCE_CABINET).
+    /// Env vars : RIG_LEGACY_EXE, RIG_DRIVER_HEADLESS, RIG_RUN_STAMP (identiques
+    ///            aux autres modes legacy).
+    /// </summary>
+    private static int RunDriveRetaudPubs(string[] args)
+    {
+        var sw = Stopwatch.StartNew();
+        Console.WriteLine();
+        Console.WriteLine("╔══════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("║   --drive-retaud-pubs — RETAUD publicités en attente (READ-ONLY)    ║");
+        Console.WriteLine("╚══════════════════════════════════════════════════════════════════════╝");
+        Console.WriteLine();
+
+        // Lecture de --audience-id (obligatoire)
+        string audienceIdRaw = null;
+        for (int i = 0; i < args.Length; i++)
+        {
+            if (args[i].Equals("--audience-id", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+            { audienceIdRaw = args[i + 1]; break; }
+            if (args[i].StartsWith("--audience-id=", StringComparison.OrdinalIgnoreCase))
+            { audienceIdRaw = args[i].Substring("--audience-id=".Length); break; }
+        }
+        if (string.IsNullOrWhiteSpace(audienceIdRaw) || !int.TryParse(audienceIdRaw, out var audienceId))
+        {
+            Console.WriteLine("ERREUR : --audience-id <N> obligatoire (entier = AUDNC_ID_ADNC).");
+            return 64;
+        }
+
+        var rigExe = Environment.GetEnvironmentVariable("RIG_LEGACY_EXE");
+        if (string.IsNullOrWhiteSpace(rigExe)) rigExe = @"C:\rig\exe\RigClientAccueil.exe";
+
+        Console.WriteLine($"   RIG exe      : {rigExe}");
+        Console.WriteLine($"   Audience id  : {audienceId}");
+        Console.WriteLine($"   Headless     : {(Environment.GetEnvironmentVariable("RIG_DRIVER_HEADLESS") ?? "1") != "0"}");
+        Console.WriteLine();
+
+        TryStep($"Sanity : RigClientAccueil.exe présent à {rigExe}", () =>
+        {
+            if (!File.Exists(rigExe))
+                throw new Exception("Binaire introuvable. Définir RIG_LEGACY_EXE pour override le path.");
+        });
+        if (!File.Exists(rigExe)) return PrintSummaryAndExit(sw);
+
+        bool headless = (Environment.GetEnvironmentVariable("RIG_DRIVER_HEADLESS") ?? "1") != "0";
+        string runId = Process.GetCurrentProcess().Id.ToString();
+        var desktop = RigDesktop.Create(headless, runId);
+        try
+        {
+            desktop.RunAttached(() =>
+            {
+                using (var driver = new LegacyDriver(rigExe, desktop))
+                {
+                    TryStep("Launch : RigClientAccueil.exe démarre", () => driver.Launch());
+                    TryStep("Login : connexion à la base RIG (Se connecter)", () => driver.ClickSeConnecter());
+
+                    // Self-snap : observation en HDESK isolé via PNGs (0 vol focus user)
+                    try { driver.StartPeriodicSnap($"retaud-pubs-{audienceId}", intervalMs: 500); }
+                    catch (Exception ex) { Console.WriteLine($"      ⓘ StartPeriodicSnap a jeté : {ex.GetType().Name}: {ex.Message}"); }
+
+                    // Déléguer au driver : navigate + clic radio + wait + screenshot
+                    string? shotPath = null;
+                    TryStep($"RETAUD pubs : navigate audience #{audienceId} → radio 'Publicités en attente' → screenshot",
+                        () =>
+                        {
+                            shotPath = driver.DriveRetaudPubsEnAttente(audienceId);
+                        });
+
+                    if (!string.IsNullOrEmpty(shotPath))
+                        Console.WriteLine($"   📸 Screenshot : {shotPath}");
+                    else
+                        Console.WriteLine($"   ⚠ Aucun screenshot produit (CaptureScreenshot a retourné null).");
                 } // end using driver
             }); // end desktop.RunAttached
         }

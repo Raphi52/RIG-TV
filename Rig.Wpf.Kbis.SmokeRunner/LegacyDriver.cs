@@ -2205,6 +2205,132 @@ public sealed class LegacyDriver : IDisposable
         Thread.Sleep(1500);
     }
 
+    /// <summary>
+    /// Variante READ-ONLY de SelectAudienceInRetaudByDateHeure sans whitelist chambre.
+    /// Utilisee UNIQUEMENT par DriveRetaudPubsEnAttente (aucun mail envoye, aucune mutation).
+    /// La contrainte hasKnownChambre est retiree (autorisee pour visualisation).
+    /// En cas d'echec, capture un screenshot et retourne false sans throw.
+    /// </summary>
+    private bool SelectAudienceInRetaudByDateHeureNoWhitelist(string dateFr, string heure, int audienceId)
+    {
+        if (_window is null)
+        {
+            Console.WriteLine("      ⚠ SelectAudienceInRetaudByDateHeureNoWhitelist : _window null");
+            return false;
+        }
+
+        var btnValider = FindButtonWithRetry("Valider la sélection", timeoutSec: 20.0);
+        if (btnValider is null)
+        {
+            Console.WriteLine($"      ⚠ 'Valider la sélection' introuvable (20s) — capture diag.");
+            CaptureScreenshot($"retaud-pubs-diag-valider-absent-{audienceId}");
+            return false;
+        }
+
+        // Poll borné ~20s : re-énumère la grille jusqu'à trouver la ligne date+heure.
+        // Le refresh post-recherche peut arriver après la 1re énumération, et le RigListView
+        // peut n'exposer le texte des colonnes qu'au niveau DESCENDANT (pas enfants directs)
+        // ou via LegacyIAccessible.Value → on lit le texte de ligne de façon ROBUSTE.
+        AutomationElement? targetRow = null;
+        string targetSummary = "";
+        var swFind = Stopwatch.StartNew();
+        bool dumped = false;
+        int lastRowCount = -1;
+        while (swFind.Elapsed.TotalSeconds < 20 && targetRow is null)
+        {
+            var rows = _window.FindAllDescendants().Where(c =>
+            {
+                try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+                catch { return false; }
+            }).ToList();
+            lastRowCount = rows.Count;
+
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var parts = new System.Collections.Generic.List<string>();
+                try { foreach (var c in rows[i].FindAllChildren()) { var n = SafeText(() => c.Name); if (!string.IsNullOrEmpty(n)) parts.Add(n); } } catch { }
+                try { foreach (var c in rows[i].FindAllDescendants()) { var n = SafeText(() => c.Name); if (!string.IsNullOrEmpty(n)) parts.Add(n); } } catch { }
+                try { var rn = SafeText(() => rows[i].Name); if (!string.IsNullOrEmpty(rn)) parts.Add(rn); } catch { }
+                try { if (rows[i].Patterns.LegacyIAccessible.IsSupported) { var v = SafeText(() => rows[i].Patterns.LegacyIAccessible.Pattern.Value); if (!string.IsNullOrEmpty(v)) parts.Add(v); } } catch { }
+                var content = string.Join(" | ", parts.Distinct());
+
+                if (!dumped)
+                    Console.WriteLine($"          [DIAG] row[{i}] = [{content}]");
+
+                bool hasDate  = content.IndexOf(dateFr, StringComparison.OrdinalIgnoreCase) >= 0;
+                bool hasHeure = content.IndexOf(heure,  StringComparison.OrdinalIgnoreCase) >= 0;
+                bool isInteractive = content.IndexOf("audience i",  StringComparison.OrdinalIgnoreCase) >= 0
+                                  || content.IndexOf("interactive", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (hasDate && hasHeure && !isInteractive)
+                {
+                    targetRow = rows[i];
+                    targetSummary = content;
+                    Console.WriteLine($"          row[{i}] ✓ MATCH {dateFr} {heure} (no-whitelist) : [{content}]");
+                    break;
+                }
+            }
+            dumped = true;
+            if (targetRow is null) Thread.Sleep(500);
+        }
+
+        if (targetRow is null)
+        {
+            // UIA n'expose souvent que la 1re colonne (jour) des lignes de ce RigListView
+            // → matching date+heure impossible. Fallback : la grille a été filtrée sur dateFr
+            // (SearchAudiencesByDate), donc TOUTES les lignes sont du bon jour ; on prend la
+            // DERNIÈRE (heure la plus tardive en tri ascendant = audience cible 15:00).
+            // Lecture seule → sélectionner/charger une audience n'envoie aucun mail.
+            var rows2 = _window.FindAllDescendants().Where(c =>
+            {
+                try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+                catch { return false; }
+            }).ToList();
+            if (rows2.Count > 0)
+            {
+                targetRow = rows2[rows2.Count - 1];
+                targetSummary = (SafeText(() => targetRow.Name) ?? $"row#{rows2.Count - 1}") + $" (fallback index, {rows2.Count} lignes)";
+                Console.WriteLine($"      → Fallback index : UIA n'expose que le jour → sélection de la DERNIÈRE ligne ({rows2.Count} lignes) : [{targetSummary}]");
+            }
+            else
+            {
+                Console.WriteLine($"      ⚠ Aucune ligne dans la grille ({lastRowCount} vues) — capture diag.");
+                CaptureScreenshot($"retaud-pubs-diag-norow-{audienceId}");
+                return false;
+            }
+        }
+
+        Console.WriteLine($"      → Sélection (no-whitelist) : {targetSummary}");
+        try { Interaction.Select(targetRow); } catch { }
+        Thread.Sleep(400);
+
+        Console.WriteLine("      → Click 'Valider la sélection' (no-whitelist) → phase Saisie PROC_RETAUD");
+        try
+        {
+            Interaction.Click(btnValider);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⚠ Click 'Valider la sélection' a jeté : {ex.GetType().Name}: {ex.Message}");
+            CaptureScreenshot($"retaud-pubs-diag-valider-click-fail-{audienceId}");
+            return false;
+        }
+
+        // Poll borné 6s : attend que 'Valider la sélection' disparaisse
+        // (preuve que RIG a transitionné vers la phase Saisie).
+        var swPost = Stopwatch.StartNew();
+        while (swPost.Elapsed.TotalSeconds < 6)
+        {
+            var stillPresent = FindButtonWithRetry("Valider la sélection", timeoutSec: 0.1);
+            if (stillPresent is null)
+            {
+                Console.WriteLine($"      → Transition phase Saisie confirmée ({swPost.Elapsed.TotalSeconds:F1}s).");
+                break;
+            }
+            Thread.Sleep(400);
+        }
+        return true;
+    }
+
     private bool TryLaunchKbis(AutomationElement item, string source)
     {
         Console.WriteLine($"      → Processus VK candidat via {source} : Type={item.ControlType} Name='{item.Name}'");
@@ -7778,5 +7904,269 @@ public sealed class LegacyDriver : IDisposable
         // Échec : screenshot + throw
         try { CaptureScreenshot("doc-not-opened"); } catch { }
         throw new Exception($"Édition Brouillon pas détectée après {timeoutSeconds}s (ni WINWORD ni RigAffichageDoc nouveau/window ni fichier .doc)");
+    }
+
+    // ============================================================================
+    //  --drive-retaud-pubs : navigation READ-ONLY vers l'écran "Publicités en attente"
+    //  de PROC_RETAUD pour une audience donnée, puis screenshot.
+    //  AUCUNE écriture, AUCUNE mutation de données.
+    // ============================================================================
+
+    /// <summary>
+    /// Pilote RIG jusqu'à l'écran « Publicités en attente » de PROC_RETAUD pour
+    /// l'audience <paramref name="audienceId"/>, puis capture un screenshot.
+    ///
+    /// Séquence (READ-ONLY) :
+    ///   1. OpenProcRetaud()
+    ///   2. LookupAudienceDateHeureById (DB SELECT) → dateFr + heure
+    ///   2b. SearchAudiencesByDate(dateFr) : règle Du/Au sur dateFr, clique 'Rechercher',
+    ///       attend que la grille liste dateFr (plafond 15s, 4 stratégies).
+    ///   2c. SelectAudienceInRetaudByDateHeureNoWhitelist : sélectionne la ligne
+    ///       date+heure SANS contrainte de chambre (pas de risque mail, mode read-only),
+    ///       clique 'Valider la sélection'.
+    ///   3. Cliquer le radio-button dont le Name UIA = "Publicités en attente"
+    ///      (ajouté dynamiquement dans le groupe ult_GroupRadioButtonFiltreAppelAffaire
+    ///      quand des EP en attente existent pour l'audience)
+    ///   4. Poll jusqu'à apparition d'un indicateur de chargement ("Nombre de publicités"
+    ///      OU DataGridView nommé "ULTDataGridViewEveProEnAttente") — borné à ~30 s
+    ///   5. CaptureScreenshot("retaud-pubs-en-attente-{audienceId}")
+    ///
+    /// Si le radio est absent ou la grille ne charge pas, capture un screenshot de
+    /// diagnostic et log l'échec sans throw (le caller décide du code de sortie).
+    /// </summary>
+    /// <param name="audienceId">AUDNC_ID_ADNC de l'audience cible.</param>
+    /// <returns>Path du PNG capturé, ou null si la capture a échoué.</returns>
+    public string? DriveRetaudPubsEnAttente(int audienceId)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null — Launch() + ClickSeConnecter() doivent être appelés avant DriveRetaudPubsEnAttente()");
+
+        // ── Étape 1 : ouvrir PROC_RETAUD ─────────────────────────────────────
+        OpenProcRetaud();
+
+        // ── Étape 2 : résoudre l'audience et la sélectionner ─────────────────
+        // Réutilise la même DB-lookup que RunLegacyRaptureProcess / RunLegacyRaptureExport.
+        // La méthode statique est dans Program.cs ; ici on l'appelle via la classe parente.
+        // NOTA : LookupAudienceDateHeureById est private static de Program → elle n'est pas
+        // accessible depuis LegacyDriver. On duplique MINIMALEMENT la logique de résolution
+        // (identique, même CS, same query) pour ne pas rompre l'encapsulation.
+        string dateFr;
+        string heure;
+        {
+            var cs = Environment.GetEnvironmentVariable("RIG_LEGACY_CONNECTION")
+                ?? @"Server=SQL-DEV\DEV;Database=RIG_DEV;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10;";
+            DateTime? audDate = null;
+            string? audHeure = null;
+            try
+            {
+                using var conn = new System.Data.SqlClient.SqlConnection(cs);
+                conn.Open();
+                using var cmd = new System.Data.SqlClient.SqlCommand(
+                    "SELECT AUDNC_DATE, AUDNC_HEURE FROM AUDIENCE_CABINET WHERE AUDNC_ID_ADNC = @id", conn);
+                cmd.Parameters.AddWithValue("@id", audienceId);
+                using var r = cmd.ExecuteReader();
+                if (r.Read() && !r.IsDBNull(0) && !r.IsDBNull(1))
+                {
+                    audDate = r.GetDateTime(0);
+                    audHeure = r.GetString(1);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"      ⚠ DriveRetaudPubsEnAttente : lookup DB audience #{audienceId} a échoué ({ex.GetType().Name}: {ex.Message}) — capture diag + throw");
+                CaptureScreenshot($"retaud-pubs-diag-lookup-fail-{audienceId}");
+                throw;
+            }
+            if (audDate is null || audHeure is null)
+                throw new Exception($"Audience #{audienceId} introuvable dans AUDIENCE_CABINET (DB={cs.Split(';')[0]})");
+
+            dateFr = audDate.Value.ToString("dd/MM/yyyy");
+            if (!TimeSpan.TryParseExact(audHeure, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out var ts)
+             && !TimeSpan.TryParse(audHeure, out ts))
+                heure = audHeure; // fallback : passe la chaîne telle-quelle
+            else
+                heure = ts.ToString(@"hh\:mm");
+            Console.WriteLine($"      → Audience #{audienceId} : date={dateFr} heure={heure}");
+        }
+
+        // ── Étape 2b : cibler la fenêtre 'Recherche d'audience' sur la date exacte ──
+        // La fenêtre s'ouvre sur la semaine courante → l'audience cible peut être
+        // absente. On utilise SearchAudiencesByDate pour régler Du/Au sur dateFr et
+        // déclencher 'Rechercher', PUIS on sélectionne la ligne sans whitelist chambre
+        // (autorisé pour ce mode read-only : aucun mail envoyé, aucune mutation).
+        try
+        {
+            SearchAudiencesByDate(dateFr);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"      ⚠ DriveRetaudPubsEnAttente : SearchAudiencesByDate({dateFr}) a échoué ({ex.GetType().Name}: {ex.Message})");
+            Console.WriteLine($"        → On tente quand même la sélection (la date est peut-être déjà visible).");
+            CaptureScreenshot($"retaud-pubs-diag-searchdate-fail-{audienceId}");
+        }
+
+        SelectAudienceInRetaudByDateHeureNoWhitelist(dateFr, heure, audienceId);
+
+        // ── Étape 3 : cliquer le radio "Publicités en attente" ────────────────
+        // Ce radio est créé DYNAMIQUEMENT (PAS toujours présent : il n'apparaît que
+        // si l'audience possède des EP en attente). On ne le cherche pas tout de suite —
+        // RIG peut mettre quelques secondes après SelectAudience pour rendre l'UI.
+        //
+        // ⚠ Incertitude (non vérifiée à l'exécution réelle — cf. section Risques
+        // dans le rapport) : le Name UIA exact du radio peut différer de
+        // "Publicités en attente" selon la version déployée de FORM_RETAUD. Le
+        // Name utilisé ici est celui fourni par la recette (paramètre de commande).
+        const string radioName = "Publicités en attente";
+        const string groupAutomationId = "ult_GroupRadioButtonFiltreAppelAffaire";
+
+        AutomationElement? radio = null;
+        {
+            var sw = Stopwatch.StartNew();
+            const int maxMs = 10000; // 10 s pour que le radio apparaisse après sélection audience
+            while (sw.ElapsedMilliseconds < maxMs)
+            {
+                // Stratégie 1 : chercher dans le groupe si son AutomationId est stable
+                var group = FindByAutomationId(groupAutomationId);
+                if (group is not null)
+                {
+                    try
+                    {
+                        radio = group.FindFirstDescendant(cf =>
+                            cf.ByControlType(ControlType.RadioButton).And(cf.ByName(radioName)));
+                    }
+                    catch { }
+                }
+                // Stratégie 2 : si le groupe n'est pas trouvé, scan global de la fenêtre
+                if (radio is null)
+                {
+                    try
+                    {
+                        radio = _window.FindFirstDescendant(cf =>
+                            cf.ByControlType(ControlType.RadioButton).And(cf.ByName(radioName)));
+                    }
+                    catch { }
+                }
+                if (radio is not null)
+                {
+                    Console.WriteLine($"      → Radio '{radioName}' trouvé en {sw.ElapsedMilliseconds}ms");
+                    break;
+                }
+                Thread.Sleep(300);
+            }
+        }
+
+        if (radio is null)
+        {
+            // Le radio n'existe pas (aucun EP en attente pour cette audience,
+            // ou nom UIA différent de la valeur attendue).
+            Console.WriteLine($"      ⚠ Radio '{radioName}' introuvable après 10s dans PROC_RETAUD audience #{audienceId}");
+            Console.WriteLine($"        Causes possibles : (a) aucun EP en attente pour cette audience,");
+            Console.WriteLine($"        (b) nom UIA différent de '{radioName}' dans cette version de FORM_RETAUD,");
+            Console.WriteLine($"        (c) l'UI n'est pas encore dans la bonne phase.");
+            Console.WriteLine($"        → Screenshot de diagnostic capturé.");
+            return CaptureScreenshot($"retaud-pubs-diag-radio-absent-{audienceId}");
+        }
+
+        // Cliquer le radio — mêmes fallbacks que les autres radio/boutons dans LegacyDriver
+        bool radioClicked = false;
+        try
+        {
+            if (radio.Patterns.SelectionItem.IsSupported)
+            {
+                radio.Patterns.SelectionItem.Pattern.Select();
+                Console.WriteLine($"      → Radio '{radioName}' sélectionné via SelectionItem.Select()");
+                radioClicked = true;
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      [DIAG] SelectionItem.Select() a jeté : {ex.GetType().Name}: {ex.Message}"); }
+
+        if (!radioClicked)
+        {
+            try
+            {
+                Interaction.Click(radio);
+                Console.WriteLine($"      → Radio '{radioName}' cliqué via Interaction.Click()");
+                radioClicked = true;
+            }
+            catch (Exception ex) { Console.WriteLine($"      [DIAG] Interaction.Click() a jeté : {ex.GetType().Name}: {ex.Message}"); }
+        }
+
+        if (!radioClicked)
+        {
+            try
+            {
+                if (radio.Patterns.Invoke.IsSupported)
+                {
+                    radio.Patterns.Invoke.Pattern.Invoke();
+                    Console.WriteLine($"      → Radio '{radioName}' invoqué via Invoke.Pattern.Invoke()");
+                    radioClicked = true;
+                }
+            }
+            catch (Exception ex) { Console.WriteLine($"      [DIAG] Invoke.Invoke() a jeté : {ex.GetType().Name}: {ex.Message}"); }
+        }
+
+        if (!radioClicked)
+        {
+            Console.WriteLine($"      ⚠ Tous les tentatives de clic du radio ont échoué — screenshot de diagnostic.");
+            return CaptureScreenshot($"retaud-pubs-diag-radio-click-fail-{audienceId}");
+        }
+
+        // ── Étape 4 : attendre que l'écran charge (poll borné ~30 s) ──────────
+        // Condition : un descendant Text/Label dont le Name contient "Nombre de publicités"
+        //         OU un DataGridView nommé "ULTDataGridViewEveProEnAttente".
+        // ⚠ Ces noms UIA sont issus de la recette. La grille peut exposer un AutomationId
+        //   différent ou ne pas être visible en HDESK si l'audience n'a aucun EP.
+        bool loaded = false;
+        {
+            var sw = Stopwatch.StartNew();
+            const int maxMs = 30000;
+            const string gridAutomationId = "ULTDataGridViewEveProEnAttente";
+            const string countLabelSubstr = "Nombre de publicités";
+            while (sw.ElapsedMilliseconds < maxMs)
+            {
+                // Test 1 : grille par AutomationId
+                var grid = FindByAutomationId(gridAutomationId);
+                if (grid is not null)
+                {
+                    Console.WriteLine($"      → Grille '{gridAutomationId}' présente après {sw.ElapsedMilliseconds}ms");
+                    loaded = true;
+                    break;
+                }
+                // Test 2 : étiquette "Nombre de publicités" quelque part dans la fenêtre
+                try
+                {
+                    var lbl = _window.FindFirstDescendant(cf => cf.ByName(countLabelSubstr));
+                    if (lbl is null)
+                    {
+                        // Scan souple : cherche tout Text/Label dont le Name contient la sous-chaîne
+                        foreach (var c in _window.FindAllDescendants())
+                        {
+                            string ct;
+                            try { ct = c.ControlType.ToString(); } catch { continue; }
+                            if (ct != "Text" && ct != "Custom" && ct != "Pane") continue;
+                            var nm = SafeText(() => c.Name);
+                            if (nm != null && nm.IndexOf(countLabelSubstr, StringComparison.OrdinalIgnoreCase) >= 0)
+                            {
+                                lbl = c;
+                                break;
+                            }
+                        }
+                    }
+                    if (lbl is not null)
+                    {
+                        Console.WriteLine($"      → Indicateur '{countLabelSubstr}' présent après {sw.ElapsedMilliseconds}ms");
+                        loaded = true;
+                        break;
+                    }
+                }
+                catch { }
+                Thread.Sleep(500);
+            }
+            if (!loaded)
+                Console.WriteLine($"      ⚠ Indicateur de chargement non détecté après {maxMs / 1000}s ('{countLabelSubstr}' / '{gridAutomationId}') — capture quand même.");
+        }
+
+        // ── Étape 5 : capture screenshot ──────────────────────────────────────
+        var label = $"retaud-pubs-en-attente-{audienceId}{(loaded ? "" : "-diag-notloaded")}";
+        return CaptureScreenshot(label);
     }
 }
