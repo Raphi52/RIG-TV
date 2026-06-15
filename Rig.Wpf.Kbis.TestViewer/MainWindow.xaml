@@ -167,138 +167,44 @@
                     </StackPanel>
                 </TabItem.Header>
 
-                <!-- Marge top 12px supprimée en plein écran (dernier liseré de fond au-dessus de
-                     la FocusView ; le reste = barre de titre native, inamovible). -->
-                <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
-                    <Grid.Resources>
-                        <!-- Resource au niveau OUTER Grid pour être accessible depuis le footer
-                             (Row 2) ET le 3-col Grid interne (Row 1). Si en inner uniquement,
-                             le footer crash : ResourceNotFoundException → BAML load fail. -->
-                        <cv:BoolToVisibilityInvertedConverter x:Key="KbisBoolToVisInv"/>
-                    </Grid.Resources>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>   <!-- card header KBIS -->
-                        <RowDefinition Height="*"/>      <!-- 3 cols : mosaic | focus | list -->
-                        <RowDefinition Height="Auto"/>   <!-- footer -->
-                    </Grid.RowDefinitions>
-
-                    <!-- Card header KBIS : bouton RunLegacyCommand + status.
-                         Collapse en plein écran → le PNG occupe aussi la hauteur du header. -->
-                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
-                            Visibility="{Binding KbisFocus.IsFullscreen, Converter={StaticResource KbisBoolToVisInv}}">
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding RunLegacyCommand}"
-                                    AutomationProperties.AutomationId="BtnKbisRunSmokeLegacy"
-                                    Padding="16,6" VerticalContentAlignment="Center">
-                                <TextBlock Text="▶  Run smoke RIG"/>
-                            </Button>
-
-                            <!-- Sélecteur de mode de visibilité (miroir de CmbRaptureMode côté Rapture).
-                                 A = RIG sur ton écran (prend la souris) → vérif K-bis à l'œil + capture ;
-                                 B = HDESK self-snap, 0 vol focus (défaut). -->
-                            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <TextBlock Text="Mode" Margin="0,0,6,0" VerticalAlignment="Center"
-                                           Style="{StaticResource MutedText}"/>
-                                <ComboBox Width="210"
-                                          AutomationProperties.AutomationId="CmbKbisMode"
-                                          ItemsSource="{Binding KbisModeOptions}"
-                                          SelectedValuePath="Mode"
-                                          SelectedValue="{Binding SelectedKbisMode, Mode=TwoWay}"
-                                          DisplayMemberPath="Label"
-                                          ToolTip="Mode de visibilité des tuiles K-bis. A = RIG sur ton écran (prend la souris) : la page PDF se rend et est capturée. B = HDESK isolé, 0 vol focus (défaut)."/>
-                            </StackPanel>
-
-                            <!-- Stress : lancer X fois le MÊME scénario (la tuile sélectionnée) en
-                                 parallèle. Toggle "boucler jusqu'au 1er échec" = chasse au flake. -->
-                            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <TextBlock Text="Stresser sélection ×" VerticalAlignment="Center"
-                                               Style="{StaticResource MutedText}"/>
-                                    <TextBox AutomationProperties.AutomationId="NumKbisStressRepeat"
-                                             Width="36" Margin="4,0" Padding="4,2" VerticalContentAlignment="Center"
-                                             Text="{Binding KbisStressRepeat, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Nombre de copies parallèles du scénario sélectionné (1-8)."/>
-                                    <Button AutomationProperties.AutomationId="BtnKbisRunStress"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Command="{Binding StressSelectedScenarioCommand}"
-                                            Padding="12,6" Margin="4,0,0,0" VerticalContentAlignment="Center"
-                                            ToolTip="Lance X copies du scénario sélectionné en parallèle (chasse au flake).">
-                                        <TextBlock><Run Text="▶ Stress ×"/><Run Text="{Binding KbisStressRepeat}"/></TextBlock>
-                                    </Button>
-                                    <Button AutomationProperties.AutomationId="BtnKbisStopStress"
-                                            Command="{Binding StopKbisStressCommand}"
-                                            Padding="10,6" Margin="6,0,0,0" VerticalContentAlignment="Center"
-                                            Content="⏹ Stop"
-                                            ToolTip="Stoppe la boucle de stress après la vague en cours."/>
-                                </StackPanel>
-                                <CheckBox AutomationProperties.AutomationId="ChkKbisStressLoop"
-                                          Margin="0,6,0,0" HorizontalAlignment="Right"
-                                          IsChecked="{Binding KbisStressLoopUntilFail}"
-                                          Content="Boucler jusqu'au 1er échec"
-                                          ToolTip="Relance des vagues de X jusqu'à ce qu'une copie rate, puis stop + highlight de la tuile rouge."/>
-                                <TextBlock Text="{Binding KbisStressStatus}" Style="{StaticResource MutedText}"
-                                           Margin="0,4,0,0" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="420"/>
-                            </StackPanel>
-
-                            <StackPanel>
-                                <TextBlock Text="Smoke Legacy — KBIS" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
-                                           Text="Suite smoke RIG legacy filtrée 'kbis' — affichée via le template SmokePage (mosaic + focus + grid). Click 'Run smoke RIG' déclenche RunLegacyCommand (sanity + login + KBIS) ; les statuts par scénario montent au fur et à mesure."/>
-                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
-                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
-                                <!-- Summary KBIS-spécifique (counter VK+XEX seul, pas le batch entier).
-                                     KbisSummary updaté à chaque LinesChanged dans UpdateLegacySummary. -->
-                                <TextBlock Text="{Binding KbisSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
-                            </StackPanel>
-                        </DockPanel>
-                    </Border>
-
-                    <!-- Row 1 : 3 colonnes (template SmokePage). Marge top 12px supprimée en plein
-                         écran (sinon liseré de fond Canvas au-dessus de la FocusView). -->
-                    <Grid Grid.Row="1" Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition>
-                                <ColumnDefinition.Style>
-                                    <Style TargetType="ColumnDefinition">
-                                        <Setter Property="Width" Value="500"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding KbisFocus.IsFullscreen}" Value="True">
-                                                <Setter Property="Width" Value="0"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ColumnDefinition.Style>
-                            </ColumnDefinition>
-                        </Grid.ColumnDefinitions>
-
-                        <views:MosaicView Grid.Column="0" DataContext="{Binding KbisCatalog}"
-                                          Visibility="{Binding DataContext.KbisFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource KbisBoolToVisInv}}"/>
-                        <views:FocusView Grid.Column="1" DataContext="{Binding KbisFocus}"/>
-                        <views:ScenarioListView Grid.Column="2" DataContext="{Binding KbisCatalog}" Margin="6,0,0,0">
-                            <views:ScenarioListView.Style>
-                                <Style TargetType="views:ScenarioListView">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding DataContext.KbisFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </views:ScenarioListView.Style>
-                        </views:ScenarioListView>
-                    </Grid>
-
-                    <!-- Row 2 : Footer KBIS — câblé (2026-05-28) : utilise FooterView identique
-                         au Rapture, bind direct au MainWindowViewModel (SnapDiskUsageHuman +
-                         CleanupAllSnapsCommand). Les self-snaps du smoke legacy s'accumulent
-                         dans %LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\<runStamp>\kbis-legacy\
-                         et SnapDiskUsage scan tous les runs (cumul cross-module). -->
-                    <views:FooterView Grid.Row="2"
-                                      Visibility="{Binding KbisFocus.IsFullscreen, Converter={StaticResource KbisBoolToVisInv}, FallbackValue=Visible}"/>
-                </Grid>
+                <!-- KBIS consomme le template partagé SmokePageView (corps 3-col + footer).
+                     Le header est injecté via SmokeHeaderView (bandeau partagé unifié).
+                     Plein écran, column collapse, footer masqué = géré par SmokePageView. -->
+                <views:SmokePageView Catalog="{Binding KbisCatalog}" FocusContext="{Binding KbisFocus}">
+                    <views:SmokePageView.HeaderContent>
+                        <views:SmokeHeaderView
+                            IsFullscreen="{Binding KbisFocus.IsFullscreen}"
+                            ShowScenarioPicker="False"
+                            ShowAdvancedOverrides="False"
+                            ShowApplyReal="False"
+                            ShowModeSelector="True"
+                            ModeOptionsSource="{Binding KbisModeOptions}"
+                            SelectedMode="{Binding SelectedKbisMode, Mode=TwoWay}"
+                            ModeComboAutomationId="CmbKbisMode"
+                            ShowParallelism="False"
+                            ShowStress="True"
+                            StressCommand="{Binding StressSelectedScenarioCommand}"
+                            StopStressCommand="{Binding StopKbisStressCommand}"
+                            StressRepeat="{Binding KbisStressRepeat, Mode=TwoWay}"
+                            StressLoopUntilFail="{Binding KbisStressLoopUntilFail}"
+                            StressStatus="{Binding KbisStressStatus}"
+                            StressRunAutomationId="BtnKbisRunStress"
+                            StressStopAutomationId="BtnKbisStopStress"
+                            StressRepeatAutomationId="NumKbisStressRepeat"
+                            StressLoopAutomationId="ChkKbisStressLoop"
+                            ShowResetDb="False"
+                            ShowHistory="False"
+                            ShowPause="False"
+                            ShowStop="False"
+                            PrimaryRunCommand="{Binding RunLegacyCommand}"
+                            PrimaryRunAutomationId="BtnKbisRunSmokeLegacy"
+                            PrimaryRunLabel="▶  Run smoke RIG"
+                            Title="Smoke Legacy — KBIS"
+                            Description="Suite smoke RIG legacy filtrée 'kbis' — affichée via le template SmokePage (mosaic + focus + grid). Click 'Run smoke RIG' déclenche RunLegacyCommand (sanity + login + KBIS) ; les statuts par scénario montent au fur et à mesure."
+                            ExeStatus="{Binding LegacyExeStatus}"
+                            Summary="{Binding KbisSummary}"/>
+                    </views:SmokePageView.HeaderContent>
+                </views:SmokePageView>
             </TabItem>
 
             <!-- ─────────────── SMOKE WPF ─────────────── -->
@@ -1079,105 +985,41 @@
                     </StackPanel>
                 </TabItem.Header>
 
-                <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
-                    <Grid.Resources>
-                        <cv:BoolToVisibilityInvertedConverter x:Key="AlertesBoolToVisInv"/>
-                    </Grid.Resources>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
-                            Visibility="{Binding AlertesFocus.IsFullscreen, Converter={StaticResource AlertesBoolToVisInv}}">
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding RunAlertesCommand}"
-                                    AutomationProperties.AutomationId="BtnAlertesRunSmokeLegacy"
-                                    Padding="16,6" VerticalContentAlignment="Center">
-                                <TextBlock Text="▶  Run smoke RIG"/>
-                            </Button>
-
-                            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" Margin="0,0,12,0">
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                                    <TextBlock Text="Stresser sélection ×" VerticalAlignment="Center"
-                                               Style="{StaticResource MutedText}"/>
-                                    <TextBox AutomationProperties.AutomationId="NumAlertesStressRepeat"
-                                             Width="36" Margin="4,0" Padding="4,2" VerticalContentAlignment="Center"
-                                             Text="{Binding AlertesStressRepeat, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                             ToolTip="Nombre de copies parallèles du scénario sélectionné (1-8)."/>
-                                    <Button AutomationProperties.AutomationId="BtnAlertesRunStress"
-                                            Style="{StaticResource PrimaryButton}"
-                                            Command="{Binding StressAlertesScenarioCommand}"
-                                            Padding="12,6" Margin="4,0,0,0" VerticalContentAlignment="Center"
-                                            ToolTip="Lance X copies du scénario sélectionné en parallèle (chasse au flake).">
-                                        <TextBlock><Run Text="▶ Stress ×"/><Run Text="{Binding AlertesStressRepeat}"/></TextBlock>
-                                    </Button>
-                                    <Button AutomationProperties.AutomationId="BtnAlertesStopStress"
-                                            Command="{Binding StopAlertesStressCommand}"
-                                            Padding="10,6" Margin="6,0,0,0" VerticalContentAlignment="Center"
-                                            Content="⏹ Stop"
-                                            ToolTip="Stoppe la boucle de stress après la vague en cours."/>
-                                </StackPanel>
-                                <CheckBox AutomationProperties.AutomationId="ChkAlertesStressLoop"
-                                          Margin="0,6,0,0" HorizontalAlignment="Right"
-                                          IsChecked="{Binding AlertesStressLoopUntilFail}"
-                                          Content="Boucler jusqu'au 1er échec"
-                                          ToolTip="Relance des vagues de X jusqu'à ce qu'une copie rate, puis stop + highlight de la tuile rouge."/>
-                                <TextBlock Text="{Binding AlertesStressStatus}" Style="{StaticResource MutedText}"
-                                           Margin="0,4,0,0" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="420"/>
-                            </StackPanel>
-
-                            <StackPanel>
-                                <TextBlock Text="Smoke Alertes — RCS (reprise interrompue / réclamation)" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
-                                           Text="4 scénarios : reprise d'une mise en interrompue / en réclamation, sur demande de formalités (J00…) et DCADEMAT. Click 'Run smoke RIG' → ouvre les alertes RCS, ouvre la 1ère demande, vérifie ouverture + DocDemat."/>
-                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
-                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
-                                <TextBlock Text="{Binding AlertesSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
-                            </StackPanel>
-                        </DockPanel>
-                    </Border>
-
-                    <Grid Grid.Row="1" Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='0,12,0,0'}">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition>
-                                <ColumnDefinition.Style>
-                                    <Style TargetType="ColumnDefinition">
-                                        <Setter Property="Width" Value="500"/>
-                                        <Style.Triggers>
-                                            <DataTrigger Binding="{Binding AlertesFocus.IsFullscreen}" Value="True">
-                                                <Setter Property="Width" Value="0"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </ColumnDefinition.Style>
-                            </ColumnDefinition>
-                        </Grid.ColumnDefinitions>
-
-                        <views:MosaicView Grid.Column="0" DataContext="{Binding AlertesCatalog}"
-                                          Visibility="{Binding DataContext.AlertesFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource AlertesBoolToVisInv}}"/>
-                        <views:FocusView Grid.Column="1" DataContext="{Binding AlertesFocus}"/>
-                        <views:ScenarioListView Grid.Column="2" DataContext="{Binding AlertesCatalog}" Margin="6,0,0,0">
-                            <views:ScenarioListView.Style>
-                                <Style TargetType="views:ScenarioListView">
-                                    <Setter Property="Visibility" Value="Visible"/>
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding DataContext.AlertesFocus.IsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                                            <Setter Property="Visibility" Value="Collapsed"/>
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </views:ScenarioListView.Style>
-                        </views:ScenarioListView>
-                    </Grid>
-
-                    <views:FooterView Grid.Row="2"
-                                      Visibility="{Binding AlertesFocus.IsFullscreen, Converter={StaticResource AlertesBoolToVisInv}, FallbackValue=Visible}"/>
-                </Grid>
+                <!-- ALERTES consomme le template partagé SmokePageView (corps 3-col + footer).
+                     Le header est injecté via SmokeHeaderView (bandeau partagé unifié).
+                     Plein écran, column collapse, footer masqué = géré par SmokePageView. -->
+                <views:SmokePageView Catalog="{Binding AlertesCatalog}" FocusContext="{Binding AlertesFocus}">
+                    <views:SmokePageView.HeaderContent>
+                        <views:SmokeHeaderView
+                            IsFullscreen="{Binding AlertesFocus.IsFullscreen}"
+                            ShowScenarioPicker="False"
+                            ShowAdvancedOverrides="False"
+                            ShowApplyReal="False"
+                            ShowModeSelector="False"
+                            ShowParallelism="False"
+                            ShowStress="True"
+                            StressCommand="{Binding StressAlertesScenarioCommand}"
+                            StopStressCommand="{Binding StopAlertesStressCommand}"
+                            StressRepeat="{Binding AlertesStressRepeat, Mode=TwoWay}"
+                            StressLoopUntilFail="{Binding AlertesStressLoopUntilFail}"
+                            StressStatus="{Binding AlertesStressStatus}"
+                            StressRunAutomationId="BtnAlertesRunStress"
+                            StressStopAutomationId="BtnAlertesStopStress"
+                            StressRepeatAutomationId="NumAlertesStressRepeat"
+                            StressLoopAutomationId="ChkAlertesStressLoop"
+                            ShowResetDb="False"
+                            ShowHistory="False"
+                            ShowPause="False"
+                            ShowStop="False"
+                            PrimaryRunCommand="{Binding RunAlertesCommand}"
+                            PrimaryRunAutomationId="BtnAlertesRunSmokeLegacy"
+                            PrimaryRunLabel="▶  Run smoke RIG"
+                            Title="Smoke Alertes — RCS (reprise interrompue / réclamation)"
+                            Description="4 scénarios : reprise d'une mise en interrompue / en réclamation, sur demande de formalités (J00…) et DCADEMAT. Click 'Run smoke RIG' → ouvre les alertes RCS, ouvre la 1ère demande, vérifie ouverture + DocDemat."
+                            ExeStatus="{Binding LegacyExeStatus}"
+                            Summary="{Binding AlertesSummary}"/>
+                    </views:SmokePageView.HeaderContent>
+                </views:SmokePageView>
             </TabItem>
         </TabControl>
         </DockPanel>
@@ -1190,23 +1032,23 @@
                  UNE fois dans SmokePageView.xaml ; on n'injecte ici que le Catalog/Focus + le header. -->
             <views:SmokePageView Catalog="{Binding DcadematCatalog}" FocusContext="{Binding DcadematFocus}">
                 <views:SmokePageView.HeaderContent>
-                    <Border Style="{StaticResource Card}" Padding="16,12">
-                        <DockPanel>
-                            <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding RunDcadematCommand}"
-                                    AutomationProperties.AutomationId="BtnDcadematRunSmokeLegacy"
-                                    Padding="16,6" VerticalContentAlignment="Center">
-                                <TextBlock Text="▶  Run smoke DCADEMAT"/>
-                            </Button>
-                            <StackPanel>
-                                <TextBlock Text="Smoke DCADEMAT — comptes annuels dématérialisés (DCA) + formalités Demat" Style="{StaticResource H2}"/>
-                                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
-                                           Text="8 scénarios : DCA + Formalité Demat × validation / réclamation / refus / interrompue. v1 = ouvre l'alerte RCS + la 1ère demande (Configurer le dépôt). Le step métier 'Action' (Valider Alt+V / Réclamer Alt+R / Refuser / Interrompre) = Étape 3 (avec supervision ; réclamation = aperçu avant impression → NE PAS IMPRIMER)."/>
-                                <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
-                                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
-                            </StackPanel>
-                        </DockPanel>
-                    </Border>
+                    <views:SmokeHeaderView
+                        ShowScenarioPicker="False"
+                        ShowAdvancedOverrides="False"
+                        ShowApplyReal="False"
+                        ShowModeSelector="False"
+                        ShowParallelism="False"
+                        ShowStress="False"
+                        ShowResetDb="False"
+                        ShowHistory="False"
+                        ShowPause="False"
+                        ShowStop="False"
+                        PrimaryRunCommand="{Binding RunDcadematCommand}"
+                        PrimaryRunAutomationId="BtnDcadematRunSmokeLegacy"
+                        PrimaryRunLabel="▶  Run smoke DCADEMAT"
+                        Title="Smoke DCADEMAT — comptes annuels dématérialisés (DCA) + formalités Demat"
+                        Description="8 scénarios : DCA + Formalité Demat × validation / réclamation / refus / interrompue. v1 = ouvre l'alerte RCS + la 1ère demande (Configurer le dépôt). Le step métier 'Action' (Valider Alt+V / Réclamer Alt+R / Refuser / Interrompre) = Étape 3 (avec supervision ; réclamation = aperçu avant impression → NE PAS IMPRIMER)."
+                        ExeStatus="{Binding LegacyExeStatus}"/>
                 </views:SmokePageView.HeaderContent>
             </views:SmokePageView>
         </DockPanel>
@@ -1351,128 +1193,42 @@
                         </Border>
                     </StackPanel>
                 </TabItem.Header>
-                <Grid Margin="0,12,0,0">
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/> <!-- top card (header smoke import) -->
-                        <RowDefinition Height="*"/>    <!-- main grid : 3 cols (mosaïque | focus | scenarios+logs) + footer -->
-                    </Grid.RowDefinitions>
-                    <!-- Card header masquée en plein écran (consigne user 2026-05-27).
-                         Phase 6 refactor : contenu déporté dans BatchControlsView.xaml.
-                         DataContext hérité = MainWindowViewModel (bindings Rapture* directs). -->
-                    <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12"
-                            Visibility="{Binding FocusIsFullscreen, Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
-                        <views:BatchControlsView/>
-                    </Border>
-                    <!-- 2026-05-27 : zone main restructurée en 3 COLONNES (au lieu de rows empilées).
-                         Col 0 = MosaicView (sidebar 480, scroll vertical pour parallelism > 4).
-                         Col 1 = FocusView (PNG 16:9 dominant + Live observation toolbar repatriée
-                                 dedans + action buttons). La toolbar live (LIVE badge, refresh
-                                 slider, Pause, RunStamp, Snaps root) vit maintenant DANS FocusView,
-                                 plus comme bar horizontale au-dessus.
-                         Col 2 = ScenarioListView (DataGrid F1 en haut) + Logs panel du scénario
-                                 sélectionné (en bas). Largeur fixée pour ne pas dominer.
-                         Footer disk = bottom row de l'inner Grid, span toutes les colonnes.
-                         Plein écran : FocusIsFullscreen masque mosaïque + col 2 + footer ; col 1
-                         (FocusView) prend tout l'espace. -->
-                    <Grid Grid.Row="1" Margin="0,12,0,0">
-                        <Grid.Resources>
-                            <cv:BoolToVisibilityInvertedConverter x:Key="BoolToVisInv"/>
-                        </Grid.Resources>
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="*"/>     <!-- 3 cols : mosaïque | focus | scenarios+logs -->
-                            <RowDefinition Height="Auto"/>  <!-- footer disk -->
-                        </Grid.RowDefinitions>
-
-                        <!-- Row 0 : 3 colonnes -->
-                        <Grid Grid.Row="0">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>  <!-- mosaïque (Width=480 dans MosaicView) -->
-                                <ColumnDefinition Width="*"/>      <!-- focus dominant flex -->
-                                <!-- Col 2 : 500px en normal, COLLAPSE à 0 en plein écran.
-                                     Bug : Visibility="Collapsed" sur ScenarioListView seule
-                                     ne suffit pas — la colonne réserve 500px de blanc à droite
-                                     du PNG. Fix : DataTrigger sur Width pour vraiment libérer
-                                     l'espace en fullscreen (consigne user 2026-05-27). -->
-                                <ColumnDefinition>
-                                    <ColumnDefinition.Style>
-                                        <Style TargetType="ColumnDefinition">
-                                            <Setter Property="Width" Value="500"/>
-                                            <Style.Triggers>
-                                                <DataTrigger Binding="{Binding FocusIsFullscreen}" Value="True">
-                                                    <Setter Property="Width" Value="0"/>
-                                                </DataTrigger>
-                                            </Style.Triggers>
-                                        </Style>
-                                    </ColumnDefinition.Style>
-                                </ColumnDefinition>
-                            </Grid.ColumnDefinitions>
-
-                            <!-- Col 0 : Mosaïque
-                                 DataContext = IScenarioCatalog (RaptureCatalog adapter Phase 4).
-                                 ListBox + tiles bindent contre ScenariosView / SelectedScenario / Play/StopScenarioCommand.
-                                 Visibility utilise RelativeSource Window pour récupérer FocusIsFullscreen
-                                 du MainWindowViewModel (le DataContext local est RaptureCatalog qui n'a pas cette prop). -->
-                            <views:MosaicView Grid.Column="0" DataContext="{Binding RaptureCatalog}"
-                                              Visibility="{Binding DataContext.FocusIsFullscreen, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource BoolToVisInv}}"/>
-
-                            <!-- Col 1 : Focus
-                                 DataContext = IFocusContext (RaptureFocus adapter Phase 3).
-                                 FocusView.xaml bind contre IFocusContext (SelectedItem.*, IsFullscreen,
-                                 OpenHdeskCommand, etc.) — plus contre BatchState.SelectedScenario.* /
-                                 FocusIsFullscreen comme avant. -->
-                            <views:FocusView Grid.Column="1" DataContext="{Binding RaptureFocus}"/>
-
-                            <!-- Col 2 : ScenarioListView (full height). Click ligne → RowDetailsTemplate
-                                 déploie inline : logs scrollables + FAIL screenshot path. Plus de panel
-                                 logs dédié séparé (était un doublon du RowDetailsTemplate).
-                                 Visibility : masquée en plein écran ET masquée quand le drawer Historique
-                                 est ouvert (overlap empêchait de lire les 2 simultanément — fix 2026-05-27
-                                 priorité HAUTE UX audit). -->
-                            <!-- Col 2 : DataGrid scénarios. DataContext = IScenarioCatalog (même
-                                 que MosaicView). RaptureCatalog adapter Phase 5. -->
-                            <views:ScenarioListView Grid.Column="2" DataContext="{Binding RaptureCatalog}" Margin="6,0,0,0">
-                                <views:ScenarioListView.Style>
-                                    <Style TargetType="views:ScenarioListView">
-                                        <Setter Property="Visibility" Value="Visible"/>
-                                        <Style.Triggers>
-                                            <!-- Phase 5 refactor : DataContext local = RaptureCatalog (pas MainWindowViewModel),
-                                                 donc bindings via RelativeSource Window pour retrouver FocusIsFullscreen et
-                                                 RunHistoryDrawerOpen sur le MainWindowViewModel root. -->
-                                            <DataTrigger Binding="{Binding DataContext.FocusIsFullscreen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                            </DataTrigger>
-                                            <DataTrigger Binding="{Binding DataContext.RunHistoryDrawerOpen, RelativeSource={RelativeSource AncestorType=Window}}" Value="True">
-                                                <Setter Property="Visibility" Value="Collapsed"/>
-                                            </DataTrigger>
-                                        </Style.Triggers>
-                                    </Style>
-                                </views:ScenarioListView.Style>
-                            </views:ScenarioListView>
-                        </Grid>
-
-                        <!-- Row 1 : Footer disk usage (P3) — span toutes les colonnes
-                             Phase 7 refactor : contenu déporté dans FooterView.xaml.
-                             Visibility binding restée sur le wrapper extern. -->
-                        <ContentControl Grid.Row="1"
-                                Visibility="{Binding FocusIsFullscreen, Converter={StaticResource BoolToVisInv}}">
-                            <views:FooterView/>
-                        </ContentControl>
-
-                        <!-- Phase 5 : Drawer Historique overlay slide-in depuis la droite.
-                             Span sur les 2 rangées (3 cols main + footer) pour couvrir toute
-                             la hauteur du tab. Visibility bound au toggle. -->
-                        <Border Grid.Row="0" Grid.RowSpan="2"
-                                Width="320" HorizontalAlignment="Right"
-                                Background="White" BorderBrush="#DDD" BorderThickness="1,0,0,0"
-                                Visibility="{Binding RunHistoryDrawerOpen, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
-                                Panel.ZIndex="100">
+                <!-- RAPTURE consomme le template partagé SmokePageView (corps 3-col + footer).
+                     Le header SmokeHeaderView (unifié) est injecté dans HeaderContent.
+                     Le drawer Historique est injecté dans DrawerContent (overlay latéral).
+                     Plein écran, column collapse, footer masqué = géré par SmokePageView. -->
+                <views:SmokePageView Catalog="{Binding RaptureCatalog}"
+                                     FocusContext="{Binding RaptureFocus}"
+                                     IsDrawerOpen="{Binding RunHistoryDrawerOpen}">
+                    <views:SmokePageView.HeaderContent>
+                        <!-- SmokeHeaderView gère elle-même le Card + la visibilité fullscreen via IsFullscreen DP.
+                             DataContext hérité = MainWindowViewModel (bindings Rapture* directs). -->
+                        <views:SmokeHeaderView
+                            IsFullscreen="{Binding FocusIsFullscreen}"
+                            ShowScenarioPicker="True"
+                            ShowAdvancedOverrides="True"
+                            ShowApplyReal="True"
+                            ShowModeSelector="True"
+                            ShowParallelism="True"
+                            ShowStress="False"
+                            ShowResetDb="True"
+                            ShowHistory="True"
+                            ShowPause="True"
+                            ShowStop="True"
+                            PrimaryRunCommand="{Binding RunRaptureProcessE2ECommand}"
+                            PrimaryRunAutomationId="BtnRaptureProcessE2E"
+                            PrimaryRunLabel="▶  Start E2E"/>
+                    </views:SmokePageView.HeaderContent>
+                    <views:SmokePageView.DrawerContent>
+                        <!-- Drawer Historique overlay (Phase 5). Visibility gérée par IsDrawerOpen. -->
+                        <Border Background="White" BorderBrush="#DDD" BorderThickness="1,0,0,0">
                             <Border.Effect>
                                 <DropShadowEffect Color="#888" Direction="180" ShadowDepth="2" BlurRadius="8" Opacity="0.4"/>
                             </Border.Effect>
                             <views:RunHistoryDrawer DataContext="{Binding}"/>
                         </Border>
-                    </Grid>
-                </Grid>
+                    </views:SmokePageView.DrawerContent>
+                </views:SmokePageView>
             </TabItem>
 
             <!-- ══════ Tab Smoke Export (1 bouton Start E2E, symétrique Smoke Import) ══════ -->

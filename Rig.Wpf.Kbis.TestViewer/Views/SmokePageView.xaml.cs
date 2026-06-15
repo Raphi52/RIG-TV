@@ -55,4 +55,23 @@ public partial class SmokePageView : UserControl
         get => GetValue(FocusContextProperty);
         set => SetValue(FocusContextProperty, value);
     }
+
+    /// <summary>Contenu du drawer latéral (ex. RunHistoryDrawer pour RAPTURE). Affiché en overlay
+    /// à droite du corps. Null = pas de drawer (KBIS / ALERTES / DCADEMAT).</summary>
+    public static readonly DependencyProperty DrawerContentProperty =
+        DependencyProperty.Register(nameof(DrawerContent), typeof(object), typeof(SmokePageView), new PropertyMetadata(null));
+    public object DrawerContent
+    {
+        get => GetValue(DrawerContentProperty);
+        set => SetValue(DrawerContentProperty, value);
+    }
+
+    /// <summary>True quand le drawer est ouvert → ScenarioListView se cache (overlap UX).</summary>
+    public static readonly DependencyProperty IsDrawerOpenProperty =
+        DependencyProperty.Register(nameof(IsDrawerOpen), typeof(bool), typeof(SmokePageView), new PropertyMetadata(false));
+    public bool IsDrawerOpen
+    {
+        get => (bool)GetValue(IsDrawerOpenProperty);
+        set => SetValue(IsDrawerOpenProperty, value);
+    }
 }

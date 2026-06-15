@@ -754,10 +754,18 @@ public sealed class TestViewerDriver : IDisposable
         // est juste lu pour diagnostic (tail des lignes). Aucune sortie tant que
         // le sentinel ne porte pas un timestamp > baseline.
         var sw = Stopwatch.StartNew();
+        // Driver : sentinel PARTAGÉ + gate run_stamp-change (I4) — hang-proof (un exact-match sur un sentinel
+        // stampé pourrait pendre si l'env ne se propage pas au TV enfant). L'isolation concurrente du VERDICT
+        // est portée par le JSON stampé lu par check-batch-green ; le driver-wait reste best-effort.
         string sentinelPath = @"C:\Code RIG\Audit\last-batch-end.txt";
         bool batchMode = !string.IsNullOrEmpty(summaryMarker);
         DateTime? baselineSentinelTs = batchMode ? TryReadSentinelTs(sentinelPath) : null;
-        Console.WriteLine($"      → WaitForSmokeCompletion mode={(batchMode ? "BATCH (file sentinel only)" : "SINGLE")}, baseline={baselineSentinelTs?.ToString("o") ?? "(none)"}, timeout={timeout.TotalSeconds:F0}s");
+        // Verdict de confiance (fix M2) : capturer aussi le run_stamp du sentinel AVANT le run. La
+        // complétion n'est acceptée que si un sentinel porte un run_stamp DIFFÉRENT (= un nouveau run l'a
+        // écrit). Sinon un clic « Start E2E » avalé + sentinel périmé d'un run antérieur ferait croire à
+        // une complétion alors qu'aucun batch n'a tourné (faux-vert sur le chemin --drive-testviewer).
+        string baselineRunStamp = batchMode ? TryReadSentinelRunStamp(sentinelPath) : "";
+        Console.WriteLine($"      → WaitForSmokeCompletion mode={(batchMode ? "BATCH (file sentinel only)" : "SINGLE")}, baseline={baselineSentinelTs?.ToString("o") ?? "(none)"}, baselineStamp={(string.IsNullOrEmpty(baselineRunStamp) ? "(none)" : baselineRunStamp)}, timeout={timeout.TotalSeconds:F0}s");
 
         var lastLen = 0;
         var lastChange = sw.Elapsed;
@@ -795,9 +803,14 @@ public sealed class TestViewerDriver : IDisposable
             if (batchMode)
             {
                 var ts = TryReadSentinelTs(sentinelPath);
-                if (ts.HasValue && (baselineSentinelTs == null || ts.Value > baselineSentinelTs.Value))
+                var rs = TryReadSentinelRunStamp(sentinelPath);
+                bool newerTs = ts.HasValue && (baselineSentinelTs == null || ts.Value > baselineSentinelTs.Value);
+                // Gate run_stamp : si le sentinel en porte un, il DOIT différer de la baseline (nouveau run).
+                // Pas de run_stamp (ancien format) → on retombe sur le seul critère timestamp (rétrocompat).
+                bool freshStamp = string.IsNullOrEmpty(rs) ? newerTs : !string.Equals(rs, baselineRunStamp, StringComparison.Ordinal);
+                if (newerTs && freshStamp)
                 {
-                    Console.WriteLine($"   → Sentinel batch-end DETECTED après {sw.Elapsed.TotalSeconds:F1}s (ts={ts.Value:o}, baseline={baselineSentinelTs?.ToString("o") ?? "(none)"})");
+                    Console.WriteLine($"   → Sentinel batch-end DETECTED après {sw.Elapsed.TotalSeconds:F1}s (ts={ts.Value:o}, baseline={baselineSentinelTs?.ToString("o") ?? "(none)"}, run_stamp={rs}, baselineStamp={baselineRunStamp})");
                     return text;
                 }
                 // PAS de no-change bail en BATCH mode : les workers peuvent être
@@ -846,6 +859,18 @@ public sealed class TestViewerDriver : IDisposable
                 : null;
         }
         catch { return null; }
+    }
+
+    /// <summary>Lit le champ <c>run_stamp=</c> du sentinel (verdict de confiance, fix M2). "" si absent
+    /// ou illisible. Parsing pur délégué à <see cref="Observability.ParseSentinelRunStamp"/> (testé xUnit).</summary>
+    private static string TryReadSentinelRunStamp(string path)
+    {
+        try
+        {
+            if (!System.IO.File.Exists(path)) return "";
+            return Observability.ParseSentinelRunStamp(System.IO.File.ReadAllText(path).Trim());
+        }
+        catch { return ""; }
     }
 
     private AutomationElement FindRaptureJsonCombo()

@@ -2917,6 +2917,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // Refresh run stamp (au cas où le caller a réécrit RIG_RUN_STAMP après le start de TV).
         RefreshRunStamp();
 
+        // ── Verdict de confiance (I2) : garantir un RUN-STAMP pour CE batch = nonce qui corrèle chaque
+        // fichier résultat worker à ce run précis. Si le caller n'en a pas posé (clic GUI direct), on en
+        // génère un. Ce stamp est (a) propagé à chaque worker via psi, (b) utilisé pour relire les
+        // fichiers résultat : un fichier d'un run antérieur a un autre stamp => ROUGE (anti-péremption).
+        if (string.IsNullOrEmpty(CurrentRunStamp))
+        {
+            var generated = DateTime.Now.ToString("yyyyMMdd-HHmmss-fff");
+            Environment.SetEnvironmentVariable("RIG_RUN_STAMP", generated);
+            RefreshRunStamp();
+        }
+        var batchRunStamp = CurrentRunStamp;
+        Log.Info($"   ⓘ run-stamp (verdict nonce) : {batchRunStamp}");
+
         // Snap timer scan disque : SINGLETON démarré au ctor (InitializeSnapTimer).
         // Plus de create/start par batch — supprimé 2026-05-27 pour fix bug concurrence
         // "tile + Focus PNG noir pendant Play" : PlayScenarioAsync avec AllowConcurrentExecutions=true
@@ -2994,7 +3007,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         if (visibleMode)
             Emit($"   ⚠ Mode VISIBLE : {real.Count} instances RigClientAccueil VISIBLES vont s'ouvrir en parallèle (~{real.Count * 500}MB RAM).");
         var batchSw = System.Diagnostics.Stopwatch.StartNew();
-        var results = new System.Collections.Concurrent.ConcurrentBag<(string id, bool ok, TimeSpan dur, string detail, bool cached)>();
+        // Verdict de confiance : le tuple porte aussi assertRun/assertPass (preuve positive émise au JSON).
+        // assertRun = -1 => "non mesuré ce run" (entrée servie par le cache, pas re-vérifiée).
+        var results = new System.Collections.Concurrent.ConcurrentBag<(string id, bool ok, TimeSpan dur, string detail, bool cached, int assertRun, int assertPass)>();
 
         // Per-audience mutex : en mode --apply, les scénarios partageant la même
         // audience doivent s'exécuter séquentiellement (snapshot/restore non thread-safe).
@@ -3006,7 +3021,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             if (string.IsNullOrEmpty(s.ResolvedJsonPath) || !File.Exists(s.ResolvedJsonPath))
             {
                 Emit($"   ⚠ [{s.Id}] JSON introuvable ({s.ResolvedJsonPath}) — skip");
-                results.Add((s.Id, false, TimeSpan.Zero, "JSON introuvable", false));
+                results.Add((s.Id, false, TimeSpan.Zero, "JSON introuvable", false, 0, 0));
                 return;
             }
 
@@ -3030,7 +3045,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     {
                         System.Threading.Interlocked.Increment(ref cacheHits);
                         Emit($"   ⚡ [{s.Id}] CACHE HIT (PASS, {hit.DurationS:F1}s cached) — skip worker");
-                        results.Add((s.Id, true, TimeSpan.FromSeconds(hit.DurationS), "cached:" + hit.Detail, true));
+                        results.Add((s.Id, true, TimeSpan.FromSeconds(hit.DurationS), "cached:" + hit.Detail, true, -1, -1));
                         return;
                     }
                     System.Threading.Interlocked.Increment(ref cacheMisses);
@@ -3099,6 +3114,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 var envHl = Environment.GetEnvironmentVariable("RIG_DRIVER_HEADLESS");
                 if (!string.IsNullOrEmpty(envHl)) headless = envHl != "0";
                 psi.EnvironmentVariables["RIG_DRIVER_HEADLESS"] = headless ? "1" : "0";
+                // Verdict de confiance (I2) : propager le run-stamp du batch au worker → il nomme/co-localise
+                // son fichier résultat souverain dessous, et l'orchestrateur le relit par ce même stamp.
+                psi.EnvironmentVariables["RIG_RUN_STAMP"] = batchRunStamp;
                 // En mode visible (headless=false), distribuer les RIG en mosaïque pour qu'on
                 // voie les N workers simultanés à l'écran. RIG_TILE_INDEX = position du worker
                 // dans la grille (0-based), RIG_TILE_PARALLELISM = total parallèle (côté grille).
@@ -3111,7 +3129,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 using var proc = Process.Start(psi);
                 if (proc == null)
                 {
-                    results.Add((s.Id, false, TimeSpan.Zero, "Process.Start null", false));
+                    results.Add((s.Id, false, TimeSpan.Zero, "Process.Start null", false, 0, 0));
                     return;
                 }
 
@@ -3180,8 +3198,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 try { proc.WaitForExit(500); } catch { }
 
                 int exitCode = exited ? proc.ExitCode : -1;
-                bool ok = exitCode == 0;
-                string detail = $"exit={exitCode}";
+                // ── Verdict de confiance (I3, FAIL-CLOSED) : on NE croit PAS l'exit code seul. On lit le
+                // fichier résultat SOUVERAIN que le worker a écrit pour CE run-stamp. Absence (clic avalé /
+                // crash / jamais lancé) = ROUGE ; run-stamp périmé = ROUGE ; 0 assertion = ROUGE.
+                var resultJson = ObservabilityFiles.ReadScenarioResult(s.Id, batchRunStamp);
+                var verdict = VerdictTrust.Evaluate(resultJson, batchRunStamp, exitCode);
+                bool ok = verdict.Verified;
+                string detail = verdict.Detail;
                 string stdout;
                 lock (stdoutSb) stdout = stdoutSb.ToString();
                 if (!string.IsNullOrWhiteSpace(stdout))
@@ -3190,7 +3213,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                         Emit($"      [{s.Id}] {line}");
                 }
                 ObservabilityFiles.WriteWorkerStdout(s.Id, stdout);   // #5 : log par-scénario co-localisé avec les self-snaps
-                results.Add((s.Id, ok, sw.Elapsed, detail, false));
+                results.Add((s.Id, ok, sw.Elapsed, detail, false, verdict.AssertionsRun, verdict.AssertionsPass));
                 Emit($"   {(ok ? "✓" : "✗")} [{s.Id}] {(ok ? "PASS" : "FAIL")} en {sw.Elapsed.TotalSeconds:F1}s ({detail})");
 
                 // ── Phase 3b : update BatchState verdict live (drive le coloriage liste + tile) ──
@@ -3222,7 +3245,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
             catch (Exception ex)
             {
                 sw.Stop();
-                results.Add((s.Id, false, sw.Elapsed, ex.GetType().Name + ": " + ex.Message, false));
+                results.Add((s.Id, false, sw.Elapsed, ex.GetType().Name + ": " + ex.Message, false, 0, 0));
                 Emit($"   ✗ [{s.Id}] EXCEPTION {ex.GetType().Name}: {ex.Message}");
             }
             finally
@@ -3276,8 +3299,16 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             // (1) Compat — fichier txt légacy
             var sentinelPath = Path.Combine(auditDir, "last-batch-end.txt");
-            var payload = $"{DateTime.UtcNow:o}|passed={passCount}|failed={failCount}|elapsed_ms={batchSw.ElapsedMilliseconds}";
+            // Verdict de confiance (I4) : le sentinel porte le run_stamp du batch → un driver peut exiger
+            // que la complétion corresponde à CE run (pas un sentinel laissé par un run antérieur). Le
+            // verdict AUTORITAIRE reste le JSON (lu par run_stamp en I3) ; le sentinel n'est qu'un signal
+            // de fin-de-batch pour le driver.
+            var payload = $"{DateTime.UtcNow:o}|passed={passCount}|failed={failCount}|elapsed_ms={batchSw.ElapsedMilliseconds}|run_stamp={batchRunStamp}";
             File.WriteAllText(sentinelPath, payload);
+            // Isolation batches concurrents : copie sentinel run-stampée (le fixe « latest » reste pour legacy).
+            if (!string.IsNullOrEmpty(batchRunStamp))
+                File.WriteAllText(Path.Combine(auditDir,
+                    Rig.Wpf.Kbis.SmokeRunner.Observability.BatchSentinelFileName(batchRunStamp)), payload);
 
             // (2) ML-Phase 1 : JSON structuré pour orchestrateur master agent.
             // Format consommable par Claude Code / scripts pour boucle ML.
@@ -3285,7 +3316,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var scenarios = ordered.Select(r => new
             {
                 id = r.id,
-                status = r.ok ? "PASS" : "FAIL",
+                // Verdict de confiance : statut à 3 valeurs. UNVERIFIED = on n'a pas pu PROUVER le résultat
+                // (fichier manquant/périmé, 0 assertion) — distinct d'un FAIL (échec prouvé). Jamais vert.
+                status = r.ok ? "PASS"
+                    : (r.detail != null && r.detail.StartsWith("UNVERIFIED") ? "UNVERIFIED" : "FAIL"),
+                verified = r.ok,                  // preuve positive complète obtenue ?
+                assertions_run = r.assertRun,     // -1 = non mesuré ce run (servi par cache)
+                assertions_pass = r.assertPass,
                 duration_s = Math.Round(r.dur.TotalSeconds, 1),
                 detail = r.detail,
                 cached = r.cached, // ML LOOP Phase 4 : true si résultat servi par cache
@@ -3383,15 +3420,18 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
             var jsonObj = new
             {
-                schema_version = 3, // bump : Phase 5 ajoute screenshot_dhash + diff
+                schema_version = 4, // bump : verdict de confiance (verified + assertions + unverified_count)
                 timestamp = DateTime.UtcNow.ToString("o"),
                 parallelism,
                 mode = modeLabel,
                 apply_real = RaptureSmokeApplyReal,
                 visible_mode = visibleMode,
+                run_stamp = batchRunStamp, // nonce du run (corrélation verdict, anti-péremption)
                 duration_ms = batchSw.ElapsedMilliseconds,
-                pass_count = passCount,
-                fail_count = failCount,
+                pass_count = passCount,    // = verified == true (preuve positive complète)
+                fail_count = failCount,    // inclut les UNVERIFIED (jamais vert)
+                // Verdict de confiance : combien de scénarios n'ont PAS pu être prouvés (≠ échec prouvé).
+                unverified_count = ordered.Count(r => !r.ok && r.detail != null && r.detail.StartsWith("UNVERIFIED")),
                 // ML LOOP Phase 4 — stats cache
                 cache_enabled = useCache,
                 cache_hits = cacheHits,
@@ -3410,6 +3450,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var jsonOpts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
             var jsonText = System.Text.Json.JsonSerializer.Serialize(jsonObj, jsonOpts);
             File.WriteAllText(jsonPath, jsonText);
+            // Isolation batches concurrents : copie JSON verdict run-stampée, immune au clobber d'un batch
+            // concurrent. Un check corrélé (-ExpectedRunStamp) lit CETTE copie ; le fixe reste le « latest »
+            // pour ml-loop / diff / RunHistory.
+            if (!string.IsNullOrEmpty(batchRunStamp))
+                File.WriteAllText(Path.Combine(auditDir,
+                    Rig.Wpf.Kbis.SmokeRunner.Observability.BatchResultFileName(batchRunStamp)), jsonText);
 
             Log.Info($"Batch result JSON écrit : {jsonPath} → {passCount} PASS / {failCount} FAIL, {regressions.Count} régression(s), {fixedNow.Count} fixed");
         }

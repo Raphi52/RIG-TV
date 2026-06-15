@@ -1,0 +1,323 @@
+<UserControl x:Class="Rig.Wpf.Kbis.TestViewer.Views.SmokeHeaderView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
+             xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
+             x:Name="root">
+    <!--
+        SmokeHeaderView — bandeau d'actions UNIFIÉ pour tous les modules smoke (KBIS / ALERTES / DCADEMAT / RAPTURE).
+        Remplace BatchControlsView (RAPTURE) et LegacySmokeHeaderView (KBIS / ALERTES / DCADEMAT).
+
+        Sections pilotées par DependencyProperty capability-flags sur root :
+          ShowScenarioPicker    : picker scénario + reload (RAPTURE)
+          ShowAdvancedOverrides : expander dossier / fichier / audience (RAPTURE)
+          ShowApplyReal         : checkbox Apply réel (RAPTURE)
+          ShowModeSelector      : ComboBox Mode A/B/C/Selfdrive (RAPTURE + KBIS)
+          ShowParallelism       : input Parall. (RAPTURE)
+          ShowStress            : bloc Stresser × N + Stop + loop (KBIS + ALERTES)
+          ShowResetDb           : bouton Reset DB (RAPTURE)
+          ShowHistory           : bouton Historique (RAPTURE)
+          ShowPause             : bouton Pause (RAPTURE)
+          ShowStop              : bouton Stop (RAPTURE)
+
+        Sections RAPTURE (ShowScenarioPicker / ShowAdvancedOverrides / ShowApplyReal /
+        ShowParallelism / ShowResetDb / ShowHistory / ShowPause / ShowStop) :
+          Leurs bindings vont vers DataContext = MainWindowViewModel (bindings Rapture* directs),
+          identique à l'ancienne BatchControlsView.
+
+        Visibility entière : masquée quand IsFullscreen=True (héritage LegacySmokeHeaderView).
+    -->
+    <Border Style="{StaticResource Card}" Padding="16,12"
+            Visibility="{Binding IsFullscreen, ElementName=root,
+                         Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
+        <StackPanel>
+
+            <!-- ══ RAPTURE only : Titre + sous-titre dynamique ══
+                 Visible uniquement quand ShowScenarioPicker=True (RAPTURE) -->
+            <StackPanel Visibility="{Binding ShowScenarioPicker, ElementName=root,
+                                     Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                <TextBlock Text="Smoke Import — sélectionner un scénario" Style="{StaticResource H2}"/>
+                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0"
+                           Text="{Binding SelectedRaptureScenario.Description, FallbackValue='Choisis un scénario dans la liste : le JSON par défaut et l''audience cible se remplissent auto. Tu peux ensuite override pour tester une variation locale.'}"
+                           TextWrapping="Wrap"/>
+            </StackPanel>
+
+            <!-- ══ Legacy modules : Titre + description + statuts ══
+                 Visible quand ShowScenarioPicker=False (KBIS / ALERTES / DCADEMAT) -->
+            <StackPanel Visibility="{Binding ShowScenarioPicker, ElementName=root,
+                                     Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}">
+                <TextBlock Text="{Binding Title, ElementName=root}" Style="{StaticResource H2}"/>
+                <TextBlock Style="{StaticResource MutedText}" Margin="0,2,0,0" TextWrapping="Wrap"
+                           Text="{Binding Description, ElementName=root}"/>
+                <TextBlock Text="{Binding ExeStatus, ElementName=root}" Style="{StaticResource MonoMuted}"
+                           TextTrimming="CharacterEllipsis" Margin="0,6,0,0"/>
+                <TextBlock Text="{Binding Summary, ElementName=root}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
+            </StackPanel>
+
+            <!-- ══ Row : Scénario picker (RAPTURE) ══ -->
+            <Grid Margin="0,12,0,0"
+                  Visibility="{Binding ShowScenarioPicker, ElementName=root,
+                               Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="100"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Grid.Column="0" Text="Scénario" VerticalAlignment="Center"
+                           Foreground="{StaticResource TextMuted}" FontWeight="SemiBold"/>
+                <ComboBox Grid.Column="1" Padding="6,4"
+                          ItemsSource="{Binding RaptureScenarios}"
+                          SelectedItem="{Binding SelectedRaptureScenario, Mode=TwoWay}"
+                          AutomationProperties.AutomationId="CmbRaptureScenario">
+                    <ComboBox.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel>
+                                <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding Subtitle}" FontSize="11"
+                                           Foreground="{StaticResource TextMuted}"/>
+                            </StackPanel>
+                        </DataTemplate>
+                    </ComboBox.ItemTemplate>
+                </ComboBox>
+                <Button Grid.Column="2" Style="{StaticResource SecondaryButton}"
+                        Margin="8,0,0,0" Padding="10,0" Height="32"
+                        Command="{Binding ReloadRaptureScenariosCommand}"
+                        ToolTip="Recharge le manifest.json depuis le dossier scenarios.">
+                    <TextBlock Text="↻"/>
+                </Button>
+            </Grid>
+
+            <!-- ══ Row : Expander Avancé — overrides paths / JSON / audience (RAPTURE) ══ -->
+            <Expander Margin="0,8,0,0" IsExpanded="False"
+                      AutomationProperties.AutomationId="ExpRaptureAdvanced"
+                      Visibility="{Binding ShowAdvancedOverrides, ElementName=root,
+                                   Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                <Expander.Header>
+                    <TextBlock Text="Avancé — overrides paths / JSON / audience" FontSize="11"
+                               Foreground="{StaticResource TextMuted}" FontWeight="SemiBold"/>
+                </Expander.Header>
+                <Grid Margin="0,8,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="100"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="12"/>
+                        <ColumnDefinition Width="100"/>
+                        <ColumnDefinition Width="160"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Dossier" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextMuted}" FontWeight="SemiBold"/>
+                    <TextBox Grid.Row="0" Grid.Column="1" Grid.ColumnSpan="4" Padding="6,4"
+                             AutomationProperties.AutomationId="TxtRaptureScenariosFolder"
+                             Text="{Binding RaptureScenariosFolder, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                             FontFamily="Consolas"
+                             ToolTip="Dossier contenant manifest.json + les fichiers JSON. Par défaut : RaptureScenarios/ à côté du .exe (embarqué dans le zip). Override possible pour pointer ailleurs."/>
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Fichier" Margin="0,6,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextMuted}" FontWeight="SemiBold"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,6,0,0" Padding="6,4"
+                             AutomationProperties.AutomationId="TxtRaptureJsonOverride"
+                             Text="{Binding RaptureScenarioJsonPathOverride, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                             FontFamily="Consolas"
+                             ToolTip="JSON utilisé pour ce run. Auto-rempli depuis le scénario sélectionné. Override pour pointer un fichier custom."/>
+                    <TextBlock Grid.Row="1" Grid.Column="3" Text="Audience" Margin="0,6,0,0" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextMuted}" FontWeight="SemiBold"/>
+                    <TextBox Grid.Row="1" Grid.Column="4" Margin="0,6,0,0" Padding="6,4"
+                             AutomationProperties.AutomationId="TxtRaptureAudienceOverride"
+                             Text="{Binding RaptureScenarioAudienceIdOverride, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                             FontFamily="Consolas"
+                             ToolTip="AUDNC_ID cible (override). Auto-rempli depuis le scénario sélectionné. Si vide, l'orchestrator résout l'audience par date+heure du header JSON."/>
+                </Grid>
+            </Expander>
+
+            <!-- ══ Row : Options + boutons batch ══
+                 NB : la case "Accepter création audience" a été retirée. acceptCreate=true
+                 est désormais default côté SmokeRunner. -->
+            <DockPanel Margin="0,14,0,0" LastChildFill="False">
+
+                <!-- Bloc gauche : Apply réel + Mode + Parallelism + Stress -->
+                <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
+
+                    <!-- Apply réel (RAPTURE) -->
+                    <CheckBox IsChecked="{Binding RaptureSmokeApplyReal, Mode=TwoWay}"
+                              VerticalAlignment="Center"
+                              AutomationProperties.AutomationId="ChkRaptureApplyReal"
+                              Visibility="{Binding ShowApplyReal, ElementName=root,
+                                           Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                              ToolTip="Si coché, le smoke clique 'Importer (N champs cochés)' au lieu d'Annuler → ApplyService écrit réellement en base. Le SmokeRunner snapshot APPEL_AFFAIRE+NOTE_PROCEDURE AVANT et restore APRÈS pour rester net-zero. Requiert un AUDNC_ID renseigné dans le champ Audience.">
+                        <CheckBox.Content>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="Apply réel via UI" FontWeight="SemiBold" Foreground="#B02A37"/>
+                                <TextBlock Text=" — clique Importer + restore SQL net-zero"
+                                           Foreground="{StaticResource TextSecondary}" Margin="4,0,0,0"/>
+                            </StackPanel>
+                        </CheckBox.Content>
+                    </CheckBox>
+                    <!-- ChkRaptureVisibleMode conservé hidden pour backwards-compat des drive scripts -->
+                    <CheckBox IsChecked="{Binding RaptureSmokeVisibleMode, Mode=TwoWay}"
+                              AutomationProperties.AutomationId="ChkRaptureVisibleMode"
+                              Visibility="Collapsed"/>
+
+                    <!-- Mode selector (RAPTURE : ShowModeSelector + ShowApplyReal tous deux True ;
+                         KBIS : ShowModeSelector=True, ShowApplyReal=False) -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center"
+                                Visibility="{Binding ShowModeSelector, ElementName=root,
+                                             Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                        <StackPanel.Style>
+                            <Style TargetType="StackPanel">
+                                <!-- Margin gauche plus grande quand Apply réel est aussi visible (RAPTURE) -->
+                                <Setter Property="Margin" Value="0,0,0,0"/>
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding ShowApplyReal, ElementName=root}" Value="True">
+                                        <Setter Property="Margin" Value="20,0,0,0"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </StackPanel.Style>
+                        <TextBlock Text="Mode" Margin="0,0,6,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextMuted}" FontWeight="SemiBold" FontSize="11"/>
+                        <!-- Mode RAPTURE : binding vers DataContext (MainWindowViewModel) -->
+                        <ComboBox Width="180"
+                                  AutomationProperties.AutomationId="CmbRaptureMode"
+                                  ItemsSource="{Binding RaptureModeOptions}"
+                                  SelectedValuePath="Mode"
+                                  SelectedValue="{Binding SelectedRaptureMode, Mode=TwoWay}"
+                                  DisplayMemberPath="Label"
+                                  ToolTip="Mode de visibilité du batch — voir tooltip des items pour le détail."
+                                  Visibility="{Binding ShowApplyReal, ElementName=root,
+                                               Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"/>
+                        <!-- Mode KBIS/legacy : binding vers DP SelectedMode -->
+                        <ComboBox Width="210"
+                                  AutomationProperties.AutomationId="{Binding ModeComboAutomationId, ElementName=root}"
+                                  ItemsSource="{Binding ModeOptionsSource, ElementName=root}"
+                                  SelectedValuePath="Mode"
+                                  SelectedValue="{Binding SelectedMode, ElementName=root, Mode=TwoWay}"
+                                  DisplayMemberPath="Label"
+                                  ToolTip="Mode de visibilité des tuiles. A = RIG sur ton écran (prend la souris). B = HDESK isolé, 0 vol focus (défaut)."
+                                  Visibility="{Binding ShowApplyReal, ElementName=root,
+                                               Converter={x:Static cv:BoolToVisibilityInvertedConverter.Instance}}"/>
+                    </StackPanel>
+
+                    <!-- Parallelism (RAPTURE) -->
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="20,0,0,0"
+                                Visibility="{Binding ShowParallelism, ElementName=root,
+                                             Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                        <TextBlock Text="Parall." Margin="0,0,6,0" VerticalAlignment="Center"
+                                   Foreground="{StaticResource TextMuted}" FontWeight="SemiBold" FontSize="11"/>
+                        <TextBox Width="40" Padding="4,2"
+                                 AutomationProperties.AutomationId="NumRaptureParallelism"
+                                 Text="{Binding RaptureParallelism, Mode=TwoWay, UpdateSourceTrigger=LostFocus}"
+                                 ToolTip="Nombre de workers RIG en parallèle (1-16)."/>
+                    </StackPanel>
+
+                    <!-- Bloc Stress (KBIS + ALERTES) -->
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,12,0"
+                                Visibility="{Binding ShowStress, ElementName=root,
+                                             Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <TextBlock Text="Stresser sélection ×" VerticalAlignment="Center"
+                                       Style="{StaticResource MutedText}"/>
+                            <TextBox Width="36" Margin="4,0" Padding="4,2" VerticalContentAlignment="Center"
+                                     AutomationProperties.AutomationId="{Binding StressRepeatAutomationId, ElementName=root}"
+                                     Text="{Binding StressRepeat, ElementName=root, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     ToolTip="Nombre de copies parallèles du scénario sélectionné (1-8)."/>
+                            <Button Style="{StaticResource PrimaryButton}"
+                                    AutomationProperties.AutomationId="{Binding StressRunAutomationId, ElementName=root}"
+                                    Command="{Binding StressCommand, ElementName=root}"
+                                    Padding="12,6" Margin="4,0,0,0" VerticalContentAlignment="Center"
+                                    ToolTip="Lance X copies du scénario sélectionné en parallèle (chasse au flake).">
+                                <TextBlock>
+                                    <Run Text="▶ Stress ×"/><Run Text="{Binding StressRepeat, ElementName=root}"/>
+                                </TextBlock>
+                            </Button>
+                            <Button AutomationProperties.AutomationId="{Binding StressStopAutomationId, ElementName=root}"
+                                    Command="{Binding StopStressCommand, ElementName=root}"
+                                    Padding="10,6" Margin="6,0,0,0" VerticalContentAlignment="Center"
+                                    Content="⏹ Stop"
+                                    ToolTip="Stoppe la boucle de stress après la vague en cours."/>
+                        </StackPanel>
+                        <CheckBox AutomationProperties.AutomationId="{Binding StressLoopAutomationId, ElementName=root}"
+                                  Margin="0,6,0,0" HorizontalAlignment="Right"
+                                  IsChecked="{Binding StressLoopUntilFail, ElementName=root, Mode=TwoWay}"
+                                  Content="Boucler jusqu'au 1er échec"
+                                  ToolTip="Relance des vagues de X jusqu'à ce qu'une copie rate, puis stop + highlight de la tuile rouge."/>
+                        <TextBlock Text="{Binding StressStatus, ElementName=root}" Style="{StaticResource MutedText}"
+                                   Margin="0,4,0,0" HorizontalAlignment="Right" TextWrapping="Wrap" MaxWidth="420"/>
+                    </StackPanel>
+
+                </StackPanel>
+
+                <!-- Bloc droit : Reset DB + Historique + Pause + Stop + Primary Run -->
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel.Resources>
+                        <Style TargetType="Button" BasedOn="{StaticResource SecondaryButton}">
+                            <Setter Property="Height" Value="34"/>
+                            <Setter Property="MinWidth" Value="80"/>
+                            <Setter Property="Padding" Value="12,0"/>
+                            <Setter Property="Margin" Value="6,0,0,0"/>
+                            <Setter Property="VerticalContentAlignment" Value="Center"/>
+                        </Style>
+                    </StackPanel.Resources>
+
+                    <!-- Reset DB (RAPTURE) -->
+                    <Button Command="{Binding ResetSmokeDbCommand}"
+                            AutomationProperties.AutomationId="BtnRaptureResetDb"
+                            Visibility="{Binding ShowResetDb, ElementName=root,
+                                         Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                            ToolTip="RESET DB : panic restore SQL pour clean slate. Restaure les APPEL_AFFAIRE depuis l'audit, supprime les NOTE_PROCEDURE RAPTURE_* écrites par smoke, et les Cas C audiences leftover (date >= 2027). À utiliser quand tu veux rejouer les mêmes scénarios depuis zéro.">
+                        <TextBlock Text="🗑  Reset DB" Foreground="#B02A37"/>
+                    </Button>
+
+                    <!-- Historique (RAPTURE) -->
+                    <Button Command="{Binding ToggleRunHistoryDrawerCommand}"
+                            AutomationProperties.AutomationId="BtnRaptureHistoryToggle"
+                            Visibility="{Binding ShowHistory, ElementName=root,
+                                         Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                            ToolTip="Ouvre/ferme le drawer Historique des runs récents.">
+                        <TextBlock Text="⏱  Historique" Foreground="#06f"/>
+                    </Button>
+
+                    <!-- Pause (RAPTURE) -->
+                    <Button Command="{Binding TogglePauseRaptureSmokeCommand}"
+                            AutomationProperties.AutomationId="BtnRapturePause"
+                            Visibility="{Binding ShowPause, ElementName=root,
+                                         Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                            ToolTip="PAUSE / REPRENDRE : gèle (ou dégèle) instantanément tout l'arbre de process (FlaUI + RIG legacy + smoke).">
+                        <TextBlock Text="{Binding RaptureSmokePauseLabel}"/>
+                    </Button>
+
+                    <!-- Stop (RAPTURE) -->
+                    <Button Command="{Binding StopRaptureSmokeCommand}"
+                            AutomationProperties.AutomationId="BtnRaptureStop"
+                            Visibility="{Binding ShowStop, ElementName=root,
+                                         Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
+                            ToolTip="STOP : tue l'arbre de process du run en cours. Irréversible — relancer depuis le début.">
+                        <TextBlock Text="⏹  Stop" Foreground="#B02A37"/>
+                    </Button>
+
+                    <!-- Primary Run button (tous les modules) -->
+                    <Button Style="{StaticResource PrimaryButton}"
+                            Height="34" MinWidth="120" Padding="16,0" Margin="6,0,0,0"
+                            VerticalContentAlignment="Center"
+                            Command="{Binding PrimaryRunCommand, ElementName=root}"
+                            AutomationProperties.AutomationId="{Binding PrimaryRunAutomationId, ElementName=root}">
+                        <TextBlock Text="{Binding PrimaryRunLabel, ElementName=root}"/>
+                    </Button>
+
+                </StackPanel>
+            </DockPanel>
+
+            <!-- ══ RAPTURE only : Status line ══ -->
+            <StackPanel Margin="0,10,0,0"
+                        Visibility="{Binding ShowScenarioPicker, ElementName=root,
+                                     Converter={x:Static vm:BoolToVisibilityConverter.Instance}}">
+                <TextBlock Text="{Binding RaptureSmokeExeStatus}" Style="{StaticResource MonoMuted}"
+                           TextTrimming="CharacterEllipsis"/>
+                <TextBlock Text="{Binding RaptureSmokeSummary}" Style="{StaticResource MutedText}" Margin="0,2,0,0"/>
+            </StackPanel>
+
+        </StackPanel>
+    </Border>
+</UserControl>

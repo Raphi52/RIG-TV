@@ -37,6 +37,26 @@ public static class ObservabilityFiles
         catch (Exception ex) { Log.Warn($"#5 worker.stdout.log [{scenarioId}] : {ex.Message}"); }
     }
 
+    /// <summary>Verdict de confiance (fail-closed) — lit le fichier résultat SOUVERAIN écrit par le worker
+    /// pour ce <paramref name="scenarioId"/>/<paramref name="runStamp"/>, ou <c>null</c> s'il est absent /
+    /// illisible. <b>null = ROUGE</b> côté orchestrateur : le worker n'a laissé aucune preuve qu'il a tourné
+    /// et vérifié (clic avalé, crash, jamais lancé). Le run-stamp dans le chemin ET le nom garantit qu'un
+    /// fichier d'un run antérieur n'est jamais relu comme courant (ferme « sentinel/fichier périmé »).</summary>
+    public static string ReadScenarioResult(string scenarioId, string runStamp)
+    {
+        if (string.IsNullOrEmpty(runStamp)) return null;
+        try
+        {
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var dir = Path.Combine(local, "rig-wpf-testviewer", "self-snaps", runStamp, scenarioId);
+            // Contrat de nom partagé avec le writer worker (même assembly SmokeRunner, référencé par TV).
+            var file = Path.Combine(dir,
+                Rig.Wpf.Kbis.SmokeRunner.Observability.ScenarioResultFileName(scenarioId, runStamp));
+            return File.Exists(file) ? File.ReadAllText(file, new UTF8Encoding(false)) : null;
+        }
+        catch (Exception ex) { Log.Warn($"verdict result read [{scenarioId}] : {ex.Message}"); return null; }
+    }
+
     /// <summary>#6 — append une transition de phase {ts, phase, snap_idx} en JSONL. snap_idx/ts sont
     /// extraits des tags [snap=]/[hh:mm:ss.fff] de la ligne stdout (#2) ; sinon snap_idx=-1 et ts=maintenant.</summary>
     public static void AppendPhase(string scenarioId, string line, string phase)

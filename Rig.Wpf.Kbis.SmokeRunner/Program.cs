@@ -30,6 +30,12 @@ internal static class Program
     private static int _passed;
     private static int _failed;
     private static int _skipped;
+    // Verdict de confiance (fail-closed) : compteurs d'assertions SÉMANTIQUES (expected vs actual),
+    // distincts des steps de plomberie. + identité du run pour le fichier résultat souverain.
+    private static int _assertRun;
+    private static int _assertPass;
+    private static string _resultScenarioId;   // null => pas de fichier résultat (mode non-scénarisé)
+    private static string _resultRunStamp;     // = RIG_RUN_STAMP injecté par l'orchestrateur (nonce du run)
 
     [STAThread]
     private static int Main(string[] args)
@@ -1006,6 +1012,12 @@ internal static class Program
         });
         if (!System.IO.File.Exists(rigExe) || !System.IO.File.Exists(jsonPath)) return PrintSummaryAndExit(sw);
 
+        // Verdict de confiance : à partir d'ici le scénario "tourne vraiment" → on émet un fichier résultat
+        // souverain à l'exit (cf. WriteScenarioResultFile). Placé APRÈS la sanity : un exit fichiers-absents
+        // n'écrit AUCUN fichier => l'orchestrateur le voit manquant = ROUGE (fail-closed).
+        _resultScenarioId = scenarioId;
+        _resultRunStamp = Environment.GetEnvironmentVariable("RIG_RUN_STAMP");
+
         // ── Desktop isolé (HDESK) : créé ici, attaché sur le thread dédié via RunAttached ──
         // SetThreadDesktop échoue (Win32 170 = ERROR_BUSY) sur le thread principal STA car
         // l'apartment STA possède déjà une fenêtre OLE cachée. RunAttached crée un thread STA
@@ -1077,14 +1089,15 @@ internal static class Program
                     // UI = "modifications détectées" stat tile (= count AVANT décochage).
                     if (expectedWarnings.HasValue || expectedDetectedMods.HasValue)
                     {
-                        TryStep("Verify UI recap counters vs expected", () =>
+                        VerifyStep("Verify UI recap counters vs expected", () =>
                         {
                             var c = driver.LastRecapCounters;
                             if (c == null)
-                            {
-                                Console.WriteLine($"      ⚠ LastRecapCounters null (pas de recap ou lecture UIA échouée) — skip assertion");
-                                return;
-                            }
+                                // Verdict de confiance (fix M1) : le scénario ATTEND des compteurs (gate
+                                // expectedWarnings/expectedDetectedMods) mais la recap est illisible → la
+                                // vérification N'A PAS PU tourner. Fail-closed : on NE compte PAS ça comme
+                                // une assertion passée (sinon faux-vert) → throw => Fail => assertPass<assertRun.
+                                throw new Exception("UI recap counters illisibles (LastRecapCounters null) alors que des expected sont demandés - verification impossible");
                             Console.WriteLine($"      → UI counters lus : {c}");
                             if (expectedWarnings.HasValue && c.Warnings.HasValue && c.Warnings.Value != expectedWarnings.Value)
                             {
@@ -1102,7 +1115,7 @@ internal static class Program
                     // DB = applied réel (UPSERT effectif, après décochage utilisateur).
                     if (applyReal && applyAudienceId.HasValue && expectedAppliedMods.HasValue)
                     {
-                        TryStep($"Verify DB (audit) vs expected (applied={expectedAppliedMods})", () =>
+                        VerifyStep($"Verify DB (audit) vs expected (applied={expectedAppliedMods})", () =>
                         {
                             var actual = QueryAuditCounts(applyAudienceId.Value, jsonPath);
                             Console.WriteLine($"      → DB actual : AUDIT rows = {actual.AuditCount} (= apply.Applied + apply.Skipped pour ce JSON sur cette audience)");
@@ -1241,6 +1254,10 @@ internal static class Program
         });
         if (!File.Exists(rigExe) || !File.Exists(jsonPath)) return PrintSummaryAndExit(sw);
 
+        // Verdict de confiance : fichier résultat souverain émis à l'exit (fail-closed). Cf. legacy ci-dessus.
+        _resultScenarioId = scenarioId;
+        _resultRunStamp = Environment.GetEnvironmentVariable("RIG_RUN_STAMP");
+
         // ── Cas B multi-match : setup SQL (clone audience) ──
         int? casBClonedId = null;
         if (casBAutoSetup)
@@ -1329,10 +1346,18 @@ internal static class Program
             Console.WriteLine($"  ⚠ JSON résultat absent ({tmpResult}) — le worker a probablement crashé");
         }
 
+        // Verdict de confiance (fix R1) : un worker selfdrive sans JSON résultat = crash/échec, PAS un
+        // succès silencieux. Sans ça, workerResult==null sautait toutes les VerifyStep → assertRun=0 →
+        // exit 0 (le verdict orchestrateur le rattrape en UNVERIFIED, mais un consommateur exit-code-only
+        // verrait vert). On compte une assertion sémantique qui ÉCHOUE → exit 1 + assertPass<assertRun.
+        if (workerResult == null)
+            VerifyStep("Worker result JSON present", () =>
+                throw new Exception("JSON résultat worker absent - worker probablement crashé (aucune assertion n'a pu tourner)"));
+
         // ── Assertions vs expected ──
         if (workerResult != null && expectedWarnings.HasValue)
         {
-            TryStep($"Assert warnings (expected={expectedWarnings.Value})", () =>
+            VerifyStep($"Assert warnings (expected={expectedWarnings.Value})", () =>
             {
                 if (workerResult.ValidationWarnings != expectedWarnings.Value)
                     throw new Exception($"WARNINGS DIVERGE : attendus={expectedWarnings.Value} actual={workerResult.ValidationWarnings}");
@@ -1341,7 +1366,7 @@ internal static class Program
         }
         if (workerResult != null && expectedDetectedMods.HasValue)
         {
-            TryStep($"Assert detected modifications (expected={expectedDetectedMods.Value})", () =>
+            VerifyStep($"Assert detected modifications (expected={expectedDetectedMods.Value})", () =>
             {
                 if (workerResult.DiffCount != expectedDetectedMods.Value)
                     throw new Exception($"DETECTED MODS DIVERGE : attendus={expectedDetectedMods.Value} actual={workerResult.DiffCount}");
@@ -1350,7 +1375,7 @@ internal static class Program
         }
         if (workerResult != null && expectedAppliedMods.HasValue && applyReal)
         {
-            TryStep($"Assert applied modifications DB (expected={expectedAppliedMods.Value})", () =>
+            VerifyStep($"Assert applied modifications DB (expected={expectedAppliedMods.Value})", () =>
             {
                 var actual = QueryAuditCounts(audienceId, jsonPath);
                 Console.WriteLine($"      → DB actual : AUDIT rows = {actual.AuditCount}");
@@ -1361,7 +1386,7 @@ internal static class Program
         }
         if (workerResult != null && expectedValidationErrors.HasValue)
         {
-            TryStep($"Assert validation errors (expected={expectedValidationErrors.Value})", () =>
+            VerifyStep($"Assert validation errors (expected={expectedValidationErrors.Value})", () =>
             {
                 if (workerResult.ValidationErrors != expectedValidationErrors.Value)
                     throw new Exception($"VALIDATION ERRORS DIVERGE : attendus={expectedValidationErrors.Value} actual={workerResult.ValidationErrors}");
@@ -1370,7 +1395,7 @@ internal static class Program
         }
         if (workerResult != null && !string.IsNullOrEmpty(expectedMessageContains))
         {
-            TryStep($"Assert message contains \"{expectedMessageContains}\"", () =>
+            VerifyStep($"Assert message contains \"{expectedMessageContains}\"", () =>
             {
                 var msg = workerResult.Message ?? "";
                 if (msg.IndexOf(expectedMessageContains, StringComparison.OrdinalIgnoreCase) < 0)
@@ -2733,7 +2758,46 @@ internal static class Program
         Console.WriteLine($"  ✗ failed  {_failed}");
         Console.WriteLine($"  ⏱ {sw.ElapsedMilliseconds} ms");
         Console.WriteLine("──────────────────────────────────────────────────────────────────────");
-        return _failed > 0 ? 1 : 0;
+        var exitCode = _failed > 0 ? 1 : 0;
+        WriteScenarioResultFile(exitCode, sw.ElapsedMilliseconds);
+        return exitCode;
+    }
+
+    /// <summary>Verdict de confiance (fail-closed) : écrit le fichier résultat SOUVERAIN du scénario,
+    /// co-localisé avec ses self-snaps sous <c>%LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\&lt;runStamp&gt;\&lt;scenarioId&gt;\</c>
+    /// (même convention que <c>ObservabilityFiles.ScenarioDir</c> côté TestViewer — contrat par path-string,
+    /// SmokeRunner étant découplé). No-op si aucun scénario n'est en cours (modes non-scénarisés).
+    /// <para>Best-effort EN ÉCRITURE mais FAIL-CLOSED EN LECTURE : si l'écriture échoue, AUCUN fichier
+    /// n'est laissé → l'orchestrateur voit « fichier manquant » = ROUGE. Un échec disque ne peut donc
+    /// jamais fabriquer un faux-vert (au pire un faux-rouge, le bon sens de l'erreur).</para></summary>
+    private static void WriteScenarioResultFile(int exitCode, long durationMs)
+    {
+        if (string.IsNullOrEmpty(_resultScenarioId)) return;
+        try
+        {
+            var runStamp = _resultRunStamp;
+            if (string.IsNullOrEmpty(runStamp)) runStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+            var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+            var dir = Path.Combine(local, "rig-wpf-testviewer", "self-snaps", runStamp, _resultScenarioId);
+            Directory.CreateDirectory(dir);
+            var file = Path.Combine(dir, Observability.ScenarioResultFileName(_resultScenarioId, runStamp));
+            var json = Observability.ScenarioResultJson(_resultScenarioId, runStamp, _failed > 0,
+                _assertRun, _assertPass, _passed, _failed, _skipped, exitCode, durationMs);
+            File.WriteAllText(file, json, new System.Text.UTF8Encoding(false));
+            Console.WriteLine($"      ⓘ scenario result → {file}");
+        }
+        catch { /* fail-closed : pas de fichier => ROUGE côté orchestrateur, jamais un faux-vert */ }
+    }
+
+    /// <summary>Step de VÉRIFICATION SÉMANTIQUE (assertion expected vs actual) : comme
+    /// <see cref="TryStep(string, Action)"/> mais incrémente en plus les compteurs d'assertions, qui
+    /// constituent la preuve POSITIVE qu'un check a réellement tourné (≠ step de plomberie). Une assertion
+    /// qui throw → Fail (donc exit 1), et assertions_pass &lt; assertions_run.</summary>
+    private static void VerifyStep(string description, Action action)
+    {
+        _assertRun++;
+        try { action(); _assertPass++; Pass(description); }
+        catch (Exception ex) { Fail(description, ex); }
     }
 
     /// <summary>Pump du dispatcher local, vidant la queue jusqu'à priority Background.</summary>

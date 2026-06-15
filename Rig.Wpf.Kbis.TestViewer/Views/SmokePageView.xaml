@@ -2,9 +2,15 @@
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:views="clr-namespace:Rig.Wpf.Kbis.TestViewer.Views"
+             xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
+             xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
              x:Name="root">
     <!-- Source de vérité UNIQUE du corps d'une page smoke. Édité ici = affecte toutes les catégories. -->
     <Grid Margin="0,12,0,0">
+        <Grid.Resources>
+            <!-- Converter local pour masquer Mosaic/List/Footer quand IsFullscreen = true. -->
+            <cv:BoolToVisibilityInvertedConverter x:Key="SmokeBoolToVisInv"/>
+        </Grid.Resources>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
@@ -14,19 +20,73 @@
         <!-- Slot header : le module injecte son bandeau (titre + Run + stress, ou BatchControlsView). -->
         <ContentPresenter Grid.Row="0" Content="{Binding HeaderContent, ElementName=root}"/>
 
-        <!-- Corps 3-colonnes PARTAGÉ : Mosaic + Focus + liste. -->
+        <!-- Corps 3-colonnes PARTAGÉ : Mosaic + Focus + liste.
+             Plein écran (FocusContext.IsFullscreen=true) :
+               - Col 0 (Mosaic) et Col 2 (liste) disparaissent ; col 1 (Focus) prend tout l'espace.
+               - Marge top 12px retirée pour que le PNG soit à zéro du header. -->
         <Grid Grid.Row="1" Margin="0,12,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="500"/>
+                <!-- Col 2 : 500px en normal, collapse à 0 en plein écran (Visibility=Collapsed seul
+                     ne libère pas la largeur allouée par la ColumnDefinition). -->
+                <ColumnDefinition>
+                    <ColumnDefinition.Style>
+                        <Style TargetType="ColumnDefinition">
+                            <Setter Property="Width" Value="500"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding FocusContext.IsFullscreen, ElementName=root}" Value="True">
+                                    <Setter Property="Width" Value="0"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ColumnDefinition.Style>
+                </ColumnDefinition>
             </Grid.ColumnDefinitions>
-            <views:MosaicView Grid.Column="0" DataContext="{Binding Catalog, ElementName=root}"/>
+
+            <!-- Col 0 : Mosaïque — cachée en plein écran. -->
+            <views:MosaicView Grid.Column="0" DataContext="{Binding Catalog, ElementName=root}"
+                              Visibility="{Binding FocusContext.IsFullscreen, ElementName=root,
+                                           Converter={StaticResource SmokeBoolToVisInv}}"/>
+
+            <!-- Col 1 : Focus (PNG 16:9). -->
             <views:FocusView Grid.Column="1" DataContext="{Binding FocusContext, ElementName=root}"/>
-            <views:ScenarioListView Grid.Column="2" DataContext="{Binding Catalog, ElementName=root}" Margin="6,0,0,0"/>
+
+            <!-- Col 2 : Liste scénarios — cachée en plein écran ou quand le drawer est ouvert. -->
+            <views:ScenarioListView Grid.Column="2" DataContext="{Binding Catalog, ElementName=root}" Margin="6,0,0,0">
+                <views:ScenarioListView.Style>
+                    <Style TargetType="views:ScenarioListView">
+                        <Setter Property="Visibility" Value="Visible"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding FocusContext.IsFullscreen, ElementName=root}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                            <!-- Drawer ouvert → masquer la liste pour éviter l'overlap (RAPTURE historique). -->
+                            <DataTrigger Binding="{Binding IsDrawerOpen, ElementName=root}" Value="True">
+                                <Setter Property="Visibility" Value="Collapsed"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </views:ScenarioListView.Style>
+            </views:ScenarioListView>
         </Grid>
 
-        <!-- Footer PARTAGÉ (disk usage). DataContext hérité = MainWindowViewModel (props SnapDiskUsage…). -->
-        <views:FooterView Grid.Row="2"/>
+        <!-- Footer PARTAGÉ (disk usage). DataContext hérité = MainWindowViewModel.
+             Caché en plein écran. -->
+        <views:FooterView Grid.Row="2"
+                          Visibility="{Binding FocusContext.IsFullscreen, ElementName=root,
+                                       Converter={StaticResource SmokeBoolToVisInv},
+                                       FallbackValue=Visible}"/>
+
+        <!-- Drawer overlay optionnel (RAPTURE Run History). Span toutes les rows pour couvrir
+             toute la hauteur du tab. DrawerContent=null → ContentPresenter vide, invisible.
+             IsDrawerOpen pilote la Visibility. -->
+        <ContentPresenter Grid.Row="0" Grid.RowSpan="3"
+                          Content="{Binding DrawerContent, ElementName=root}"
+                          HorizontalAlignment="Right"
+                          Width="320"
+                          Panel.ZIndex="100"
+                          Visibility="{Binding IsDrawerOpen, ElementName=root,
+                                       Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"/>
     </Grid>
 </UserControl>
