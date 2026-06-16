@@ -153,6 +153,19 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>Phone/RDP : la PAGE (PageScroll) doit scroller même quand le pointeur est sur une ListBox
+    /// interne (mosaïque / scenario-id) qui capterait la molette. On ne force le scroll de la page QUE si
+    /// elle déborde (ScrollableHeight>0) — sinon (desktop, contenu qui tient) on laisse la ListBox interne
+    /// scroller normalement (zéro régression desktop).</summary>
+    private void PageScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        if (!e.Handled && PageScroll.ScrollableHeight > 0)
+        {
+            PageScroll.ScrollToVerticalOffset(PageScroll.VerticalOffset - e.Delta);
+            e.Handled = true;
+        }
+    }
+
     private void OpenLog_Click(object sender, RoutedEventArgs e)
     {
         try

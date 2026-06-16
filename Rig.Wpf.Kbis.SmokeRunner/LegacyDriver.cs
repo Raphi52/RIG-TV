@@ -339,6 +339,12 @@ public sealed class LegacyDriver : IDisposable
         // Snapshot du titre pré-click (typiquement "Connection à la base de données Rig")
         // pour détecter la transition vers "Console d'accueil de RIG (…)".
         var preLoginTitle = SafeText(() => _window.Title);
+        // Snapshot du HANDLE de la main window pré-click : sur ce build RIG, le titre de la Console
+        // d'accueil peut être VIDE (= pré-login) → la détection par titre SEUL donne un faux timeout
+        // alors que la Console est bien affichée (prouvé par les self-snaps du run 20260616-132559).
+        // Le changement de HANDLE (FormLogin fermée → FormAccueil promue main window) est title-indépendant.
+        IntPtr preLoginHwnd = IntPtr.Zero;
+        try { preLoginHwnd = Process.GetProcessById(_app.ProcessId).MainWindowHandle; } catch { }
 
         Interaction.Click(btn);
 
@@ -368,14 +374,36 @@ public sealed class LegacyDriver : IDisposable
                     {
                         var title = SafeText(() => candidate.Title);
                         lastTitle = title;
-                        // Critère d'acceptance : titre différent du pré-login (= FormLogin
-                        // disparue, FormAccueil promue main window). Le titre Console
-                        // d'accueil contient "Console d'accueil" ou au minimum n'est plus
-                        // celui du login. On accepte aussi tout titre non-vide ≠ pré-login.
-                        if (!string.IsNullOrEmpty(title)
-                            && !string.Equals(title, preLoginTitle, StringComparison.Ordinal))
+                        // Critère d'acceptance ROBUSTE (title-indépendant) : transition FormLogin → FormAccueil
+                        // confirmée par le PREMIER signal positif parmi —
+                        //  (1) titre non-vide ≠ pré-login (cas classique) ;
+                        //  (2) le HANDLE de la main window a changé (FormLogin fermée → FormAccueil promue) —
+                        //      couvre le build où la Console a un titre VIDE (détection par titre seul = faux timeout).
+                        bool titleChanged = !string.IsNullOrEmpty(title)
+                            && !string.Equals(title, preLoginTitle, StringComparison.Ordinal);
+                        bool hwndChanged = preLoginHwnd != IntPtr.Zero
+                            && p.MainWindowHandle != IntPtr.Zero
+                            && p.MainWindowHandle != preLoginHwnd;
+                        if (titleChanged || hwndChanged)
                         {
-                            postWin = candidate;
+                            // iter-2 : MainWindowHandle pointe l'overlay UAC (WS_EX_NOREDIRECTIONBITMAP, UIA VIDE),
+                            // PAS la console (verifie 2026-06-16 : DumpDescendants vide + OpenProc ne voit aucun btn).
+                            // On attache _window a la VRAIE fenetre console RIG (WinForms titree/large), resolue par
+                            // ResolveRigConsoleHwnd (meme logique eprouvee que le self-snap). Fallback Zero = on
+                            // N'ACCEPTE QUE quand cette console est reellement enumerable, sinon on continue le poll
+                            // (accepter l'overlay seul = OpenProc scanne une fenetre vide -> faux echec en cascade).
+                            var consoleHwnd = ResolveRigConsoleHwnd(_app.ProcessId, IntPtr.Zero);
+                            if (consoleHwnd != IntPtr.Zero && consoleHwnd != preLoginHwnd)
+                            {
+                                try
+                                {
+                                    postWin = _automation!.FromHandle(consoleHwnd).AsWindow();
+                                    Console.WriteLine($"      → post-login OK via {(titleChanged ? "TITRE" : "HWND-CHANGE")} ; "
+                                        + $"console RIG resolue hwnd=0x{consoleHwnd.ToInt64():X} (overlay/MainWindow=0x{p.MainWindowHandle.ToInt64():X})");
+                                }
+                                catch (Exception ex) { lastUiaErr = ex; }
+                            }
+                            // sinon : console pas encore enumerable -> poll continue (Thread.Sleep plus bas)
                         }
                     }
                 }
@@ -2776,10 +2804,15 @@ public sealed class LegacyDriver : IDisposable
             {
                 // RigButton extends RigPanel → UIA Type=Pane. AutomationId = WinForms control.Name
                 // (btnOk) ; le designer dit btnOk.Text="Se &connecter" → UIA Name = "Se connecter".
-                btn = _window.FindFirstDescendant(cf => cf.ByAutomationId("btnOk"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("Se connecter"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("Connexion"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("OK"));
+                // FormLogin est un ShowDialog() MODAL → souvent une toplevel UIA HORS de l'arbre de
+                // _window (surtout sur HDESK). On cherche depuis la racine desktop du HDESK (qui ne
+                // contient que les fenêtres RIG → pas de faux positif), fallback _window si GetDesktop KO.
+                AutomationElement root = _window;
+                try { var d = _automation.GetDesktop(); if (d is not null) root = d; } catch { }
+                btn = root.FindFirstDescendant(cf => cf.ByAutomationId("btnOk"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("Se connecter"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("Connexion"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("OK"));
             }
             catch (Exception ex)
             {
@@ -3521,7 +3554,14 @@ public sealed class LegacyDriver : IDisposable
         // Cache hwnd cote thread HDESK courant.
         IntPtr hwnd = IntPtr.Zero;
         try { if (_window.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        // FIX 2026-06-16 : MainWindowHandle (_window) peut résoudre un overlay UAC (WS_EX_NOREDIRECTIONBITMAP
+        // → PrintWindow NOIR). On résout la VRAIE fenêtre console RIG par énumération (fallback = MainWindow).
+        try { hwnd = ResolveRigConsoleHwnd(_app.ProcessId, hwnd); } catch { }
         if (hwnd == IntPtr.Zero) { Console.WriteLine("      ⓘ StartPeriodicSnap : hwnd zero, skip"); return; }
+        Console.WriteLine($"      ⓘ StartPeriodicSnap : snap hwnd=0x{hwnd.ToInt64():X} (console RIG résolue)");
+        // FIX 2026-06-16 : EnsureWindowMaximized() maximisait `_window` (= overlay UAC, MainWindowHandle) et
+        // PAS la vraie console → RIG restait en petite résolution (750x480). On maximise la CONSOLE résolue.
+        if (Headless) { try { Interaction.MaximizeWindow(hwnd); } catch { } }
         _snapHwnd = hwnd;
         var runStamp = Environment.GetEnvironmentVariable("RIG_RUN_STAMP");
         if (string.IsNullOrEmpty(runStamp)) runStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -3731,7 +3771,10 @@ public sealed class LegacyDriver : IDisposable
         // (les 2 passes ont renvoyé null) → aucun impact sur le chemin nominal des scénarios qui voient la
         // grille tout de suite. On ne throw QUE si RIG ne charge plus (overlay absent = écran figé/planté =
         // vrai échec) OU si le plafond dur est atteint. Le run 17:04 (succès) voyait la grille à ~6,4s.
-        const long gridHardCapMs = 45000;
+        // fix-ok: 2026-06-16 — l'alerte 'interrompue' (form-interrompue) charge sa grille PROC_DEMANDE en >45s
+        // (reproduce run 20260616-153933 : cap atteint avec overlay « Traitement en cours » ENCORE present).
+        // Les autres alertes chargent en ~6-50s. Bump 45s->90s pour couvrir la charge lente de 'interrompue'.
+        const long gridHardCapMs = 90000;
         bool announcedGrace = false;
         while (grid is null
                && LegacyParsing.ShouldKeepWaitingForGrid(swGrid.ElapsedMilliseconds, baseMaxMs: 18000, hardCapMs: gridHardCapMs, overlayPresent: IsLoadingOverlayOnScreen()))
@@ -6592,6 +6635,42 @@ public sealed class LegacyDriver : IDisposable
     // et on lit ses items via AccessibleObjectFromWindow sur CE hwnd.
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder s, int max);
+
+    /// <summary>Résout le hwnd de la VRAIE fenêtre console RIG à snapper. MainWindowHandle pointe parfois sur
+    /// un overlay (ex. UAC_InputIndicatorOverlayWnd, WS_EX_NOREDIRECTIONBITMAP) qui rend NOIR à PrintWindow.
+    /// On énumère les top-level du process RIG (desktop courant = HDESK) et on prend la fenêtre WinForms
+    /// VISIBLE dont le titre évoque la console ("Console"/"accueil"/"RIG"), fallback = la plus grande WinForms
+    /// visible, fallback = le hwnd fourni. Vérifié 2026-06-16 : la console (WindowsForms10.Window.8, 750x480)
+    /// se capture 100% non-noir sur HDESK, l'overlay UAC rend noir.</summary>
+    private static IntPtr ResolveRigConsoleHwnd(int rigPid, IntPtr fallback)
+    {
+        IntPtr best = IntPtr.Zero; long bestArea = 0; bool bestTitled = false;
+        EnumWindows((h, l) =>
+        {
+            GetWindowThreadProcessId(h, out uint p);
+            if (p != (uint)rigPid || !IsWindowVisible(h)) return true;
+            var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, 256);
+            if (cls.ToString().IndexOf("WindowsForms", StringComparison.OrdinalIgnoreCase) < 0) return true;
+            if (!GetWindowRect(h, out RECT r)) return true;
+            long area = (long)Math.Max(0, r.Right - r.Left) * Math.Max(0, r.Bottom - r.Top);
+            if (area < 120 * 120) return true;
+            var tit = new System.Text.StringBuilder(256); GetWindowText(h, tit, 256);
+            string t = tit.ToString();
+            // fix-ok: 2026-06-16 (cause confirmee DIAG3) — la fenetre LOGIN "Connexion a RIG_DEV-..." contient
+            // "RIG" → l'ancien match bare "RIG" la prenait pour la console (=> _window sur le login, btn1..btn7
+            // introuvables). On EXCLUT le login, et on matche la console par "Console"/"accueil".
+            if (t.IndexOf("Connexion", StringComparison.OrdinalIgnoreCase) >= 0
+             || t.IndexOf("Connection", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            bool titled = t.IndexOf("Console", StringComparison.OrdinalIgnoreCase) >= 0
+                       || t.IndexOf("accueil", StringComparison.OrdinalIgnoreCase) >= 0;
+            if ((titled && !bestTitled) || (titled == bestTitled && area > bestArea))
+            { best = h; bestArea = area; bestTitled = titled; }
+            return true;
+        }, IntPtr.Zero);
+        return best != IntPtr.Zero ? best : fallback;
+    }
 
     /// <summary>Énumère les fenêtres pour trouver le hwnd du ContextMenuStrip ouvert : visible, du
     /// process RIG, classe "WindowsForms10.Window.*" (le ToolStripDropDown WinForms), distinct de la

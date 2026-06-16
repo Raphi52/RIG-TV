@@ -44,6 +44,10 @@ namespace Rig.Wpf.Kbis.SmokeRunner
         [DllImport("user32.dll")]
         private static extern bool PrintWindow(IntPtr hwnd, IntPtr hdcBlt, uint nFlags);
 
+
+
+
+
         [DllImport("user32.dll")]
         private static extern IntPtr WindowFromPoint(POINT Point);
 
@@ -355,11 +359,8 @@ namespace Rig.Wpf.Kbis.SmokeRunner
                 using (var g = Graphics.FromImage(bmp))
                 {
                     IntPtr hdc = g.GetHdc();
-                    bool printed;
-                    try { printed = PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT); }
+                    try { PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT); }
                     finally { g.ReleaseHdc(hdc); }
-                    if (!printed)
-                        Console.WriteLine($"      ⚠ Interaction.CaptureWindow : PrintWindow a échoué (capture potentiellement noire) -> {pngPath}");
                 }
                 bmp.Save(pngPath, ImageFormat.Png);
             }

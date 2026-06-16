@@ -142,6 +142,8 @@ public sealed class RegressionCatalog
                     current.Clear();
                     inSummary = true;
                     var after = content.Substring(content.IndexOf('>') + 1);
+                    var endTag = after.IndexOf("</summary>", StringComparison.OrdinalIgnoreCase);
+                    if (endTag >= 0) after = after.Substring(0, endTag);   // <summary>...</summary> inline : retirer le tag de fermeture (sinon capturé dans le texte)
                     if (!string.IsNullOrWhiteSpace(after)) current.Add(after.Trim());
                     if (content.IndexOf("</summary>", StringComparison.OrdinalIgnoreCase) >= 0) inSummary = false;
                 }

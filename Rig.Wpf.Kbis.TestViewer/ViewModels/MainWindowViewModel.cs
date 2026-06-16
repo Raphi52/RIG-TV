@@ -466,9 +466,44 @@ public sealed partial class MainWindowViewModel : ObservableObject
     // Flag pour le mode parallel KBIS (RunLegacyAsync ne passe pas par _legacySmokeProxy.RunAsync
     // qui setterait IsRunning, donc on track manuellement pour disable le bouton pendant le run).
     private bool _isLegacyParallelRunning;
+
+    // ── Play par-scénario legacy CONCURRENT (KBIS/ALERTES/DCADEMAT) ──────────────────────────────
+    // Bug 2026-06-15 : cliquer ▶ sur plusieurs tuiles legacy à la suite ne lançait que la 1re — la
+    // garde `if (IsXxxRunning) return` traitait tout play comme mono-run (≠ RAPTURE qui est concurrent
+    // + état par-scénario). Fix : le play par-scénario gate désormais sur IsXxxBatchBusy (un batch/stress
+    // tourne) et NON sur les autres plays → N plays parallèles, chacun son worker/HDESK. Throttle au même
+    // cap dur que les suites (LegacyHeavySuiteMaxConcurrency) car chaque play ouvre un RigClientAccueil
+    // lourd (>2 simultanés = verdicts non fiables). Le compteur alimente IsXxxRunning → la mutex Run/Stress
+    // reste honorée (pas de batch pendant des plays, et inversement).
+    private int _legacyPlaysInFlight;
+    private readonly SemaphoreSlim _legacyPlayThrottle =
+        new SemaphoreSlim(LegacyHeavySuiteMaxConcurrency, LegacyHeavySuiteMaxConcurrency);
+    private bool AnyLegacyPlayInFlight => System.Threading.Volatile.Read(ref _legacyPlaysInFlight) > 0;
+
+    /// <summary>Notifie les 3 IsXxxRunning + les commandes Run/Stress des 3 modules legacy. Appelé aux
+    /// transitions du compteur de plays (compteur PARTAGÉ → un play DCADEMAT grise aussi Run KBIS/ALERTES).</summary>
+    private void RaiseLegacyRunningChanged()
+    {
+        void Raise()
+        {
+            OnPropertyChanged(nameof(IsLegacyRunning));
+            OnPropertyChanged(nameof(IsAlertesRunning));
+            OnPropertyChanged(nameof(IsDcadematRunning));
+            RunLegacyCommand.NotifyCanExecuteChanged();
+            StressSelectedScenarioCommand.NotifyCanExecuteChanged();
+            RunAlertesCommand.NotifyCanExecuteChanged();
+            StressAlertesScenarioCommand.NotifyCanExecuteChanged();
+            RunDcadematCommand.NotifyCanExecuteChanged();
+        }
+        var disp = Application.Current?.Dispatcher;
+        if (disp != null && !disp.CheckAccess()) disp.Invoke(Raise); else Raise();
+    }
+
     // IsLegacyRunning gate "Run smoke RIG" ET "Stress" (mutuellement exclusifs — pas 2 batchs
     // RIG en parallèle non contrôlés). _isKbisStressRunning est défini dans la région Stress.
-    public bool IsLegacyRunning => _legacySmokeProxy.IsRunning || _isLegacyParallelRunning || _isKbisStressRunning;
+    // IsLegacyBatchBusy = tout SAUF les plays par-scénario (= ce sur quoi un play se bloque).
+    public bool IsLegacyBatchBusy => _legacySmokeProxy.IsRunning || _isLegacyParallelRunning || _isKbisStressRunning;
+    public bool IsLegacyRunning => IsLegacyBatchBusy || AnyLegacyPlayInFlight;
     public bool LegacyExeExists => _legacySmokeProxy.ExeExists;
 
     /// <summary>Accès au proxy legacy pour permettre aux adapters KBIS de filtrer leurs
@@ -1351,7 +1386,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// </summary>
     public void PlayKbisScenario(Smoke.Kbis.KbisLegacyScenarioAdapter? a)
     {
-        if (a is null || IsLegacyRunning || !LegacyExeExists) return;
+        // Gate sur IsLegacyBatchBusy (batch/stress/proxy), PAS sur les autres plays → N plays concurrents.
+        if (a is null || !LegacyExeExists || IsLegacyBatchBusy) return;
         _ = PlayKbisScenarioImplAsync(a);
     }
 
@@ -1359,9 +1395,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         Log.Info($"PlayKbisScenario — {(a.IsVk ? "PROC_VK" : "PROC_XEX")} ({a.InstanceId}) in-place");
         LegacyDetailTabIndex = 0;
-        _isLegacyParallelRunning = true;
-        OnPropertyChanged(nameof(IsLegacyRunning));
-        NotifyKbisCommands();
+        System.Threading.Interlocked.Increment(ref _legacyPlaysInFlight);
+        RaiseLegacyRunningChanged();
+        // Throttle : <= LegacyHeavySuiteMaxConcurrency plays simultanés (cap dur RigClientAccueil). Pas de
+        // CancellationToken → WaitAsync ne lève pas, Release inconditionnel en finally est sûr.
+        await _legacyPlayThrottle.WaitAsync();
         try
         {
             // EN PLACE : on NE rebuild PAS la mosaïque (sinon les autres tuiles disparaissent —
@@ -1394,9 +1432,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         }
         finally
         {
-            _isLegacyParallelRunning = false;
-            OnPropertyChanged(nameof(IsLegacyRunning));
-            NotifyKbisCommands();
+            _legacyPlayThrottle.Release();
+            System.Threading.Interlocked.Decrement(ref _legacyPlaysInFlight);
+            RaiseLegacyRunningChanged();
             _ = System.Threading.Tasks.Task.Run(() => { CleanupOldSelfSnaps(keepLast: 10); RefreshSnapDiskUsage(); });
         }
     }
@@ -1458,7 +1496,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private bool _isAlertesParallelRunning;
     private bool _isAlertesStressRunning;
     private volatile bool _alertesStressCancel;
-    public bool IsAlertesRunning => _legacySmokeProxy.IsRunning || _isAlertesParallelRunning || _isAlertesStressRunning;
+    public bool IsAlertesBatchBusy => _legacySmokeProxy.IsRunning || _isAlertesParallelRunning || _isAlertesStressRunning;
+    public bool IsAlertesRunning => IsAlertesBatchBusy || AnyLegacyPlayInFlight;
 
     [ObservableProperty] private string? alertesSummary = "✓ 0  ✗ 0  ⏳ 0";
     [ObservableProperty] private int alertesStressRepeat = 4;
@@ -1632,7 +1671,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void PlayAlertesScenario(Smoke.Alertes.AlertesLegacyScenarioAdapter? a)
     {
-        if (a is null || IsAlertesRunning || !LegacyExeExists) return;
+        if (a is null || !LegacyExeExists || IsAlertesBatchBusy) return;
         _ = PlayAlertesScenarioImplAsync(a);
     }
 
@@ -1640,9 +1679,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         Log.Info($"PlayAlertesScenario — {a.Kind} ({a.InstanceId}) in-place");
         LegacyDetailTabIndex = 0;
-        _isAlertesParallelRunning = true;
-        OnPropertyChanged(nameof(IsAlertesRunning));
-        NotifyAlertesCommands();
+        System.Threading.Interlocked.Increment(ref _legacyPlaysInFlight);
+        RaiseLegacyRunningChanged();
+        await _legacyPlayThrottle.WaitAsync();   // throttle <= LegacyHeavySuiteMaxConcurrency plays
         try
         {
             var smokeExe = _legacySmokeProxy.ExePath;
@@ -1662,9 +1701,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex) { Log.Error("PlayAlertesScenario threw", ex); ShowError("Play scénario Alertes", ex); }
         finally
         {
-            _isAlertesParallelRunning = false;
-            OnPropertyChanged(nameof(IsAlertesRunning));
-            NotifyAlertesCommands();
+            _legacyPlayThrottle.Release();
+            System.Threading.Interlocked.Decrement(ref _legacyPlaysInFlight);
+            RaiseLegacyRunningChanged();
             _ = Task.Run(() => { CleanupOldSelfSnaps(keepLast: 10); RefreshSnapDiskUsage(); });
         }
     }
@@ -1708,7 +1747,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         => _dcadematFocus ??= new Smoke.Dcademat.DcadematFocusContext(DcadematCatalog);
 
     private bool _isDcadematParallelRunning;
-    public bool IsDcadematRunning => _legacySmokeProxy.IsRunning || _isDcadematParallelRunning;
+    public bool IsDcadematBatchBusy => _legacySmokeProxy.IsRunning || _isDcadematParallelRunning;
+    public bool IsDcadematRunning => IsDcadematBatchBusy || AnyLegacyPlayInFlight;
 
     private static string ArgForDcadematKind(string kind) => $"--legacy-dcademat-{kind}";
 
@@ -1747,7 +1787,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
 
     public void PlayDcadematScenario(Smoke.Dcademat.DcadematLegacyScenarioAdapter? a)
     {
-        if (a is null || IsDcadematRunning || !LegacyExeExists) return;
+        if (a is null || !LegacyExeExists || IsDcadematBatchBusy) return;
         _ = PlayDcadematScenarioImplAsync(a);
     }
 
@@ -1755,8 +1795,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
     {
         Log.Info($"PlayDcadematScenario — {a.Kind} ({a.InstanceId}) in-place");
         LegacyDetailTabIndex = 0;
-        _isDcadematParallelRunning = true;
-        OnPropertyChanged(nameof(IsDcadematRunning));
+        System.Threading.Interlocked.Increment(ref _legacyPlaysInFlight);
+        RaiseLegacyRunningChanged();
+        await _legacyPlayThrottle.WaitAsync();   // throttle <= LegacyHeavySuiteMaxConcurrency plays
         try
         {
             var smokeExe = _legacySmokeProxy.ExePath;
@@ -1776,8 +1817,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         catch (Exception ex) { Log.Error("PlayDcadematScenario threw", ex); ShowError("Play scénario DCADEMAT", ex); }
         finally
         {
-            _isDcadematParallelRunning = false;
-            OnPropertyChanged(nameof(IsDcadematRunning));
+            _legacyPlayThrottle.Release();
+            System.Threading.Interlocked.Decrement(ref _legacyPlaysInFlight);
+            RaiseLegacyRunningChanged();
             _ = Task.Run(() => { CleanupOldSelfSnaps(keepLast: 10); RefreshSnapDiskUsage(); });
         }
     }

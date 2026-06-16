@@ -119,7 +119,14 @@
         <!-- Margin removed en mode plein écran pour que la FocusView prenne réellement
              toute la fenêtre (sans les 22px de gutter latéral / 12+22 vertical). Converter
              BoolToMarginConverter avec parameter "22,12,22,22" comme valeur par défaut (false). -->
-        <Grid Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='22,12,22,22'}">
+        <!-- Phone / RDP (2026-06-16) : la zone contenu est enveloppée d'une ScrollViewer + MinWidth/MinHeight.
+             Sur desktop (fenêtre >= min) aucune barre ne s'affiche (identique à avant). Sur petit écran
+             (téléphone en RDP) les barres apparaissent → on navigue tout le WPF au doigt. -->
+        <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
+                      PanningMode="Both" PreviewMouseWheel="PageScroll_PreviewMouseWheel"
+                      Background="{StaticResource Canvas}">
+        <Grid MinWidth="320"
+              Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='22,12,22,22'}">
         <!-- Module KBIS : 3 tabs (Smoke / xUnit / Scénarios).
              Le filtre Legacy/WPF n'est plus global : il est contextuel,
              intégré aux chips de la section REGRESSION (api/transition/legacy/wpf). -->
@@ -174,14 +181,14 @@
                     <views:SmokePageView.HeaderContent>
                         <views:SmokeHeaderView
                             IsFullscreen="{Binding KbisFocus.IsFullscreen}"
-                            ShowScenarioPicker="False"
-                            ShowAdvancedOverrides="False"
-                            ShowApplyReal="False"
+                            ShowScenarioPicker="True"
+                            ShowAdvancedOverrides="True"
+                            ShowApplyReal="True"
                             ShowModeSelector="True"
                             ModeOptionsSource="{Binding KbisModeOptions}"
                             SelectedMode="{Binding SelectedKbisMode, Mode=TwoWay}"
                             ModeComboAutomationId="CmbKbisMode"
-                            ShowParallelism="False"
+                            ShowParallelism="True"
                             ShowStress="True"
                             StressCommand="{Binding StressSelectedScenarioCommand}"
                             StopStressCommand="{Binding StopKbisStressCommand}"
@@ -192,10 +199,10 @@
                             StressStopAutomationId="BtnKbisStopStress"
                             StressRepeatAutomationId="NumKbisStressRepeat"
                             StressLoopAutomationId="ChkKbisStressLoop"
-                            ShowResetDb="False"
-                            ShowHistory="False"
-                            ShowPause="False"
-                            ShowStop="False"
+                            ShowResetDb="True"
+                            ShowHistory="True"
+                            ShowPause="True"
+                            ShowStop="True"
                             PrimaryRunCommand="{Binding RunLegacyCommand}"
                             PrimaryRunAutomationId="BtnKbisRunSmokeLegacy"
                             PrimaryRunLabel="▶  Run smoke RIG"
@@ -992,11 +999,11 @@
                     <views:SmokePageView.HeaderContent>
                         <views:SmokeHeaderView
                             IsFullscreen="{Binding AlertesFocus.IsFullscreen}"
-                            ShowScenarioPicker="False"
-                            ShowAdvancedOverrides="False"
-                            ShowApplyReal="False"
-                            ShowModeSelector="False"
-                            ShowParallelism="False"
+                            ShowScenarioPicker="True"
+                            ShowAdvancedOverrides="True"
+                            ShowApplyReal="True"
+                            ShowModeSelector="True"
+                            ShowParallelism="True"
                             ShowStress="True"
                             StressCommand="{Binding StressAlertesScenarioCommand}"
                             StopStressCommand="{Binding StopAlertesStressCommand}"
@@ -1007,10 +1014,10 @@
                             StressStopAutomationId="BtnAlertesStopStress"
                             StressRepeatAutomationId="NumAlertesStressRepeat"
                             StressLoopAutomationId="ChkAlertesStressLoop"
-                            ShowResetDb="False"
-                            ShowHistory="False"
-                            ShowPause="False"
-                            ShowStop="False"
+                            ShowResetDb="True"
+                            ShowHistory="True"
+                            ShowPause="True"
+                            ShowStop="True"
                             PrimaryRunCommand="{Binding RunAlertesCommand}"
                             PrimaryRunAutomationId="BtnAlertesRunSmokeLegacy"
                             PrimaryRunLabel="▶  Run smoke RIG"
@@ -1033,16 +1040,16 @@
             <views:SmokePageView Catalog="{Binding DcadematCatalog}" FocusContext="{Binding DcadematFocus}">
                 <views:SmokePageView.HeaderContent>
                     <views:SmokeHeaderView
-                        ShowScenarioPicker="False"
-                        ShowAdvancedOverrides="False"
-                        ShowApplyReal="False"
-                        ShowModeSelector="False"
-                        ShowParallelism="False"
-                        ShowStress="False"
-                        ShowResetDb="False"
-                        ShowHistory="False"
-                        ShowPause="False"
-                        ShowStop="False"
+                        ShowScenarioPicker="True"
+                        ShowAdvancedOverrides="True"
+                        ShowApplyReal="True"
+                        ShowModeSelector="True"
+                        ShowParallelism="True"
+                        ShowStress="True"
+                        ShowResetDb="True"
+                        ShowHistory="True"
+                        ShowPause="True"
+                        ShowStop="True"
                         PrimaryRunCommand="{Binding RunDcadematCommand}"
                         PrimaryRunAutomationId="BtnDcadematRunSmokeLegacy"
                         PrimaryRunLabel="▶  Run smoke DCADEMAT"
@@ -1210,7 +1217,7 @@
                             ShowApplyReal="True"
                             ShowModeSelector="True"
                             ShowParallelism="True"
-                            ShowStress="False"
+                            ShowStress="True"
                             ShowResetDb="True"
                             ShowHistory="True"
                             ShowPause="True"
@@ -1476,6 +1483,7 @@
             </TabItem>
         </TabControl>
         </Grid>
+        </ScrollViewer>
         </DockPanel>
     </DockPanel>
 </Window>

@@ -24,51 +24,42 @@
              Plein écran (FocusContext.IsFullscreen=true) :
                - Col 0 (Mosaic) et Col 2 (liste) disparaissent ; col 1 (Focus) prend tout l'espace.
                - Marge top 12px retirée pour que le PNG soit à zéro du header. -->
+        <!-- Corps RESPONSIVE : WrapPanel → côte-à-côte si large, EMPILÉ si étroit (phone). Chaque panneau
+             borné en hauteur (MaxHeight) + scroll interne ; MaxWidth → rétrécit sur écran étroit ; le Live
+             (Focus) épouse son image. Plein écran : le WrapPanel se cache, un FocusView dédié remplit tout. -->
         <Grid Grid.Row="1" Margin="0,12,0,0">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="Auto"/>
-                <ColumnDefinition Width="*"/>
-                <!-- Col 2 : 500px en normal, collapse à 0 en plein écran (Visibility=Collapsed seul
-                     ne libère pas la largeur allouée par la ColumnDefinition). -->
-                <ColumnDefinition>
-                    <ColumnDefinition.Style>
-                        <Style TargetType="ColumnDefinition">
-                            <Setter Property="Width" Value="500"/>
+            <Grid.Resources>
+                <BooleanToVisibilityConverter x:Key="BoolToVis"/>
+            </Grid.Resources>
+
+            <!-- NORMAL (responsive) -->
+            <WrapPanel Orientation="Horizontal"
+                       Visibility="{Binding FocusContext.IsFullscreen, ElementName=root, Converter={StaticResource SmokeBoolToVisInv}}">
+                <!-- Mosaïque : MaxWidth (rétrécit sur étroit), hauteur bornée + scroll interne (ListBox Auto). -->
+                <views:MosaicView DataContext="{Binding Catalog, ElementName=root}"
+                                  MaxWidth="480" MaxHeight="640" Margin="0,0,8,8"/>
+                <!-- Live/Focus : MaxWidth → l'image épouse la largeur dispo, hauteur = image, bornée. -->
+                <views:FocusView DataContext="{Binding FocusContext, ElementName=root}"
+                                 MaxWidth="820" MaxHeight="640" Margin="0,0,8,8"/>
+                <!-- Liste scénarios : bornée + scroll interne (DataGrid). Cachée si drawer ouvert. -->
+                <views:ScenarioListView DataContext="{Binding Catalog, ElementName=root}"
+                                        MaxWidth="520" MaxHeight="640" Margin="0,0,0,8">
+                    <views:ScenarioListView.Style>
+                        <Style TargetType="views:ScenarioListView">
+                            <Setter Property="Visibility" Value="Visible"/>
                             <Style.Triggers>
-                                <DataTrigger Binding="{Binding FocusContext.IsFullscreen, ElementName=root}" Value="True">
-                                    <Setter Property="Width" Value="0"/>
+                                <DataTrigger Binding="{Binding IsDrawerOpen, ElementName=root}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
                                 </DataTrigger>
                             </Style.Triggers>
                         </Style>
-                    </ColumnDefinition.Style>
-                </ColumnDefinition>
-            </Grid.ColumnDefinitions>
+                    </views:ScenarioListView.Style>
+                </views:ScenarioListView>
+            </WrapPanel>
 
-            <!-- Col 0 : Mosaïque — cachée en plein écran. -->
-            <views:MosaicView Grid.Column="0" DataContext="{Binding Catalog, ElementName=root}"
-                              Visibility="{Binding FocusContext.IsFullscreen, ElementName=root,
-                                           Converter={StaticResource SmokeBoolToVisInv}}"/>
-
-            <!-- Col 1 : Focus (PNG 16:9). -->
-            <views:FocusView Grid.Column="1" DataContext="{Binding FocusContext, ElementName=root}"/>
-
-            <!-- Col 2 : Liste scénarios — cachée en plein écran ou quand le drawer est ouvert. -->
-            <views:ScenarioListView Grid.Column="2" DataContext="{Binding Catalog, ElementName=root}" Margin="6,0,0,0">
-                <views:ScenarioListView.Style>
-                    <Style TargetType="views:ScenarioListView">
-                        <Setter Property="Visibility" Value="Visible"/>
-                        <Style.Triggers>
-                            <DataTrigger Binding="{Binding FocusContext.IsFullscreen, ElementName=root}" Value="True">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                            </DataTrigger>
-                            <!-- Drawer ouvert → masquer la liste pour éviter l'overlap (RAPTURE historique). -->
-                            <DataTrigger Binding="{Binding IsDrawerOpen, ElementName=root}" Value="True">
-                                <Setter Property="Visibility" Value="Collapsed"/>
-                            </DataTrigger>
-                        </Style.Triggers>
-                    </Style>
-                </views:ScenarioListView.Style>
-            </views:ScenarioListView>
+            <!-- PLEIN ÉCRAN : Focus remplit toute la zone (le WrapPanel ci-dessus est Collapsed). -->
+            <views:FocusView DataContext="{Binding FocusContext, ElementName=root}"
+                             Visibility="{Binding FocusContext.IsFullscreen, ElementName=root, Converter={StaticResource BoolToVis}}"/>
         </Grid>
 
         <!-- Footer PARTAGÉ (disk usage). DataContext hérité = MainWindowViewModel.

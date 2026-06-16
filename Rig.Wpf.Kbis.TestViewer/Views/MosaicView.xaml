@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
              xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
-             Width="480" Background="#F5FBFF">
+             MinWidth="300" MaxWidth="480" Background="#F5FBFF">
     <UserControl.Resources>
         <cv:PhaseToStringConverter x:Key="PhaseToString"/>
         <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>

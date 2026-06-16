@@ -18,6 +18,9 @@
   <PropertyGroup>
     <OutputType>Library</OutputType>
     <RootNamespace>Rig.Rapture.Tests</RootNamespace>
+    <!-- WPF activé pour le test XamlLoad (instancie les UserControls → attrape les XamlParseException runtime
+         que dotnet build ne voit pas). Cf. wpf-frontend-terrain. -->
+    <UseWPF>true</UseWPF>
     <!--
       Nullable disable : le code Rapture importé par Link est écrit en
       pre-nullable style (string, pas string?). Pour éviter une cascade de
