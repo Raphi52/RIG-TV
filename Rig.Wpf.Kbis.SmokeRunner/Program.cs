@@ -367,6 +367,14 @@ internal static class Program
         // Fallback = scenarioId (mode CLI standalone : kbis-vk / kbis-xex).
         var snapId = Environment.GetEnvironmentVariable("RIG_KBIS_SNAP_ID");
         if (string.IsNullOrWhiteSpace(snapId)) snapId = scenarioId;
+
+        // Fix contention batch (2026-06-19) : remet le pool de verrous SELF a propre AVANT ce scenario, donc
+        // ordre-independant. Sans ca, un scenario precedent laisse DMND_EN_COURS=1 (RIG hang "Application failed
+        // to exit" -> _app.Kill() ne tue pas l'enfant RIG en .NET 4.8 -> demande jamais cloturee -> verrou
+        // persiste) et pollue le pool du suivant (validation/reclamation/refus, allowMyEnCours=false) qui echoue.
+        // Gate = RIG_LEGACY_CLEAR_MY_ENCOURS=1 (le meme flag qui autorise deja le clear via menu).
+        ClearMyEnCoursLocks();
+
         Console.WriteLine();
         Console.WriteLine("╔══════════════════════════════════════════════════════════════════════╗");
         Console.WriteLine($"║   Rig.Wpf.Kbis.SmokeRunner --{scenarioId,-46} ║");
@@ -498,7 +506,7 @@ internal static class Program
             TryStep("INT-FORM : Ouvrir alerte 'Demandes interrompues' (grille visible)",
                 () => driver.OpenAlerteRcs("interrompue"));
             TryStep("INT-FORM : Double-clic demande formalités J00 → demande/document ouvert (reprise)",
-                () => driver.OpenFirstDemandeAndVerify(dcademat: false));
+                () => driver.OpenFirstDemandeAndVerify(dcademat: false, allowMyEnCours: true));
         });
 
     private static int RunLegacyAlertesIntDca(string[] args) => RunLegacyKbisScenario(
@@ -509,7 +517,7 @@ internal static class Program
             TryStep("INT-DCA : Ouvrir alerte 'Demandes interrompues' (grille visible)",
                 () => driver.OpenAlerteRcs("interrompue"));
             TryStep("INT-DCA : Double-clic demande DCADEMAT → demande/document ouvert (reprise)",
-                () => driver.OpenFirstDemandeAndVerify(dcademat: true));
+                () => driver.OpenFirstDemandeAndVerify(dcademat: true, allowMyEnCours: true));
         });
 
     private static int RunLegacyAlertesRecForm(string[] args) => RunLegacyKbisScenario(
@@ -2035,6 +2043,29 @@ internal static class Program
     private static string CsApply() => Environment.GetEnvironmentVariable("RIG_LEGACY_CONNECTION")
         ?? @"Server=SQL-DEV\DEV;Database=RIG_DEV;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=15;";
 
+    /// <summary>Leve MES verrous self stale (DMND_EN_COURS=1) avant un scenario legacy → pool propre,
+    /// ordre-independant (fix contention batch 2026-06-19). Ecriture SQL scopee a MES demandes uniquement,
+    /// gated par RIG_LEGACY_CLEAR_MY_ENCOURS=1 (off par defaut → aucun write si le flag n'est pas pose).
+    /// User = RIG_LEGACY_ENCOURS_USER ?? 1er token de l'utilisateur Windows (ex. raphael.vilain → raphael).</summary>
+    private static void ClearMyEnCoursLocks()
+    {
+        if ((Environment.GetEnvironmentVariable("RIG_LEGACY_CLEAR_MY_ENCOURS") ?? "0") != "1") return;
+        var user = Environment.GetEnvironmentVariable("RIG_LEGACY_ENCOURS_USER");
+        if (string.IsNullOrWhiteSpace(user)) user = (Environment.UserName ?? "").Split('.')[0];
+        if (string.IsNullOrWhiteSpace(user)) return;
+        try
+        {
+            using var conn = new System.Data.SqlClient.SqlConnection(CsApply());
+            conn.Open();
+            using var cmd = new System.Data.SqlClient.SqlCommand(
+                "UPDATE DEMANDE SET DMND_EN_COURS=0 WHERE DMND_EN_COURS=1 AND DMND_NOM_UTILISATEUR LIKE @u", conn);
+            cmd.Parameters.AddWithValue("@u", "%" + user + "%");
+            int n = cmd.ExecuteNonQuery();
+            Console.WriteLine($"      ⓘ ClearMyEnCoursLocks : {n} verrou(s) self leve(s) (user~{user}) avant scenario.");
+        }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ ClearMyEnCoursLocks SKIP : {ex.Message}"); }
+    }
+
     /// <summary>Snapshot AVANT le clic Importer : capture l'état actuel des affaires pour restore exact.</summary>
     private static ApplySnapshot SnapshotForApply(int audienceId)
     {
@@ -2378,8 +2409,7 @@ internal static class Program
                 Console.WriteLine("──── STDOUT FINAL CAPTÉ (console B2) ──────────────────────────────");
                 Console.WriteLine(final);
                 Console.WriteLine("───────────────────────────────────────────────────────────────────");
-                if (final.Contains("✗ failed  ") && !final.Contains("✗ failed  0"))
-                    throw new Exception("Diagnostic terminé avec au moins 1 échec (voir stdout)");
+                SmokeGuards.AssertSmokeCompleted(final);
             });
             TryStep("Screenshot console B2", () => driver.CaptureAndDumpActiveTab("rapture-diag-console"));
         }
@@ -2457,17 +2487,9 @@ internal static class Program
                 Console.WriteLine(final);
                 Console.WriteLine("───────────────────────────────────────────────────────────────────");
                 if (isAllScenarios)
-                {
-                    var recapIdx = final.IndexOf("RECAP ALL SCENARIOS");
-                    if (recapIdx >= 0)
-                    {
-                        var recapLine = final.Substring(recapIdx, Math.Min(120, final.Length - recapIdx));
-                        if (recapLine.Contains("FAIL") && !recapLine.Contains("0 FAIL"))
-                            throw new Exception("Batch terminé avec échec(s) — voir RECAP");
-                    }
-                }
-                else if (final.Contains("✗ failed  ") && !final.Contains("✗ failed  0"))
-                    throw new Exception("Process E2E terminé avec au moins 1 échec (voir stdout)");
+                    SmokeGuards.AssertBatchCompleted(final);
+                else
+                    SmokeGuards.AssertSmokeCompleted(final);
             });
             TryStep("Screenshot console B2", () => driver.CaptureAndDumpActiveTab("rapture-process-e2e-console"));
             if (applyReal)
@@ -2509,8 +2531,7 @@ internal static class Program
                 Console.WriteLine("──── STDOUT FINAL CAPTÉ (console B2 Export) ──────────────────────");
                 Console.WriteLine(final);
                 Console.WriteLine("───────────────────────────────────────────────────────────────────");
-                if (final.Contains("✗ failed  ") && !final.Contains("✗ failed  0"))
-                    throw new Exception("Export E2E terminé avec au moins 1 échec (voir stdout)");
+                SmokeGuards.AssertSmokeCompleted(final);
             });
             TryStep("Screenshot console B2 Export", () => driver.CaptureAndDumpActiveTab("rapture-export-e2e-console"));
         }
@@ -2564,8 +2585,7 @@ internal static class Program
                 Console.WriteLine("──── STDOUT FINAL CAPTÉ ───────────────────────────────────────────");
                 Console.WriteLine(final);
                 Console.WriteLine("───────────────────────────────────────────────────────────────────");
-                if (final.Contains("✗ failed  ") && !final.Contains("✗ failed  0"))
-                    throw new Exception("Smoke run terminé avec au moins 1 échec (voir stdout ci-dessus)");
+                SmokeGuards.AssertSmokeCompleted(final);
             });
             TryStep("Screenshot console B2", () => driver.CaptureAndDumpActiveTab("rapture-smokeui-console"));
         }
@@ -2613,8 +2633,7 @@ internal static class Program
                 Console.WriteLine("──── STDOUT FINAL CAPTÉ ───────────────────────────────────────────");
                 Console.WriteLine(final);
                 Console.WriteLine("───────────────────────────────────────────────────────────────────");
-                if (final.Contains("✗ failed  ") && !final.Contains("✗ failed  0"))
-                    throw new Exception("Smoke legacy KBIS/VK terminé avec au moins 1 échec (voir stdout ci-dessus)");
+                SmokeGuards.AssertSmokeCompleted(final);
             });
         }
         catch (Exception ex)

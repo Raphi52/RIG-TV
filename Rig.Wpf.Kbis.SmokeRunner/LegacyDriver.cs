@@ -3516,6 +3516,8 @@ public sealed class LegacyDriver : IDisposable
     public void Dispose()
     {
         StopPeriodicSnap();
+        int rigPid = -1;
+        try { if (_app is not null && !_app.HasExited) rigPid = _app.ProcessId; } catch { }
         try
         {
             if (_app is not null && !_app.HasExited)
@@ -3530,6 +3532,22 @@ public sealed class LegacyDriver : IDisposable
             }
         }
         catch { /* best-effort */ }
+        // .NET Fx 4.8 : Process.Kill() ne tue PAS l'arbre -> RIG legacy peut laisser des enfants vivants
+        // ("Application failed to exit") = contention serveur RIG sur le scenario SUIVANT en batch (Mecanisme B,
+        // fix 2026-06-19). On tue l'ARBRE de NOTRE RIG par PID (cible ce worker uniquement, jamais un RIG de travail user).
+        if (rigPid > 0)
+        {
+            try
+            {
+                using var tk = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "taskkill", Arguments = $"/T /F /PID {rigPid}",
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+                });
+                tk?.WaitForExit(3000);
+            }
+            catch { }
+        }
         try { _app?.Dispose(); } catch { }
         try { _automation?.Dispose(); } catch { }
         // _desktop est possédé par Program.cs (via RunAttached) — NE PAS le disposer ici.
@@ -3773,8 +3791,9 @@ public sealed class LegacyDriver : IDisposable
         // vrai échec) OU si le plafond dur est atteint. Le run 17:04 (succès) voyait la grille à ~6,4s.
         // fix-ok: 2026-06-16 — l'alerte 'interrompue' (form-interrompue) charge sa grille PROC_DEMANDE en >45s
         // (reproduce run 20260616-153933 : cap atteint avec overlay « Traitement en cours » ENCORE present).
-        // Les autres alertes chargent en ~6-50s. Bump 45s->90s pour couvrir la charge lente de 'interrompue'.
-        const long gridHardCapMs = 90000;
+        // Les autres alertes chargent en ~6-50s. Bump 45s->90s puis 90s->180s (2026-06-19) pour couvrir la
+        // grille TRES lourde de l'alerte 'reclamation' (911 demandes) qui depassait 90s par intermittence.
+        const long gridHardCapMs = 180000;
         bool announcedGrace = false;
         while (grid is null
                && LegacyParsing.ShouldKeepWaitingForGrid(swGrid.ElapsedMilliseconds, baseMaxMs: 18000, hardCapMs: gridHardCapMs, overlayPresent: IsLoadingOverlayOnScreen()))
