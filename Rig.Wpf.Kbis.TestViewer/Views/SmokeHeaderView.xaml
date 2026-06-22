@@ -136,6 +136,10 @@
                 </Grid>
             </Expander>
 
+            <!-- ══ Barre busy (C3) — visible uniquement quand IsRunning=True ══ -->
+            <ProgressBar IsIndeterminate="True" Height="3" Margin="0,8,0,0"
+                         Visibility="{Binding IsRunning, ElementName=root, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"/>
+
             <!-- ══ Row : Action bar — RIBBON SEGMENTÉ (structure #4 choisie par l'user) ══
                  Chaque groupe = segment encadré (filet droit) avec son LABEL dessous, centré.
                  WrapPanel → pas de clipping. NB : "Accepter création audience" retirée (default côté SmokeRunner).
@@ -187,7 +191,7 @@
                                       AutomationProperties.AutomationId="ChkRaptureApplyReal"
                                       Visibility="{Binding ShowApplyReal, ElementName=root, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                       ToolTip="Si coché, le smoke clique 'Importer (N champs cochés)' au lieu d'Annuler → ApplyService écrit réellement en base. Snapshot + restore net-zero. Requiert un AUDNC_ID.">
-                                <CheckBox.Content><TextBlock Text="Apply réel" FontWeight="SemiBold" Foreground="#B02A37"/></CheckBox.Content>
+                                <CheckBox.Content><TextBlock Text="Apply réel" FontWeight="SemiBold" Foreground="{StaticResource FailColor}"/></CheckBox.Content>
                             </CheckBox>
                             <!-- Mode -->
                             <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="6,0,0,0"
@@ -244,7 +248,7 @@
                                     AutomationProperties.AutomationId="{Binding StressStopAutomationId, ElementName=root}"
                                     Command="{Binding StopStressCommand, ElementName=root}"
                                     ToolTip="Stoppe la boucle de stress après la vague en cours.">
-                                <TextBlock Text="⏹ Stop stress" Foreground="#B02A37"/>
+                                <TextBlock Text="⏹ Stop stress" Foreground="{StaticResource FailColor}"/>
                             </Button>
                             <CheckBox Margin="10,0,0,0" VerticalAlignment="Center"
                                       AutomationProperties.AutomationId="{Binding StressLoopAutomationId, ElementName=root}"
@@ -253,6 +257,19 @@
                                       ToolTip="Relance des vagues jusqu'à ce qu'une copie rate, puis stop + highlight rouge."/>
                         </StackPanel>
                         <TextBlock Text="STRESS" Style="{StaticResource RibbonLabel}"/>
+                        <!-- StressStatus — affiché seulement quand non vide (C10) -->
+                        <TextBlock FontSize="11" Margin="0,4,0,0" HorizontalAlignment="Center"
+                                   Foreground="{StaticResource TextMuted}"
+                                   Text="{Binding StressStatus, ElementName=root}"
+                                   TextTrimming="CharacterEllipsis">
+                            <TextBlock.Resources>
+                                <cv:StringToVisibilityConverter x:Key="StrVis"/>
+                            </TextBlock.Resources>
+                            <TextBlock.Visibility>
+                                <Binding Path="StressStatus" ElementName="root"
+                                         Converter="{StaticResource StrVis}"/>
+                            </TextBlock.Visibility>
+                        </TextBlock>
                     </StackPanel>
                 </Border>
 
@@ -276,7 +293,7 @@
                                     AutomationProperties.AutomationId="BtnRaptureStop"
                                     Visibility="{Binding ShowStop, ElementName=root, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                     ToolTip="STOP : tue l'arbre de process du run en cours. Irréversible.">
-                                <TextBlock Text="⏹  Stop" Foreground="#B02A37"/>
+                                <TextBlock Text="⏹  Stop" Foreground="{StaticResource FailColor}"/>
                             </Button>
                         </StackPanel>
                         <TextBlock Text="CONTRÔLE" Style="{StaticResource RibbonLabel}"/>
@@ -297,13 +314,13 @@
                                     AutomationProperties.AutomationId="BtnRaptureHistoryToggle"
                                     Visibility="{Binding ShowHistory, ElementName=root, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                     ToolTip="Ouvre/ferme le drawer Historique des runs récents.">
-                                <TextBlock Text="⏱  Historique" Foreground="#06f"/>
+                                <TextBlock Text="⏱  Historique" Foreground="{StaticResource LinkColor}"/>
                             </Button>
                             <Button Style="{StaticResource RibbonBtn}" Command="{Binding ResetSmokeDbCommand}"
                                     AutomationProperties.AutomationId="BtnRaptureResetDb"
                                     Visibility="{Binding ShowResetDb, ElementName=root, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                     ToolTip="RESET DB : panic restore SQL pour clean slate (APPEL_AFFAIRE + NOTE_PROCEDURE RAPTURE_* + Cas C leftover).">
-                                <TextBlock Text="🗑  Reset DB" Foreground="#B02A37"/>
+                                <TextBlock Text="🗑  Reset DB" Foreground="{StaticResource FailColor}"/>
                             </Button>
                         </StackPanel>
                         <TextBlock Text="OUTILS" Style="{StaticResource RibbonLabel}"/>

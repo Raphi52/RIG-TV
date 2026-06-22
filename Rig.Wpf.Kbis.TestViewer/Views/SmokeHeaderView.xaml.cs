@@ -317,4 +317,15 @@ public partial class SmokeHeaderView : UserControl
         get => (string)GetValue(StressLoopAutomationIdProperty);
         set => SetValue(StressLoopAutomationIdProperty, value);
     }
+
+    // ── IsRunning — indicateur busy (C3) ────────────────────────────────────
+
+    public static readonly DependencyProperty IsRunningProperty =
+        DependencyProperty.Register(nameof(IsRunning), typeof(bool), typeof(SmokeHeaderView),
+            new PropertyMetadata(false));
+    public bool IsRunning
+    {
+        get => (bool)GetValue(IsRunningProperty);
+        set => SetValue(IsRunningProperty, value);
+    }
 }

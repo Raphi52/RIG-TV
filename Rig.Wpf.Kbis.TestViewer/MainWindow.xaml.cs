@@ -16,6 +16,11 @@ public partial class MainWindow : Window
     // autre agent). Force-kill ferme les handles → Windows détruit les HDESK.
     protected override void OnClosing(System.ComponentModel.CancelEventArgs e)
     {
+        // Détacher le handler PropertyChanged AVANT de tuer les workers : évite une
+        // ObjectDisposedException sur PdfWebView si un changement de propriété VM
+        // arrive pendant ou après la fermeture (race entre GC/Dispose et l'event).
+        _vm.PropertyChanged -= OnVmPropertyChanged;
+
         try
         {
             ProcessTreeControl.KillDescendants(System.Diagnostics.Process.GetCurrentProcess().Id);
@@ -159,11 +164,37 @@ public partial class MainWindow : Window
     /// scroller normalement (zéro régression desktop).</summary>
     private void PageScroll_PreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
     {
-        if (!e.Handled && PageScroll.ScrollableHeight > 0)
+        if (e.Handled) return;
+        // Si le pointeur est sur un ScrollViewer INTERNE (mosaïque, liste scénarios, focus…)
+        // qui peut encore scroller dans le sens de la molette, on LUI laisse la molette.
+        // Sinon seulement (curseur hors zone scrollable interne) on scrolle la PAGE si elle déborde.
+        // Avant : dès que la page débordait, l'externe volait la molette même sur la mosaïque.
+        if (e.OriginalSource is System.Windows.DependencyObject src && InnerScrollWantsWheel(src, e.Delta))
+            return;
+        if (PageScroll.ScrollableHeight > 0)
         {
             PageScroll.ScrollToVerticalOffset(PageScroll.VerticalOffset - e.Delta);
             e.Handled = true;
         }
+    }
+
+    /// <summary>Remonte l'arbre visuel depuis l'élément survolé ; vrai si un ScrollViewer interne
+    /// (≠ PageScroll) peut scroller dans la direction de la molette (pas en butée).</summary>
+    private bool InnerScrollWantsWheel(System.Windows.DependencyObject node, int delta)
+    {
+        while (node != null)
+        {
+            if (node is System.Windows.Controls.ScrollViewer sv
+                && !ReferenceEquals(sv, PageScroll) && sv.ScrollableHeight > 0)
+            {
+                bool canDown = delta < 0 && sv.VerticalOffset < sv.ScrollableHeight;
+                bool canUp = delta > 0 && sv.VerticalOffset > 0;
+                if (canDown || canUp) return true;
+            }
+            node = System.Windows.Media.VisualTreeHelper.GetParent(node)
+                   ?? System.Windows.LogicalTreeHelper.GetParent(node);
+        }
+        return false;
     }
 
     private void OpenLog_Click(object sender, RoutedEventArgs e)

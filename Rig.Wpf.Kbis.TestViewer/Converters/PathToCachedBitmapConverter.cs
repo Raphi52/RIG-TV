@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Windows.Data;
 using System.Windows.Media.Imaging;
+using Rig.Wpf.Kbis.TestViewer.Services;
 
 namespace Rig.Wpf.Kbis.TestViewer.Converters;
 
@@ -47,15 +48,22 @@ public sealed class PathToCachedBitmapConverter : IValueConverter
             var bmp = new BitmapImage();
             bmp.BeginInit();
             bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.StreamSource = new MemoryStream(bytes);
-            bmp.EndInit();
+            // using sur le MemoryStream : BitmapCacheOption.OnLoad copie les octets
+            // dans le cache interne WPF avant EndInit(), donc on peut disposer le stream
+            // immédiatement après sans briser le BitmapImage.
+            using (var ms = new MemoryStream(bytes))
+            {
+                bmp.StreamSource = ms;
+                bmp.EndInit();
+            }
             bmp.Freeze();
             return bmp;
         }
-        catch
+        catch (Exception ex)
         {
             // PNG corrompu, partial write race, etc. Retourner null = Image.Source vide,
             // retentée au prochain LastSnapPath change.
+            Log.Warn($"PathToCachedBitmap: {ex.Message}");
             return null;
         }
     }

@@ -6,13 +6,13 @@
         Phase 7 extraction. DataContext = MainWindowViewModel (bindings directs
         SnapDiskUsageHuman + CleanupAllSnapsCommand) ; refactor IFooter à plus tard.
     -->
-    <Border Background="#F8F8F8" BorderBrush="#DDD" BorderThickness="0,1,0,0" Padding="12,4">
+    <Border Background="{StaticResource BgPanelAlt}" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,1,0,0" Padding="12,4">
         <StackPanel Orientation="Horizontal">
-            <TextBlock Text="📁 Snaps : " FontSize="10" Foreground="#666"/>
+            <TextBlock Text="📁 Snaps : " FontSize="10" Foreground="{StaticResource TextMuted}"/>
             <TextBlock AutomationProperties.AutomationId="TxtSnapsUsage"
                        Text="{Binding SnapDiskUsageHuman, FallbackValue='(calcul...)'}"
-                       FontSize="10" Foreground="#666" FontWeight="Bold"/>
-            <TextBlock Text=" • garde 10 derniers (auto) • " FontSize="10" Foreground="#666"/>
+                       FontSize="10" Foreground="{StaticResource TextMuted}" FontWeight="Bold"/>
+            <TextBlock Text=" • garde 10 derniers (auto) • " FontSize="10" Foreground="{StaticResource TextMuted}"/>
             <TextBlock FontSize="10">
                 <Hyperlink Command="{Binding CleanupAllSnapsCommand}"
                            AutomationProperties.AutomationId="LnkSnapsCleanupAll">

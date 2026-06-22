@@ -44,4 +44,20 @@
     <SolidColorBrush x:Key="BadgeNeutralFg" Color="#94A3B8"/>
     <DropShadowEffect x:Key="CardShadow" BlurRadius="14" ShadowDepth="2"
                       Direction="270" Color="#152C4E" Opacity="0.05"/>
+    <!-- G1 tokens — console dark family + accents -->
+    <SolidColorBrush x:Key="ConsoleSurface"   Color="#222222"/>
+    <SolidColorBrush x:Key="ConsoleToolbarBg" Color="#2D2D30"/>
+    <SolidColorBrush x:Key="ConsoleBtnBg"     Color="#3F3F46"/>
+    <SolidColorBrush x:Key="ConsoleDimFg"     Color="#888888"/>
+    <SolidColorBrush x:Key="ConsoleFaintFg"   Color="#CCCCCC"/>
+    <SolidColorBrush x:Key="ConsoleTermFg"    Color="#00FF00"/>
+    <SolidColorBrush x:Key="ConsoleStepFg"    Color="#00CCFF"/>
+    <SolidColorBrush x:Key="LiveBadgeFg"      Color="#E74C3C"/>
+    <SolidColorBrush x:Key="WarnAccent"       Color="#E67E22"/>
+    <SolidColorBrush x:Key="OverlayScrim"     Color="#B0000000"/>
+    <SolidColorBrush x:Key="DisabledBg"       Color="#9CA3AF"/>
+    <SolidColorBrush x:Key="LinkColor"        Color="#0066FF"/>
+    <SolidColorBrush x:Key="NavHoverBg"       Color="#1E293B"/>
+    <SolidColorBrush x:Key="FocusIdFg"        Color="#CC8800"/>
+    <DropShadowEffect x:Key="DrawerShadow" Color="#888888" Direction="180" ShadowDepth="2" BlurRadius="8" Opacity="0.4"/>
 </ResourceDictionary>

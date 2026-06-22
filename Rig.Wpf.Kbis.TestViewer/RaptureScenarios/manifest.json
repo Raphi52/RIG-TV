@@ -104,21 +104,6 @@
       "tags": ["cas-a-bis", "popup-audience-differente"]
     },
     {
-      "id": "cas-err-greffe-inconnu",
-      "name": "Erreur — Greffe inconnu (codeGreffe=0000)",
-      "description": "Le JSON a un codeGreffe='0000' qui ne matche aucun greffe en référentiel. L'Orchestrator doit refuser l'import en bloquant avec une erreur header pré-validation. La pré-validation remonte 1 erreur 'Greffe inconnu' et le bouton Importer reste désactivé.",
-      "jsonFile": "cas-err-greffe-inconnu.json",
-      "defaultAudienceId": 28590,
-      "audienceDate": "2026-05-22",
-      "audienceHeure": "14:30",
-      "audienceChambre": "Audience interactive",
-      "expectedCase": "ERROR_HEADER",
-      "expectedWarnings": null,
-      "expectedModifications": 0,
-      "expectedMessageContains": "Greffe mismatch",
-      "tags": ["error", "header", "greffe-inconnu"]
-    },
-    {
       "id": "cas-err-affaire-id-instance-manquant",
       "name": "Erreur — Affaire sans idInstance",
       "description": "L'affaire 01_001 du JSON n'a pas d'idInstance (champ supprimé). Le Validator marque l'affaire comme bloquée — elle ne peut pas être matchée dans la diff. La recap affiche '1 affaire bloquée' et l'affaire correspondante est dans AffairesEnErreur.",

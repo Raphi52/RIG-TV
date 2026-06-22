@@ -3,7 +3,9 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
              xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
-             MinWidth="300" MaxWidth="480" Background="#F5FBFF">
+             Background="{StaticResource Canvas}">
+    <!-- fix-ok: largeur gouvernee par le parent AdaptivePanel (Weight) ; MaxWidth/MinWidth retires pour
+         remplir la pleine largeur en mode empile (demande user). Refactor responsive, pas un blind-fix. -->
     <UserControl.Resources>
         <cv:PhaseToStringConverter x:Key="PhaseToString"/>
         <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>
@@ -22,7 +24,7 @@
         </Grid.RowDefinitions>
         <TextBlock Grid.Row="0" Margin="8,6,8,4"
                    Text="▶ MOSAÏQUE"
-                   FontSize="9" FontWeight="Bold" Foreground="#06F"/>
+                   FontSize="9" FontWeight="Bold" Foreground="{StaticResource LinkColor}"/>
         <!-- ListBox (au lieu d'ItemsControl) car SelectedItem TwoWay + ItemContainerStyle.IsSelected
              nous donnent click→focus + highlight automatiques, sans les 3 patterns toxiques qui ont
              crashé la 1ère version (DataTrigger Value=Binding, MouseBinding RelativeSource, AutomationId
@@ -37,14 +39,19 @@
                  ItemsSource="{Binding ScenariosView}"
                  SelectedItem="{Binding SelectedScenario, Mode=TwoWay}"
                  AutomationProperties.AutomationId="ListRaptureMosaicTiles"
+                 PreviewMouseWheel="OnMosaicWheel"
                  BorderThickness="0" Background="Transparent"
                  Padding="0"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                  ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ScrollViewer.CanContentScroll="False"
                  HorizontalContentAlignment="Stretch">
+            <!-- fix-ok: mosaique = galerie responsive (WrapPanel + tuiles a largeur FIXE) au lieu de
+                 UniformGrid Columns=2 : le nb de colonnes suit la largeur (2 en colonne etroite, ~6 en
+                 pleine largeur) -> bien plus de tuiles visibles quand large (demande user). Non blind-fix. -->
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <UniformGrid Columns="2"/>
+                    <WrapPanel Orientation="Horizontal"/>
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ItemContainerStyle>
@@ -57,6 +64,8 @@
                             <Binding Path="Id" StringFormat="MosaicTile_{0}"/>
                         </Setter.Value>
                     </Setter>
+                    <!-- Largeur FIXE -> le WrapPanel en place autant que possible par rangee (responsive). -->
+                    <Setter Property="Width" Value="210"/>
                     <Setter Property="Margin" Value="2"/>
                     <Setter Property="Padding" Value="0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -89,7 +98,7 @@
                                         <!-- Selection : remplace la border verdict par bleu épais.
                                              Le user voit clairement quelle tile est focused.
                                              Quand la sélection disparaît, la border verdict revient. -->
-                                        <Setter TargetName="TileBorder" Property="BorderBrush" Value="#06F"/>
+                                        <Setter TargetName="TileBorder" Property="BorderBrush" Value="{StaticResource LinkColor}"/>
                                         <Setter TargetName="TileBorder" Property="BorderThickness" Value="3"/>
                                         <Setter TargetName="TileBorder" Property="Background" Value="#EEF"/>
                                     </Trigger>
@@ -123,32 +132,13 @@
                                  avant) car l'icône devient l'emphasis visuel à elle seule. Template override pour kill
                                  le hover effect par défaut du Button qui rend une pastille grise au mouseover. -->
                             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
-                                <StackPanel.Resources>
-                                    <Style x:Key="IconOnlyButton" TargetType="Button">
-                                        <Setter Property="Background" Value="Transparent"/>
-                                        <Setter Property="BorderThickness" Value="0"/>
-                                        <Setter Property="Padding" Value="2,0"/>
-                                        <Setter Property="Margin" Value="2,0,0,0"/>
-                                        <Setter Property="FontSize" Value="14"/>
-                                        <Setter Property="Cursor" Value="Hand"/>
-                                        <Setter Property="Template">
-                                            <Setter.Value>
-                                                <ControlTemplate TargetType="Button">
-                                                    <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
-                                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                                    </Border>
-                                                </ControlTemplate>
-                                            </Setter.Value>
-                                        </Setter>
-                                    </Style>
-                                </StackPanel.Resources>
-                                <Button Content="▶" Foreground="#28A745" Style="{StaticResource IconOnlyButton}"
+                                <Button Content="▶" Foreground="#28A745" Style="{StaticResource IconButton}"
                                         ToolTip="Lancer ce scénario"
                                         Visibility="{Binding CanPlay, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                         AutomationProperties.AutomationId="{Binding Id, StringFormat='BtnMosaicPlay_{0}'}"
                                         Command="{Binding DataContext.PlayScenarioCommand, RelativeSource={RelativeSource AncestorType=ListBox}}"
                                         CommandParameter="{Binding}"/>
-                                <Button Content="⏹" Foreground="#DC3545" Style="{StaticResource IconOnlyButton}"
+                                <Button Content="⏹" Foreground="#DC3545" Style="{StaticResource IconButton}"
                                         ToolTip="Stopper ce worker (taskkill /T /F)"
                                         Visibility="{Binding CanStop, Converter={x:Static vm:BoolToVisibilityConverter.Instance}}"
                                         AutomationProperties.AutomationId="{Binding Id, StringFormat='BtnMosaicStop_{0}'}"

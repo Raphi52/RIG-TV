@@ -77,14 +77,30 @@ public sealed class OutcomeToIconConverter : IValueConverter
 public sealed class OutcomeToBrushConverter : IValueConverter
 {
     public static readonly OutcomeToBrushConverter Instance = new();
+
+    // Brushes statiques gelés (Freeze) : créés une seule fois, thread-safe, zéro allocation GC
+    // par appel. Les tuiles Mosaïque se rafraîchissent en boucle → sans freeze chaque Convert()
+    // allouait un SolidColorBrush sur le tas. Couleurs identiques aux valeurs d'origine.
+    private static readonly SolidColorBrush BrushPassed  = MakeFrozen(0x28, 0xA7, 0x45);
+    private static readonly SolidColorBrush BrushFailed  = MakeFrozen(0xDC, 0x35, 0x45);
+    private static readonly SolidColorBrush BrushSkipped = MakeFrozen(0x99, 0x99, 0x99);
+    private static readonly SolidColorBrush BrushUnknown = MakeFrozen(0x22, 0x22, 0x22);
+
+    private static SolidColorBrush MakeFrozen(byte r, byte g, byte b)
+    {
+        var br = new SolidColorBrush(Color.FromRgb(r, g, b));
+        br.Freeze();
+        return br;
+    }
+
     public object Convert(object value, Type targetType, object parameter, CultureInfo culture)
         => value is Services.SmokeOutcome o
             ? o switch
             {
-                Services.SmokeOutcome.Passed  => new SolidColorBrush(Color.FromRgb(0x28, 0xA7, 0x45)),
-                Services.SmokeOutcome.Failed  => new SolidColorBrush(Color.FromRgb(0xDC, 0x35, 0x45)),
-                Services.SmokeOutcome.Skipped => new SolidColorBrush(Color.FromRgb(0x99, 0x99, 0x99)),
-                _                             => new SolidColorBrush(Color.FromRgb(0x22, 0x22, 0x22)),
+                Services.SmokeOutcome.Passed  => BrushPassed,
+                Services.SmokeOutcome.Failed  => BrushFailed,
+                Services.SmokeOutcome.Skipped => BrushSkipped,
+                _                             => BrushUnknown,
             }
             : (object)Brushes.Black;
     public object ConvertBack(object value, Type targetType, object parameter, CultureInfo culture)

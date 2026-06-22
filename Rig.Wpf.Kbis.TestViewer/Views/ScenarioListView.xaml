@@ -50,7 +50,7 @@
                      Avec Left, TextBlock s'auto-size à son contenu → dépasse en largeur → ScrollViewer
                      auto kick in horizontale scrollbar. Lignes worker font 80-495 chars (moy 119),
                      drawer ~70 chars visibles ; sans ce fix, ~41% perdu à droite en moyenne. -->
-                <Border Background="#222" Margin="20,4,20,8" Padding="8" CornerRadius="3"
+                <Border Background="{StaticResource ConsoleSurface}" Margin="20,4,20,8" Padding="8" CornerRadius="3"
                         AutomationProperties.AutomationId="{Binding Id, StringFormat='DrawerScenario_{0}'}">
                     <StackPanel>
                         <!-- ── STEPS ── liste pré-définie des steps internes du scenario (KBIS VK/XEX)
@@ -58,7 +58,7 @@
                              "STEP N  ✓  Label  ·  Passed" avec icons colorés (vert/rouge/gris).
                              Visible uniquement si Steps.Count > 0 (cas Rapture: empty → collapsed). -->
                         <TextBlock Text="🎯 STEPS"
-                                   Foreground="#0CF" FontSize="9" FontWeight="Bold" Margin="0,0,0,4"
+                                   Foreground="{StaticResource ConsoleStepFg}" FontSize="9" FontWeight="Bold" Margin="0,0,0,4"
                                    Visibility="{Binding Steps.Count, Converter={x:Static vm:CountToVisibilityConverter.Instance}, FallbackValue=Collapsed}"/>
                         <ItemsControl ItemsSource="{Binding Steps}" Margin="0,0,0,8"
                                       AutomationProperties.AutomationId="{Binding Id, StringFormat='DrawerSteps_{0}'}"
@@ -72,14 +72,14 @@
                                             <ColumnDefinition Width="*"/>    <!-- label -->
                                             <ColumnDefinition Width="70"/>   <!-- Outcome label -->
                                         </Grid.ColumnDefinitions>
-                                        <TextBlock Grid.Column="0" FontSize="10" FontWeight="SemiBold" Foreground="#CCC"
+                                        <TextBlock Grid.Column="0" FontSize="10" FontWeight="SemiBold" Foreground="{StaticResource ConsoleFaintFg}"
                                                    Text="{Binding StepNumber, StringFormat='STEP {0}'}"/>
                                         <TextBlock Grid.Column="1" FontSize="13" FontWeight="Bold" HorizontalAlignment="Center"
                                                    Text="{Binding Outcome, Converter={x:Static vm:OutcomeToIconConverter.Instance}}"
                                                    Foreground="{Binding Outcome, Converter={x:Static vm:OutcomeToBrushConverter.Instance}}"/>
                                         <TextBlock Grid.Column="2" FontSize="10" VerticalAlignment="Center"
                                                    TextTrimming="CharacterEllipsis"
-                                                   Text="{Binding ShortLabel}" Foreground="#DDD"
+                                                   Text="{Binding ShortLabel}" Foreground="{StaticResource ConsoleFaintFg}"
                                                    ToolTip="{Binding FullDescription}"/>
                                         <TextBlock Grid.Column="3" FontSize="9" FontStyle="Italic" VerticalAlignment="Center"
                                                    HorizontalAlignment="Right"
@@ -90,7 +90,7 @@
                             </ItemsControl.ItemTemplate>
                         </ItemsControl>
                         <TextBlock Text="📋 Logs (rolling 500 lines)"
-                                   Foreground="#888" FontSize="9" FontWeight="Bold" Margin="0,0,0,4"/>
+                                   Foreground="{StaticResource ConsoleDimFg}" FontSize="9" FontWeight="Bold" Margin="0,0,0,4"/>
                         <!-- TextBox readonly au lieu de TextBlock-in-ScrollViewer : TextBox a son
                              ScrollViewer interne natif qui gère bien le scroll H/V avec NoWrap.
                              Le workaround TextBlock + HorizontalAlignment=Left ne fait PAS apparaître
@@ -102,7 +102,7 @@
                              - safety pour scrollbar verticale + marges DataGrid. Pas de side-scroll. -->
                         <TextBox Text="{Binding LogsTail, Mode=OneWay}"
                                  IsReadOnly="True"
-                                 Foreground="#0F0" Background="#222"
+                                 Foreground="{StaticResource ConsoleTermFg}" Background="{StaticResource ConsoleSurface}"
                                  BorderThickness="0"
                                  FontFamily="Consolas" FontSize="9"
                                  TextWrapping="Wrap"
@@ -113,8 +113,8 @@
                                  VerticalScrollBarVisibility="Auto"/>
                         <StackPanel Orientation="Horizontal" Margin="0,6,0,0"
                                     Visibility="{Binding FailScreenshotPath, Converter={StaticResource StringToVisibility}, FallbackValue=Collapsed}">
-                            <TextBlock Text="📸 FAIL screenshot : " Foreground="#888" FontSize="9"/>
-                            <TextBlock Text="{Binding FailScreenshotPath}" Foreground="#0F0" FontFamily="Consolas" FontSize="9"
+                            <TextBlock Text="📸 FAIL screenshot : " Foreground="{StaticResource ConsoleDimFg}" FontSize="9"/>
+                            <TextBlock Text="{Binding FailScreenshotPath}" Foreground="{StaticResource ConsoleTermFg}" FontFamily="Consolas" FontSize="9"
                                        TextTrimming="CharacterEllipsis"/>
                         </StackPanel>
                     </StackPanel>

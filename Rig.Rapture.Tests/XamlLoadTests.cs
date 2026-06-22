@@ -81,6 +81,32 @@ namespace Rig.Rapture.Tests
                 "Vues avec erreur de chargement XAML (build vert ne les voit pas) :\n  - " + string.Join("\n  - ", failures));
         }
 
+        /// <summary>GlobalSettingsDialog se charge sans XamlParseException (StaticResource manquante → ROUGE).</summary>
+        [Fact]
+        public void GlobalSettingsDialog_loads_without_xaml_error()
+        {
+            var ex = RunSta(() =>
+            {
+                EnsureApp();
+                try
+                {
+                    var svc = new Rig.Wpf.Kbis.TestViewer.Services.GlobalSettingsService();
+                    var dlg = new Rig.Wpf.Kbis.TestViewer.Views.GlobalSettingsDialog(svc, null);
+                }
+                catch (Exception e)
+                {
+                    var root = e; while (root.InnerException != null) root = root.InnerException;
+                    // Ne faire échouer QUE sur les erreurs XAML (StaticResource manquante, etc.)
+                    // Ignorer les éventuels problèmes d'initialisation service (fichier absent, etc.)
+                    if (e is XamlParseException || root is XamlParseException
+                        || e.ToString().Contains("Xaml") || e.ToString().Contains("ResourceReference"))
+                        throw;
+                    // Autre exception (service IO, etc.) : on laisse passer silencieusement
+                }
+            });
+            Assert.True(ex == null, $"GlobalSettingsDialog a jeté une erreur XAML : {ex}");
+        }
+
         /// <summary>CONTRÔLE NÉGATIF : un binding invalide (ElementName + RelativeSource) DOIT jeter — prouve
         /// que le test ci-dessus attrape réellement la classe de bug du crash de cette session.</summary>
         [Fact]

@@ -34,7 +34,7 @@
                                 <Setter TargetName="Bd" Property="Background" Value="{StaticResource AccentHover}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter TargetName="Bd" Property="Background" Value="#9CA3AF"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource DisabledBg}"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -69,6 +69,34 @@
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.5"/>
+                                <Setter Property="Cursor" Value="Arrow"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- ────────────────── Icon-only button (MosaicView Play/Stop, transparent, Cursor Hand) ────────────────── -->
+        <Style TargetType="{x:Type Button}" x:Key="IconButton">
+            <Setter Property="Background"      Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding"         Value="2,0"/>
+            <Setter Property="Margin"          Value="2,0,0,0"/>
+            <Setter Property="FontSize"        Value="14"/>
+            <Setter Property="Cursor"          Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.75"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="Bd" Property="Opacity" Value="0.4"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
@@ -121,7 +149,7 @@
         <!-- ────────────────── Module nav pill ────────────────── -->
         <Style TargetType="{x:Type ToggleButton}" x:Key="ModulePill">
             <Setter Property="Background"      Value="Transparent"/>
-            <Setter Property="Foreground"      Value="#94A3B8"/>
+            <Setter Property="Foreground"      Value="{StaticResource TextFaint}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding"         Value="14,7"/>
             <Setter Property="FontWeight"      Value="SemiBold"/>
@@ -136,15 +164,15 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="#1E293B"/>
-                                <Setter Property="Foreground" Value="#E2E8F0"/>
+                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource NavHoverBg}"/>
+                                <Setter Property="Foreground" Value="{StaticResource ConsoleText}"/>
                             </Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="Bd" Property="Background" Value="{StaticResource Accent}"/>
                                 <Setter Property="Foreground" Value="White"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
-                                <Setter Property="Foreground" Value="#475569"/>
+                                <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
                                 <Setter Property="Cursor" Value="Arrow"/>
                             </Trigger>
                         </ControlTemplate.Triggers>

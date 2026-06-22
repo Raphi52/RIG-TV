@@ -37,6 +37,7 @@ ajouts propres au harnais :
 * Appeler `C:\Code RIG\ensure-fresh.ps1 -Project TestViewer` (puis `-Project SmokeRunner`)
 * Compare `LastWriteTime` exe vs max source → rebuild auto si stale
 * Throw si build fail → ne JAMAIS piloter un binaire vieux (incident 5h perdues le 2026-05-26)
+* **Recommandé : `& "C:\Code RIG\run-debug-smoke.ps1" -Module {RAPTURE|DCADEMAT|KBIS|ALERTES} [-Parallelism N]`** — helper vetté (kaizen 2026-06-16) qui câble l'ordre sûr : **kill-first** (sinon worker leftover verrouille le .exe → MSB3027) → ensure-fresh Debug → **lance `bin\Debug\` EN DIRECT** (JAMAIS `$RigCfg.TvExe` = Release) → **ASSERT path `\Debug\`**. Renvoie `{Pid, RunStamp}` ; le caller invoque ensuite le bouton smoke (UIA) + monitore par **cutoff** (tee-log `sr-<mode>-<stamp-démarrage-worker>-<pid>` ≠ RIG_RUN_STAMP)
 
 **Configuration Debug par défaut + 2 raccourcis bureau distincts** (depuis 2026-05-28) :
 
@@ -76,6 +77,7 @@ ajouts propres au harnais :
 * Bannir `Start-Sleep -Seconds 5`, `Thread.Sleep(3000)`, `timeout 600000`.
 * Toujours poll-jusqu'à-condition, plafond 30-60 s, sleeps ≤ 500 ms.
 * Justifier par écrit tout sleep > 1 s.
+* **Exception settle-UI/BDD** : un sleep d'attente de stabilisation APRÈS une action, SANS condition observable à poller (drivers FlaUI/legacy, rendu WPF post-`InitializeAsync`) → n'invente pas un faux poll : annote la ligne `sleep-ok: <raison>` (l'anti-flaky l'exempte). Le poll reste obligatoire dès qu'un signal existe.
 
 **Loop UI / screenshot loop (règle 16 master)** :
 
@@ -259,6 +261,7 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 | Cache hit = test pas exécuté = pas testé | ⚠ Vrai mais voulu : Phase 4 = memoization. Si tu doutes → décoche « Cache de résultats E2E » dans Settings ou clique « Vider le cache » |
 | MessageBox dans CC dialog affiche les emojis/box-drawing | ❌ Police MS Shell Dlg n'a pas les glyphes U+2500-257F ni emojis. Sanitize avant MessageBox.Show |
 | 5 instances PowerShell partagent l'état de `Start-Job` | ❌ Chaque session PS = ses propres jobs. Pour spawner un process qui survit à la session → `Start-Process -RedirectStandardOutput <file>` |
+| Mode B `exit 0` / « passed » = pas de mail envoyé | ❌ Le driver FlaUI ne voit PAS les crash-logs internes de RIG. RIG maile (`AmiLog`→`eLog9Crash`→`RigLog.SendMail`→SmtpClient `rig@amitel.fr`) pendant un import même si le driver renvoie `exit 0`. Trigger connu : import Rapture `RaptureImportOrchestrator.TryAudienceLabel`→`GetCHAMBRE("Mise ")`. Pour affirmer « pas de mail » → grep `C:\RIG\Data\Log\9995\RigClientAccueil-<user>-<stamp>.txt` pour `TestValidite`/`eLog9Crash`/`SendMail`. (Réf : mémoire `project_rigtv_modeb_mail_not_safe`) |
 
 ---
 

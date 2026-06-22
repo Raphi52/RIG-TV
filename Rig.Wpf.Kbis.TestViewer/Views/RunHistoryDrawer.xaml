@@ -8,8 +8,8 @@
         <cv:BytesToHumanConverter x:Key="BytesToHuman"/>
     </UserControl.Resources>
     <DockPanel>
-        <Border DockPanel.Dock="Top" Background="#F8F8F8" Padding="12,8"
-                BorderBrush="#DDD" BorderThickness="0,0,0,1">
+        <Border DockPanel.Dock="Top" Background="{StaticResource BgPanelAlt}" Padding="12,8"
+                BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,0,0,1">
             <DockPanel>
                 <!-- Bouton fermer (✕) à droite du header. Réutilise la même commande Toggle
                      que le bouton ⏱ Historique du top bar — ferme proprement le drawer. -->
@@ -18,7 +18,7 @@
                         AutomationProperties.AutomationId="BtnRunHistoryClose"
                         ToolTip="Fermer le drawer"
                         Background="Transparent" BorderThickness="0"
-                        Padding="6,2" FontSize="14" FontWeight="Bold" Foreground="#666"
+                        Padding="6,2" FontSize="14" FontWeight="Bold" Foreground="{StaticResource TextMuted}"
                         Cursor="Hand">
                     ✕
                 </Button>
@@ -30,11 +30,11 @@
                  AutomationProperties.AutomationId="ListRunHistory">
             <ListBox.ItemTemplate>
                 <DataTemplate>
-                    <Border Padding="8" BorderBrush="#EEE" BorderThickness="0,0,0,1">
+                    <Border Padding="8" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,0,0,1">
                         <StackPanel>
                             <TextBlock Text="{Binding RunStamp}" FontFamily="Consolas"
                                        FontSize="11" FontWeight="Bold"/>
-                            <TextBlock FontSize="10" Foreground="#666">
+                            <TextBlock FontSize="10" Foreground="{StaticResource TextMuted}">
                                 <Run Text="{Binding ScenarioCount, Mode=OneWay}"/><Run Text=" scénarios • "/><Run Text="{Binding Bytes, Mode=OneWay, Converter={StaticResource BytesToHuman}}"/>
                             </TextBlock>
                             <StackPanel Orientation="Horizontal" Margin="0,4,0,0">

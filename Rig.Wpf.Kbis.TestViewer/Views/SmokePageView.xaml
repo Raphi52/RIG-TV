@@ -32,18 +32,19 @@
                 <BooleanToVisibilityConverter x:Key="BoolToVis"/>
             </Grid.Resources>
 
-            <!-- NORMAL (responsive) -->
-            <WrapPanel Orientation="Horizontal"
-                       Visibility="{Binding FocusContext.IsFullscreen, ElementName=root, Converter={StaticResource SmokeBoolToVisInv}}">
-                <!-- Mosaïque : MaxWidth (rétrécit sur étroit), hauteur bornée + scroll interne (ListBox Auto). -->
-                <views:MosaicView DataContext="{Binding Catalog, ElementName=root}"
-                                  MaxWidth="480" MaxHeight="640" Margin="0,0,8,8"/>
-                <!-- Live/Focus : MaxWidth → l'image épouse la largeur dispo, hauteur = image, bornée. -->
-                <views:FocusView DataContext="{Binding FocusContext, ElementName=root}"
-                                 MaxWidth="820" MaxHeight="640" Margin="0,0,8,8"/>
-                <!-- Liste scénarios : bornée + scroll interne (DataGrid). Cachée si drawer ouvert. -->
-                <views:ScenarioListView DataContext="{Binding Catalog, ElementName=root}"
-                                        MaxWidth="520" MaxHeight="640" Margin="0,0,0,8">
+            <!-- NORMAL (responsive 2026-06-22 v2) — AdaptivePanel : côte-à-côte pondéré qui REMPLIT la
+                 largeur quand large (>= Breakpoint), EMPILÉ verticalement (chacun pleine largeur, hauteur
+                 pondérée) quand plus étroit. Weight = part horizontale ET verticale (Focus = héros). Un enfant
+                 Collapsed est ignoré (drawer ouvert → liste cachée → Mosaic+Focus remplissent sans trou).
+                 Scroll interne des panneaux conservé (ListBox/DataGrid Auto). -->
+            <views:AdaptivePanel Breakpoint="1180"
+                                 Visibility="{Binding FocusContext.IsFullscreen, ElementName=root, Converter={StaticResource SmokeBoolToVisInv}}">
+                <views:MosaicView views:AdaptivePanel.Weight="1.3"
+                                  DataContext="{Binding Catalog, ElementName=root}" Margin="0,0,8,8"/>
+                <views:FocusView views:AdaptivePanel.Weight="2.4"
+                                 DataContext="{Binding FocusContext, ElementName=root}" Margin="0,0,8,8"/>
+                <views:ScenarioListView views:AdaptivePanel.Weight="1.6"
+                                        DataContext="{Binding Catalog, ElementName=root}" Margin="0,0,0,8">
                     <views:ScenarioListView.Style>
                         <Style TargetType="views:ScenarioListView">
                             <Setter Property="Visibility" Value="Visible"/>
@@ -55,7 +56,7 @@
                         </Style>
                     </views:ScenarioListView.Style>
                 </views:ScenarioListView>
-            </WrapPanel>
+            </views:AdaptivePanel>
 
             <!-- PLEIN ÉCRAN : Focus remplit toute la zone (le WrapPanel ci-dessus est Collapsed). -->
             <views:FocusView DataContext="{Binding FocusContext, ElementName=root}"

@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:cv="clr-namespace:Rig.Wpf.Kbis.TestViewer.Converters"
              xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
-             Background="#FFFDF3">
+             Background="{StaticResource Canvas}">
     <UserControl.Resources>
         <cv:NullToBoolInvertedConverter x:Key="NullToBoolInvertedConverter"/>
         <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>
@@ -25,58 +25,58 @@
                     Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVisInv}}">
             <TextBlock AutomationProperties.AutomationId="LblRaptureFocusScenarioId"
                        Text="{Binding SelectedItem.Id, FallbackValue='🎯 Sélectionne un scénario'}"
-                       FontSize="12" FontWeight="Bold" Foreground="#C80"/>
+                       FontSize="12" FontWeight="Bold" Foreground="{StaticResource FocusIdFg}"/>
             <TextBlock Text="{Binding SelectedItem.Phase, StringFormat=' • {0}'}"
-                       FontSize="10" Foreground="#888" Margin="6,2,0,0"/>
+                       FontSize="10" Foreground="{StaticResource ConsoleDimFg}" Margin="6,2,0,0"/>
             <TextBlock Text="{Binding SelectedItem.WorkerPid, StringFormat=' • pid {0}'}"
-                       FontSize="10" Foreground="#888" Margin="6,2,0,0"/>
+                       FontSize="10" Foreground="{StaticResource ConsoleDimFg}" Margin="6,2,0,0"/>
         </StackPanel>
 
         <!-- Live observation toolbar (LIVE badge, refresh, Pause, RunStamp, Snaps root, ✕ Close HDESK).
              Masquée en plein écran (consigne user 2026-05-27 : "que les boutons rétrécir et HDESK"). -->
-        <Border DockPanel.Dock="Top" Background="#2D2D30" Padding="8,4" CornerRadius="3" Margin="0,0,0,6"
+        <Border DockPanel.Dock="Top" Background="{StaticResource ConsoleToolbarBg}" Padding="8,4" CornerRadius="3" Margin="0,0,0,6"
                 Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVisInv}}">
             <StackPanel Orientation="Horizontal">
-                <TextBlock Text="🔴 LIVE" Foreground="#E74C3C" FontWeight="Bold" VerticalAlignment="Center" FontSize="10"/>
-                <TextBlock Text=" • Refresh : " Foreground="#888" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="10"/>
+                <TextBlock Text="🔴 LIVE" Foreground="{StaticResource LiveBadgeFg}" FontWeight="Bold" VerticalAlignment="Center" FontSize="10"/>
+                <TextBlock Text=" • Refresh : " Foreground="{StaticResource ConsoleDimFg}" Margin="8,0,0,0" VerticalAlignment="Center" FontSize="10"/>
                 <Slider Width="100" Minimum="100" Maximum="2000"
                         IsSnapToTickEnabled="True" TickFrequency="50"
                         Value="{Binding SnapRefreshIntervalMs, Mode=TwoWay}"
                         AutomationProperties.AutomationId="SldRaptureSnapRefresh"
                         VerticalAlignment="Center"/>
                 <TextBlock Text="{Binding SnapRefreshIntervalMs, StringFormat=' {0} ms'}" Width="50"
-                           Foreground="#CCC" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
+                           Foreground="{StaticResource ConsoleFaintFg}" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
                 <ToggleButton IsChecked="{Binding IsRenderingPaused, Mode=TwoWay}"
                               Margin="8,0,0,0" Padding="8,1"
                               AutomationProperties.AutomationId="BtnRaptureLivePause">
                     <ToggleButton.Style>
                         <Style TargetType="ToggleButton">
                             <Setter Property="Content" Value="⏸ Pause"/>
-                            <Setter Property="Background" Value="#3F3F46"/>
+                            <Setter Property="Background" Value="{StaticResource ConsoleBtnBg}"/>
                             <Setter Property="Foreground" Value="White"/>
                             <Setter Property="BorderThickness" Value="0"/>
                             <Style.Triggers>
                                 <Trigger Property="IsChecked" Value="True">
                                     <Setter Property="Content" Value="▶ Reprendre"/>
-                                    <Setter Property="Background" Value="#E67E22"/>
+                                    <Setter Property="Background" Value="{StaticResource WarnAccent}"/>
                                 </Trigger>
                             </Style.Triggers>
                         </Style>
                     </ToggleButton.Style>
                 </ToggleButton>
-                <TextBlock Text=" • Run : " Foreground="#888" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="10"/>
+                <TextBlock Text=" • Run : " Foreground="{StaticResource ConsoleDimFg}" Margin="12,0,0,0" VerticalAlignment="Center" FontSize="10"/>
                 <TextBlock Text="{Binding CurrentRunStamp, FallbackValue='(none)'}"
                            AutomationProperties.AutomationId="TxtRaptureRunStamp"
-                           Foreground="#CCC" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
+                           Foreground="{StaticResource ConsoleFaintFg}" VerticalAlignment="Center" FontSize="10" FontFamily="Consolas"/>
                 <Button Margin="12,0,0,0" Padding="8,1"
-                        Background="#3F3F46" Foreground="White" BorderThickness="0"
+                        Background="{StaticResource ConsoleBtnBg}" Foreground="White" BorderThickness="0"
                         Command="{Binding OpenSnapsRootCommand}"
                         AutomationProperties.AutomationId="BtnRaptureSnapsRoot"
                         FontSize="10">
                     📁 Snaps root
                 </Button>
                 <Button Margin="12,0,0,0" Padding="6,0"
-                        Background="Transparent" Foreground="#E74C3C" BorderThickness="0"
+                        Background="Transparent" Foreground="{StaticResource LiveBadgeFg}" BorderThickness="0"
                         FontSize="14" FontWeight="Bold" Cursor="Hand"
                         Command="{Binding CloseHdeskCommand}"
                         AutomationProperties.AutomationId="BtnRaptureCloseHdesk"
@@ -112,7 +112,7 @@
                - Texte = "✓ PASS / ✗ FAIL en Xs — <FailReason>" — FailReason extrait du LogsTail
                  (dernière "Exception: ..." du worker). Pour PASS, FailReason est vide → just "✓ PASS en Xs".
                - Z-order au-dessus du PNG mais sous le toolbar (overlay propre). -->
-        <Border Background="#222" CornerRadius="4">
+        <Border Background="{StaticResource ConsoleSurface}" CornerRadius="4">
             <Grid>
                 <Viewbox Stretch="Uniform">
                     <Image AutomationProperties.AutomationId="ImgRaptureFocusPng"
@@ -152,7 +152,7 @@
                      ════════════════════════════════════════════════════════════════ -->
                 <Border VerticalAlignment="Bottom" HorizontalAlignment="Center"
                         Margin="0,0,0,28" Padding="12,8"
-                        Background="#B0000000"
+                        Background="{StaticResource OverlayScrim}"
                         CornerRadius="22"
                         Visibility="{Binding IsFullscreen, Converter={StaticResource BoolToVis}}">
                     <Border.Effect>
@@ -162,13 +162,13 @@
                         <Button Content="↗ Ouvrir HDESK" Margin="0,0,8,0" Padding="14,6"
                                 AutomationProperties.AutomationId="BtnRaptureFocusOpenHdeskOverlay"
                                 Command="{Binding OpenHdeskCommand}"
-                                Background="#3F3F46" Foreground="White" BorderThickness="0"
+                                Background="{StaticResource ConsoleBtnBg}" Foreground="White" BorderThickness="0"
                                 FontSize="12"
                                 IsEnabled="{Binding SelectedItem.DesktopName, Converter={StaticResource NullToBoolInvertedConverter}, FallbackValue=False}"/>
                         <Button Content="⛶ Réduire" Padding="14,6"
                                 AutomationProperties.AutomationId="BtnRaptureFocusFullscreenOverlay"
                                 Command="{Binding ToggleFullscreenCommand}"
-                                Background="#E67E22" Foreground="White" BorderThickness="0"
+                                Background="{StaticResource WarnAccent}" Foreground="White" BorderThickness="0"
                                 FontWeight="Bold" FontSize="12"/>
                     </StackPanel>
                 </Border>

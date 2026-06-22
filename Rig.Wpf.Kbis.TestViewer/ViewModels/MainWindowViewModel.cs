@@ -940,11 +940,11 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private void CleanupAllSnaps()
     {
         var confirm = System.Windows.MessageBox.Show(
-            "Effacer TOUS les self-snaps (sauf le run actif) ?",
-            "Cleanup self-snaps",
-            System.Windows.MessageBoxButton.OKCancel,
+            "Supprimer tous les self-snaps de tous les runs ? Action irreversible.",
+            "Tout effacer",
+            System.Windows.MessageBoxButton.YesNo,
             System.Windows.MessageBoxImage.Warning);
-        if (confirm != System.Windows.MessageBoxResult.OK) return;
+        if (confirm != System.Windows.MessageBoxResult.Yes) return;
         var local = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
         var root = Path.Combine(local, "rig-wpf-testviewer", "self-snaps");
         if (!Directory.Exists(root)) return;

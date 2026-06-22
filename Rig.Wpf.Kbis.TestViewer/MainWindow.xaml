@@ -33,6 +33,7 @@
                     <ItemsControl.ItemTemplate>
                         <DataTemplate DataType="{x:Type vm:ModuleNavItem}">
                             <ToggleButton Style="{StaticResource RailItem}"
+                                          AutomationProperties.AutomationId="{Binding Name, StringFormat='NavBtn_{0}'}"
                                           IsChecked="{Binding IsActive, Mode=OneWay}"
                                           IsEnabled="{Binding IsAvailable}"
                                           Command="{Binding DataContext.SelectModuleCommand,
@@ -97,7 +98,8 @@
                             <TextBlock Text="🤖  ML Loop"/>
                         </Button>
                         <Button Style="{StaticResource PrimaryButton}"
-                                Command="{Binding RunAllCommand}" Margin="0,0,8,0">
+                                Command="{Binding RunAllCommand}" Margin="0,0,8,0"
+                                AutomationProperties.AutomationId="BtnRunAll">
                             <StackPanel Orientation="Horizontal">
                                 <TextBlock Text="▶  Run all" />
                             </StackPanel>
@@ -122,8 +124,11 @@
         <!-- Phone / RDP (2026-06-16) : la zone contenu est enveloppée d'une ScrollViewer + MinWidth/MinHeight.
              Sur desktop (fenêtre >= min) aucune barre ne s'affiche (identique à avant). Sur petit écran
              (téléphone en RDP) les barres apparaissent → on navigue tout le WPF au doigt. -->
-        <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto"
-                      PanningMode="Both" PreviewMouseWheel="PageScroll_PreviewMouseWheel"
+        <!-- H-scroll Disabled (responsive 2026-06-22) : le contenu epouse la largeur REELLE du viewport
+             (sinon H-scroll=Auto donne une largeur infinie -> le body ne remplit jamais / deborde).
+             Pan vertical conserve pour phone/RDP ; le layout responsive (Grid star) se contraint a la largeur. -->
+        <ScrollViewer x:Name="PageScroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto"
+                      PanningMode="VerticalOnly" PreviewMouseWheel="PageScroll_PreviewMouseWheel"
                       Background="{StaticResource Canvas}">
         <Grid MinWidth="320"
               Margin="{Binding AnyFocusFullscreen, Converter={x:Static cv:BoolToMarginConverter.Instance}, ConverterParameter='22,12,22,22'}">
@@ -181,6 +186,7 @@
                     <views:SmokePageView.HeaderContent>
                         <views:SmokeHeaderView
                             IsFullscreen="{Binding KbisFocus.IsFullscreen}"
+                            IsRunning="{Binding IsLegacyBatchBusy}"
                             ShowScenarioPicker="True"
                             ShowAdvancedOverrides="True"
                             ShowApplyReal="True"
@@ -236,7 +242,8 @@
                     <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding RunSmokeCommand}">
+                                    Command="{Binding RunSmokeCommand}"
+                                    AutomationProperties.AutomationId="BtnRunSmokeWpf">
                                 <TextBlock>
                                     <Run Text="▶  Run smoke"/>
                                 </TextBlock>
@@ -283,6 +290,22 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Border>
+                                <!-- Empty-state Smoke WPF (C5) -->
+                                <Grid DockPanel.Dock="Top" Margin="20">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding SmokeScenarios.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <TextBlock Style="{StaticResource MutedText}"
+                                               Text="Aucun scenario Smoke WPF charge."
+                                               TextWrapping="Wrap"/>
+                                </Grid>
                                 <ListBox ItemsSource="{Binding SmokeView}"
                                          Style="{StaticResource FlatList}"
                                          ItemContainerStyle="{StaticResource FlatListItem}"
@@ -488,6 +511,22 @@
                                         </ItemsControl.ItemTemplate>
                                     </ItemsControl>
                                 </Border>
+                                <!-- Empty-state xUnit (C5) -->
+                                <Grid DockPanel.Dock="Top" Margin="20">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Setter Property="Visibility" Value="Collapsed"/>
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding RegressionTests.Count}" Value="0">
+                                                    <Setter Property="Visibility" Value="Visible"/>
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <TextBlock Style="{StaticResource MutedText}"
+                                               Text="Aucun test xUnit charge."
+                                               TextWrapping="Wrap"/>
+                                </Grid>
                                 <ListBox ItemsSource="{Binding RegressionView}"
                                          Style="{StaticResource FlatList}"
                                          ItemContainerStyle="{StaticResource FlatListItem}"
@@ -802,7 +841,7 @@
                                         </DockPanel>
 
                                         <!-- Source snippet -->
-                                        <Border Background="#0F172A" CornerRadius="6" Padding="10" Margin="0,4,0,16">
+                                        <Border Background="{StaticResource ConsoleBg}" CornerRadius="6" Padding="10" Margin="0,4,0,16">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Visibility" Value="Visible"/>
@@ -815,7 +854,7 @@
                                             </Border.Style>
                                             <TextBox Text="{Binding SourceBody, Mode=OneWay}"
                                                      FontFamily="Consolas" FontSize="12"
-                                                     Background="Transparent" Foreground="#E2E8F0"
+                                                     Background="Transparent" Foreground="{StaticResource ConsoleText}"
                                                      BorderThickness="0" IsReadOnly="True"
                                                      AcceptsReturn="True" TextWrapping="NoWrap"
                                                      MaxHeight="220"
@@ -916,7 +955,7 @@
                                                        Foreground="{StaticResource TextSecondary}"
                                                        VerticalAlignment="Center"/>
                                         </DockPanel>
-                                        <Border Background="#0F172A" CornerRadius="6" Padding="2" MinHeight="200">
+                                        <Border Background="{StaticResource ConsoleBg}" CornerRadius="6" Padding="2" MinHeight="200">
                                             <Border.Style>
                                                 <Style TargetType="Border">
                                                     <Setter Property="Opacity" Value="1"/>
@@ -930,8 +969,8 @@
                                             <TextBox Text="{Binding BodyPretty, UpdateSourceTrigger=PropertyChanged}"
                                                      IsEnabled="{Binding HasBody}"
                                                      FontFamily="Consolas" FontSize="12"
-                                                     Background="Transparent" Foreground="#E2E8F0"
-                                                     CaretBrush="#E2E8F0"
+                                                     Background="Transparent" Foreground="{StaticResource ConsoleText}"
+                                                     CaretBrush="{StaticResource ConsoleText}"
                                                      BorderThickness="0"
                                                      Padding="14"
                                                      AcceptsReturn="True" AcceptsTab="True"
@@ -999,10 +1038,12 @@
                     <views:SmokePageView.HeaderContent>
                         <views:SmokeHeaderView
                             IsFullscreen="{Binding AlertesFocus.IsFullscreen}"
+                            IsRunning="{Binding IsLegacyBatchBusy}"
                             ShowScenarioPicker="True"
                             ShowAdvancedOverrides="True"
                             ShowApplyReal="True"
                             ShowModeSelector="True"
+                            ModeComboAutomationId="CmbAlertesMode"
                             ShowParallelism="True"
                             ShowStress="True"
                             StressCommand="{Binding StressAlertesScenarioCommand}"
@@ -1040,10 +1081,12 @@
             <views:SmokePageView Catalog="{Binding DcadematCatalog}" FocusContext="{Binding DcadematFocus}">
                 <views:SmokePageView.HeaderContent>
                     <views:SmokeHeaderView
+                        IsRunning="{Binding IsLegacyBatchBusy}"
                         ShowScenarioPicker="True"
                         ShowAdvancedOverrides="True"
                         ShowApplyReal="True"
                         ShowModeSelector="True"
+                        ModeComboAutomationId="CmbDcadematMode"
                         ShowParallelism="True"
                         ShowStress="True"
                         ShowResetDb="True"
@@ -1080,7 +1123,8 @@
                     <Border Grid.Row="0" Style="{StaticResource Card}" Padding="16,12">
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}"
-                                    Command="{Binding RunLegacyCommand}">
+                                    Command="{Binding RunLegacyCommand}"
+                                    AutomationProperties.AutomationId="BtnRunSmokeGlobal">
                                 <TextBlock Text="▶  Run smoke RIG"/>
                             </Button>
                             <TextBlock Text="{Binding LegacyExeStatus}" Style="{StaticResource MonoMuted}"
@@ -1212,6 +1256,7 @@
                              DataContext hérité = MainWindowViewModel (bindings Rapture* directs). -->
                         <views:SmokeHeaderView
                             IsFullscreen="{Binding FocusIsFullscreen}"
+                            IsRunning="{Binding IsRaptureSmokeRunning}"
                             ShowScenarioPicker="True"
                             ShowAdvancedOverrides="True"
                             ShowApplyReal="True"
@@ -1228,9 +1273,9 @@
                     </views:SmokePageView.HeaderContent>
                     <views:SmokePageView.DrawerContent>
                         <!-- Drawer Historique overlay (Phase 5). Visibility gérée par IsDrawerOpen. -->
-                        <Border Background="White" BorderBrush="#DDD" BorderThickness="1,0,0,0">
+                        <Border Background="White" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="1,0,0,0">
                             <Border.Effect>
-                                <DropShadowEffect Color="#888" Direction="180" ShadowDepth="2" BlurRadius="8" Opacity="0.4"/>
+                                <StaticResource ResourceKey="DrawerShadow"/>
                             </Border.Effect>
                             <views:RunHistoryDrawer DataContext="{Binding}"/>
                         </Border>
@@ -1276,7 +1321,7 @@
                                 <Button Command="{Binding StopRaptureExportCommand}"
                                         AutomationProperties.AutomationId="BtnRaptureExportStop"
                                         ToolTip="STOP : tue le run Export en cours.">
-                                    <TextBlock Text="⏹  Stop" Foreground="#B02A37"/>
+                                    <TextBlock Text="⏹  Stop" Foreground="{StaticResource FailColor}"/>
                                 </Button>
                                 <Button Style="{StaticResource PrimaryButton}"
                                         Height="32" MinWidth="64" Padding="14,0" Margin="6,0,0,0"
