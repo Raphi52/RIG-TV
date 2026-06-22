@@ -12,6 +12,10 @@
 
 ---
 
+> 🔒 **CETTE CARTE = INTERACTIONS PROUVÉES LIVE UNIQUEMENT.** Le statut de preuve par flux est en **§5**
+> (autorité). Tout ce qui n'est PAS prouvé live (inventaire des ~150 autres écrans, flux échoués à la re-preuve)
+> est dans **`RIG-SCREENS-BACKLOG.md`**, PAS ici. Dernière re-preuve : 2026-06-22 (5 flux ✅ + nav, mail-safe).
+
 ## 1. Carte des écrans
 
 ### 1.0 Infrastructure commune
@@ -299,27 +303,26 @@ de connexion identifiable) — le login multi-étapes (dialog BD → FormLogin `
 
 ## 5. Table de couverture
 
-| PROC / scénario | Piloté ? | Méthode principale | CLI flag (Program.cs) |
-|---|---|---|---|
-| Login | oui | `ClickSeConnecter()` L320 | (tous) |
-| KBIS VK — recherche SIREN | oui | `SearchKbisSiren()` L2421 | `--legacy-kbis-vk` L136 |
-| KBIS XEX — document | oui | `OpenProcXex()` L3682 | `--legacy-kbis-xex` L141 |
-| RAPTURE — import JSON | oui | `ClickImporterRaptureAndOpenJson()` L1076 | `--legacy-rapture-import` L123 |
-| RAPTURE — export JSON | oui | `ClickExportJsonAndSaveTo()` L1784 | `--legacy-rapture-export` L110 |
-| RAPTURE — process complet | oui | `RunLegacyRaptureProcess` | `--legacy-rapture-process` L106 |
-| RETAUD — sélection audience | oui | `SelectFirstAudienceInRetaud()` L1932 | `--drive-retaud-pubs` L116 |
-| RETAUD — pubs en attente | oui | radio `ult_GroupRadioButtonFiltreAppelAffaire` L8117 | `--drive-retaud-pubs` L116 |
-| Alertes RCS — ouvrir demande | oui | `OpenAlerteRcs()` L3702 | `--legacy-alertes-int-form` L145 |
-| DCADEMAT — dépôt DCA | oui | `ConfigurerDepotDcaEtValider()` L4761 | `--legacy-alertes-int-dca` L146 |
-| DCADEMAT — réclamation | oui | `ReclamerDcaAvecMotif()` L5209 | `--legacy-alertes-rec-dca` L152 |
-| Formalité démat — valider | oui | `ValiderFormaliteDemat()` L4910 | `--legacy-dcademat-*` L154 |
-| Formalité démat — refus | oui | `RefuserDemande()` L4987 | `--legacy-dcademat-*` L154 |
-| DCADEMAT complet | oui | `RunLegacyDcademat` | `--legacy-dcademat-*` L154 |
+> **STATUT DE PREUVE = AUTORITÉ DE CETTE CARTE.** ✅ = flux RE-PROUVÉ LIVE le 2026-06-22 (smoke réel + screenshot
+> LU). ⚠/❌/⏸ = NON prouvé → sorti dans `RIG-SCREENS-BACKLOG.md` (ne PAS s'y fier). Re-preuve = run mail-safe
+> (7 logs RIG sans `eLog9Crash`/`SendMail` ; rapture-import en mode VIEW, 0 écrit).
 
-**Non pilotés (écrans sans driver actuel) :**
-- Impression / aperçus (garde NE PAS IMPRIMER — jamais touchés)
-- Saisie manuelle dans processus de suivi MB1 post-réclamation
-- Modules sans alerte RCS connue (à mapper si besoin)
+| Flux | Preuve live 2026-06-22 | Méthode (ancre) | Smoke |
+|---|---|---|---|
+| Login → Console | ✅ tous les smokes | `ClickSeConnecter()` L320 (`btnOk` L2812) | (tous) |
+| KBIS VK — SIREN + K-bis | ✅ 8/8 + screenshot | `SearchKbisSiren()` L2421 | `--legacy-kbis-vk` |
+| KBIS XEX — édition brouillon | ✅ 7/0 + screenshot | `OpenProcXex()` L3682 | `--legacy-kbis-xex` |
+| RAPTURE — import JSON + recap | ✅ 8/8 + screenshot recap (VIEW) | `ClickImporterRaptureAndOpenJson()` L1076 | `--legacy-rapture-import` |
+| RETAUD — sélection audience | ✅ (via rapture-import) | `SelectFirstAudienceInRetaud()` L1932 | `--legacy-rapture-import` |
+| Alertes RCS — ouvrir demande (grille) | ✅ (via int-dca/rec-dca) | `OpenAlerteRcs()` L3702 + `WaitForDemandeGrid()` | `--legacy-alertes-int-dca` |
+| DCADEMAT — dépôt DCA | ✅ 5/0 + screenshot (Configurer le dépôt) | `ConfigurerDepotDcaEtValider()` L4761 | `--legacy-alertes-int-dca` |
+| DCADEMAT — réclamation | ⚠ action déclenchée (6/0) ; **aperçu terminal NON confirmé** (HDESK) | `ReclamerDcaAvecMotif()` L5209 | `--legacy-alertes-rec-dca` |
+| RAPTURE — export JSON | ❌ **NON prouvé** → BACKLOG | `ClickExportJsonAndSaveTo()` L1784 | `--legacy-rapture-export` (échec) |
+| RETAUD — pubs en attente | ⏸ **NON prouvé** (fixture) → BACKLOG | `ult_GroupRadioButtonFiltreAppelAffaire` L8117 | `--drive-retaud-pubs --audience-id N` |
+| Formalité démat — valider/refus | ❌ **NON prouvé** → BACKLOG | `ValiderFormaliteDemat()` L4910 / `RefuserDemande()` L4987 | `--legacy-alertes-rec-form` (flaky) |
+
+> Les flux ⚠/❌/⏸ + l'inventaire des ~150 autres écrans + impression/aperçus (garde NE PAS IMPRIMER) →
+> `RIG-SCREENS-BACKLOG.md`. On les promeut ici APRÈS un run live qui passe + screenshot lu.
 
 ---
 
@@ -347,13 +350,15 @@ existent tous littéralement dans `LegacyDriver.cs` (exit 0). À RELANCER après
 PAS les numéros de ligne des ancres `L…` (= pointeurs indicatifs ; une refacto qui déplace des méthodes les
 périme silencieusement → les ancres se mettent à jour à la main).
 
-**(b) Contre l'app vivante** — smoke `--legacy-kbis-vk` rejoué via le driver prouvé : **8/8 steps PASS, exit 0,
-mail-safe** (log RIG sans `eLog9Crash`/`SendMail`). Le driver a franchi LIVE : login → Console (onglets
-Accueil/Demandes/VK, loggé VILAIN RIG_DEV-9995) → PROC_KBIS tab VK → saisie `2024B00001` → dossier chargé →
-clic K-bis → viewer ouvert. Screenshot confirmant : `Desktop\JsonRapture\screenshots\<pid>\smoke-kbis-vk-OK-*.png`.
-→ Les AutomationIds de navigation (`btnOk`, rail, `lstSousmenu`, `lstProcessus`, `tabControl`, `pagetabVK`)
-**résolvent et fonctionnent dans l'app vivante**. ⚠ Portée : vérif live = **KBIS-VK seulement** cette session ;
-RETAUD-import / DCADEMAT / Alertes = vérif statique code↔doc (walk, 0 écart constaté), NON rejoués live ici.
+**(b) Contre l'app vivante (re-preuve 2026-06-22)** — 6 flux rejoués via le driver prouvé, screenshots LUS,
+**mail-safe** (7 logs RIG sans `eLog9Crash`/`SendMail` ; rapture-import en mode VIEW, 0 écrit) :
+- ✅ **5 prouvés** : KBIS-VK (8/8), KBIS-XEX (7/0), RAPTURE import+recap (8/8, VIEW), DCADEMAT dépôt DCA (5/0),
+  Alertes RCS→grille demandes (via int-dca/rec-dca). Login→Console→PROC + nav (`btnOk`, rail, `lstSousmenu`,
+  `lstProcessus`, `tabControl`, `pagetabVK`) résolvent et fonctionnent dans l'app vivante.
+- ⚠ **1 partiel** : DCADEMAT réclamation (action déclenchée 6/0 ; aperçu terminal NON confirmé — HDESK Mode B).
+- ❌ **3 non prouvés → `RIG-SCREENS-BACKLOG.md`** (runtime/flaky) : RAPTURE export (pas de dialog), DCADEMAT
+  formalité/refus (menu contextuel flaky HDESK), RETAUD-pubs (fixture `--audience-id` absente).
+Statut par flux = **§5** (autorité).
 
 **Outils de découverte** (ce dossier) :
 - `verify-rig-ui-map.ps1` — vérif code (à relancer après modif driver).
@@ -364,83 +369,16 @@ RETAUD-import / DCADEMAT / Alertes = vérif statique code↔doc (walk, 0 écart 
 
 ---
 
-## 8. Inventaire complet des écrans RIG (objectif : couvrir TOUTE l'app)
+## 8. Périmètre & navigation
 
-> But (2026-06-22, demande user) : TestViewer doit à terme englober TOUT RIG → inventaire de TOUS les écrans,
-> pas seulement les ~12 pilotés. Source inventaire : `RigApplication\Documentation\reference\proc\` (183 fiches,
-> **165 plugins PROC_* .NET** = écrans WinForms) — chaque PROC a sa fiche métier `reference\proc\<nom>.md`.
-> Au-delà : 379 PROCVB6 (legacy COM), 147 EXE, batchs/services sans UI (hors scope pilotage UI direct).
+> **Inventaire des écrans NON prouvés → `RIG-SCREENS-BACKLOG.md`.** Les ~165 PROC .NET de RIG (par domaine) +
+> les flux échoués à la re-preuve y sont listés — PAS ici (cette carte = prouvé only, demande user 2026-06-22).
+> Source inventaire : `RigApplication\Documentation\reference\proc\`. **3 profondeurs** : (1) inventaire = backlog ;
+> (2) navigation = ✅ ci-dessous ; (3) détail UI par écran = INCRÉMENTAL via recette §6 (lancer+naviguer chaque écran).
 
-**3 profondeurs de mapping (à ne pas confondre) :**
-1. **Inventaire** (cette section) — QUELS écrans existent + domaine. ✅ FAIT ici.
-2. **Navigation** (où chaque écran vit dans les menus) — ⚠ **DATA-DRIVEN** : les rails `btn1..btn7`, sous-menus
-   et l'affectation PROC→menu sont en BASE (`MENU_ONGLET`, `MENU_SOUS_MENU`, `PROCESSUS_ET_FONCTIONALITE`,
-   col. `PROCF_VISIBLE_DANS_MENU`/`PROCF_DOMAINE`/`PROCF_CATEGORIE`), PAS statiques. → obtenir via (a) `SELECT`
-   read-only sur `RIG_DEV` (auth dev-DB requise) OU (b) dump live du menu (lancer RIG + scanner les 7 rails).
-3. **Détail d'interaction** (AutomationIds/séquences par écran) — ⚠ **PAS extractible des docs** (fidélité doc
-   ~8-10 %) : SEUL moyen = lancer+naviguer chaque écran via le driver + `DumpDescendants`/MSAA (recette §6).
-   → INCRÉMENTAL : se construit écran par écran à mesure que TestViewer étend sa couverture.
+*(Inventaire détaillé des ~165 PROC par domaine — NON prouvés interactables — déplacé dans `RIG-SCREENS-BACKLOG.md` §B.)*
 
-**Légende statut** : ✅ piloté + détaillé (§1-2) · 📋 inventorié, détail UI à faire (recette §6).
-
-### Affaires judiciaires — cycle de vie instances
-`PROC_ARRIVEE` `PROC_CJUD` `PROC_MJUD` `PROC_MJUDS` `PROC_MDJUD` `PROC_CHORGANESENMASSE` `PROC_CHORGANESMASSE` `PROC_MODIF_REPER` `PROC_JOIN` `PROC_LIBAFFAIRE` `PROC_RECHAFF` `PROC_RECHENC` `PROC_PARTIES` `PROC_ACTEUR_JUD` `PROC_SUPP_ACTEUR_JUD` `PROC_RAPPACTEUR` `PROC_RECLAFF` · 📋 (17)
-
-### Audience & plumitif
-`PROC_AUDIENCE` `PROC_PREAUD`✅ `PROC_RETAUD`✅ `PROC_GESTAUDS` `PROC_RELANCEFILE` `PROC_RELANCELOT` `PROC_RETOURLRAR` `PROC_STATCA` · ✅ RETAUD (audience+import Rapture+pubs), PREAUD (export JSON) ; 📋 les 6 autres
-
-### Décision, signature & GED judiciaire
-`PROC_ORDOSIGN` `PROC_SIGNJUD` `PROC_GEDJUD` `PROC_DEPOTJUD` `PROC_SDEMATJUD` `PROC_ACTES_NUM` `PROC_REGJUD` `PROC_VJUD` `PROC_MPCS` `PROC_CLOT` · 📋 (10)
-
-### Acteurs, mandataires, prévention
-`PROC_MANDATAIRE` `PROC_MDIL` `PROC_MMA` `PROC_MESIN` `PROC_CABINET` `PROC_CJUDINFOG` `PROC_SURVBOD` `PROC_SURVMES` · 📋 (8)
-
-### EDI / dématérialisation judiciaire
-`PROC_EDI_RPJC_REN` `PROC_EDI_RPJC_TRCNC` `PROC_EDI_RPVAINS` `PROC_IA` · 📋 (4)
-
-### RCS — inscriptions & modifications
-`PROC_NPC` `PROC_NF` `PROC_MPC` `PROC_MPCS` `PROC_DCA` `PROC_DEP` `PROC_ARCHIRAD` `PROC_NUM` `PROC_SCEAU` `PROC_IPE` `PROC_IPSUIVI` `PROC_SURVIP` `PROC_INTEGCREANCE` `PROC_MODCREANCE` `PROC_CREANCE` `PROC_CREANREP` `PROC_ADDCREANCE` `PROC_DAS` `PROC_DASBEN` · 📋 (19)
-
-### RCS — consultation / KBIS / vues
-`PROC_KBIS`(VK)✅ `PROC_XEX`✅ `PROC_VDOSSIER` `PROC_VFNIG` `PROC_FNIG` `PROC_XAFF` `PROC_XXAFF` `PROC_XLIEN` · ✅ KBIS-VK (visualisation extrait), XEX (édition interne) ; 📋 les 6 autres
-
-### RCS — INPI / Guichet unique
-`PROC_GINPI` `PROC_INPIPAY` `PROC_CFENET_RET` · 📋 (3)
-
-### Alertes RCS / DCADEMAT
-`PROC_DEMANDE`✅ `PROC_ACTREJ` `PROC_ACTREJ_CMD_WEB` `PROC_ACTRET` `PROC_DOC_DEMAT`✅ `PROC_REJET` · ✅ Alertes RCS (ouverture demande), DCADEMAT (dépôt DCA + réclamation + formalité/refus) ; 📋 le reste
-
-### Endettement (BEN / DCA)
-`PROC_DBE` `PROC_DBEN` `PROC_DBEN_ALERT` `PROC_DBE_INJ` `PROC_DBE_RELANCE` `PROC_DCA_INJ` `PROC_DCA_RELANCE` · 📋 (7)
-
-### Comptabilité / caisse
-`PROC_JCAISSE` `PROC_JVENTE` `PROC_JLR` `PROC_ENCAISS` `PROC_RECHENC` `PROC_COMPTABILISATION` `PROC_FACTURE` `PROC_FACTURE_ETAPEFACTURE` `PROC_FACTURE_RECETTE` `PROC_FACTREEDIT` `PROC_VLETTRAGE` `PROC_VCHIFFRES` · 📋 (12)
-
-### Facturation / clients
-`PROC_FCLIENT` `PROC_GCLIENT` `PROC_RELCLI` `PROC_REMBANQ` `PROC_REMBANQ_EXE` · 📋 (5)
-
-### GED / documents
-`PROC_REDA` `PROC_REDAA` `PROC_REDA_MASSE` `PROC_COURRIER_DIVERS` `PROC_COURRIERM` `PROC_IMAGE` `PROC_PDF` `PROC_PDF_WRITER` `PROC_GED_HISTORIQUE` `PROC_GED_LIER_DJ` `PROC_GED_MODELE_MAIL` `PROC_GED_MODIF` `PROC_GED_NATURE_DOC` `PROC_VGED` `PROC_TRANSDOC` · 📋 (15)
-
-### EDI / intégrations
-`PROC_EDCHQEMIS` `PROC_ENV_JAL` `PROC_CORDJRCS` `PROC_CORRESPMIG` `PROC_FIBEN` `PROC_FIBEN_EXE` `PROC_CFENET_RET` `PROC_GESTLOT` `PROC_GESTBOD` · 📋 (9)
-
-### Surveillance
-`PROC_SURVBOD` `PROC_SURVIP` `PROC_SURVMES` `PROC_SRBE_RAPPEL` `PROC_DBEN_ALERT` · 📋 (5)
-
-### Paramétrage / administration
-`PROC_GTABREF` `PROC_TARIFS` `PROC_TAXESETTOURS` `PROC_ARTICLE` `PROC_GCOM` `PROC_GCONV` `PROC_GESTBANQ` `PROC_GESTDATE` `PROC_GESTEMAIL` `PROC_GESTMODEPAIEMENT` `PROC_GESTTIERSPAYEURS` `PROC_PARAM_IP` `PROC_PARAM_LISTEEXCEL` · 📋 (14)
-
-### Éditions / impression / stats
-`PROC_IMPLEG` `PROC_LISTEEXCEL` `PROC_REQUETES` `PROC_STAT` `PROC_TABLEAU_LOT3` · 📋 (5)
-
-### Coffre-fort / dossier / bateaux
-`PROC_COFFRE_FORT` `PROC_DCOFFRE` `PROC_BATEAU` `PROC_RECHERCHE_BATEAU` · 📋 (4)
-
-### Accueil / pilotage / divers / outils dev
-`PROC_ACCUEIL` `PROC_ACCUEIL_PARAM` `PROC_XPILOTAGE` `PROC_WIKI` `PROC_WEB_BROWSER` `PROC_PAPERCUT` `PROC_OPE` `PROC_DJ_OCCULTATIONS` `PROC_EDIT_MAQUETTE` `PROC_EDT_DIFF` `PROC_DEST_REDA` `PROC_TESTNLH` `PROC_DEBUG_CONTROLS` `PROC_DEMO` `PROC_DEV*` · 📋 (outils/dev, basse priorité)
-
-**Roadmap pour compléter (profondeurs 2 et 3) :**
+**Navigation (profondeur 2) :**
 - **Nav (où vit chaque écran) — ✅ FAIT via `SmokeRunner --dump-menu`** (scan live des rails, READ-ONLY, mail-safe :
   aucun PROC ouvert, clic simple sur les sous-menus + lecture des noms de processus). Résultat **2026-06-22** :
   **6 rails · 56 sous-menus · 603 processus**. Arbre complet : **`docs\rig-menu-tree.txt`** (régénérable à tout
