@@ -441,10 +441,13 @@ RETAUD-import / DCADEMAT / Alertes = vérif statique code↔doc (walk, 0 écart 
 `PROC_ACCUEIL` `PROC_ACCUEIL_PARAM` `PROC_XPILOTAGE` `PROC_WIKI` `PROC_WEB_BROWSER` `PROC_PAPERCUT` `PROC_OPE` `PROC_DJ_OCCULTATIONS` `PROC_EDIT_MAQUETTE` `PROC_EDT_DIFF` `PROC_DEST_REDA` `PROC_TESTNLH` `PROC_DEBUG_CONTROLS` `PROC_DEMO` `PROC_DEV*` · 📋 (outils/dev, basse priorité)
 
 **Roadmap pour compléter (profondeurs 2 et 3) :**
-- **Nav (où vit chaque écran)** : `SELECT PROCF_CODE, PROCF_LIBELLE, PROCF_DOMAINE, PROCF_CATEGORIE FROM
-  PROCESSUS_ET_FONCTIONALITE WHERE PROCF_VISIBLE_DANS_MENU=1` sur `RIG_DEV` (read-only) + `MENU_ONGLET`/`MENU_SOUS_MENU`
-  → reconstruit les 7 rails et l'affectation des PROC. **Nécessite l'OK d'accès lecture à la base dev.** Alternative
-  sans SQL : étendre SmokeRunner d'un mode `--dump-menu` (réutilise `Launch()`+login + scan `OpenProcessus`).
+- **Nav (où vit chaque écran) — ✅ FAIT via `SmokeRunner --dump-menu`** (scan live des rails, READ-ONLY, mail-safe :
+  aucun PROC ouvert, clic simple sur les sous-menus + lecture des noms de processus). Résultat **2026-06-22** :
+  **6 rails · 56 sous-menus · 603 processus**. Arbre complet : **`docs\rig-menu-tree.txt`** (régénérable à tout
+  moment : `Rig.Wpf.Kbis.SmokeRunner.exe --dump-menu`). Rails : **1=RCS · 2=ENDETTEMENT · 3=AFFAIRES JUDICIAIRES ·
+  4=PREVENTION · 5=COMPTABILITE · 6=GENERAL** (btn7 absent en RIG_DEV). Code : `LegacyDriver.DumpMenuTree()` +
+  dispatch `--dump-menu` (Program.cs). ⚠ Bruit connu : un faux item `Vertical` (scrollbar lue par UIA) peut
+  apparaître en tête de liste — à ignorer.
 - **Détail UI par écran** : INCRÉMENTAL. Pour chaque PROC à piloter → `OpenProcessus()` (driver, L618) + dump UIA +
   screenshot (recette §6) → ajouter au §1/§2 + relancer `verify-rig-ui-map.ps1`. Priorisable par domaine métier.
 

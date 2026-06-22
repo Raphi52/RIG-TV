@@ -8267,4 +8267,165 @@ public sealed class LegacyDriver : IDisposable
         var label = $"retaud-pubs-en-attente-{audienceId}{(loaded ? "" : "-diag-notloaded")}";
         return CaptureScreenshot(label);
     }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  DUMP-MENU — scan READ-ONLY de toute la navigation Console d'accueil
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Apres login, parcourt les 7 rails (btn1..btn7) x leurs sous-menus x
+    /// leurs processus et retourne un arbre textuel ASCII. ENUMERE SEULEMENT :
+    /// aucun double-clic / invoke sur un item de lstProcessus (pas d'ouverture
+    /// de PROC, pas de risque mail/etat). La selection d'un sous-menu est un
+    /// clic simple (equivalent a la mise en surbrillance dans la liste).
+    /// </summary>
+    /// <returns>
+    /// Arbre au format :
+    ///   RAIL 1 [label]
+    ///     SOUSMENU: nom
+    ///       PROC: nom1
+    ///       PROC: nom2
+    ///     ...
+    /// </returns>
+    public string DumpMenuTree()
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + ClickSeConnecter() doivent etre appeles avant DumpMenuTree()");
+
+        // Garantit la fenetre maximisee (btn3..btn7 hors viewport sinon)
+        if (Headless)
+            EnsureWindowMaximized();
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== RIG MENU TREE ===");
+        sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine();
+
+        int totalRails = 0;
+        int totalSousmenus = 0;
+        int totalProcessus = 0;
+
+        string prevSousmenuSig = CurrentListSignature("lstSousmenu");
+
+        for (int n = 1; n <= 7; n++)
+        {
+            var btn = FindByAutomationIdWithRetry("btn" + n, timeoutMs: 2500);
+            if (btn is null)
+            {
+                Console.WriteLine($"   [dump] btn{n} absent apres retry — skip");
+                sb.AppendLine($"RAIL {n} [(absent)]");
+                continue;
+            }
+
+            string railLabel = SafeText(() => btn.Name);
+            // ASCII-only : remplace les accentes
+            railLabel = ToAscii(railLabel);
+            Console.WriteLine($"   [dump] === btn{n} '{railLabel}' : activation...");
+
+            // Clic avec retry (meme pattern que OpenProcessus)
+            AutomationElement[] subItems = System.Array.Empty<AutomationElement>();
+            string newSig = prevSousmenuSig;
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                if (!TryActivateRailTab(btn, $"dump-btn{n}")) break;
+                subItems = WaitForListRepopulated("lstSousmenu", prevSousmenuSig, 3000);
+                newSig = string.Join("|", subItems.Select(s => SafeText(() => s.Name)));
+                if (subItems.Length > 0 && newSig != prevSousmenuSig) break;
+                if (attempt < 3)
+                {
+                    Console.WriteLine($"   [dump] btn{n} panneau fige (tentative {attempt}/3) — re-clic");
+                    Thread.Sleep(800); // sleep-ok: RIG async rail reload, pas de signal observable
+                }
+            }
+
+            if (subItems.Length == 0)
+            {
+                Console.WriteLine($"   [dump] btn{n} lstSousmenu vide apres repopulation");
+                sb.AppendLine($"RAIL {n} [{railLabel}] (vide)");
+                prevSousmenuSig = newSig;
+                continue;
+            }
+
+            totalRails++;
+            prevSousmenuSig = newSig;
+            sb.AppendLine($"RAIL {n} [{railLabel}]");
+            Console.WriteLine($"   [dump] btn{n} '{railLabel}' : {subItems.Length} sous-menus");
+
+            string prevProcSig = CurrentListSignature("lstProcessus");
+
+            for (int i = 0; i < subItems.Length; i++)
+            {
+                string subLabel = SafeText(() => subItems[i].Name);
+                subLabel = ToAscii(subLabel);
+
+                // Clic simple (JAMAIS double-clic ni Invoke) pour charger lstProcessus
+                bool activated = false;
+                try
+                {
+                    Interaction.Click(subItems[i]);
+                    activated = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"   [dump]   sousmenu[{i}] clic jete : {ex.Message}");
+                }
+
+                AutomationElement[] procItems = System.Array.Empty<AutomationElement>();
+                if (activated)
+                {
+                    procItems = WaitForListRepopulated("lstProcessus", prevProcSig, 2000);
+                    prevProcSig = string.Join("|", procItems.Select(p => SafeText(() => p.Name)));
+                }
+
+                sb.AppendLine($"  SOUSMENU: {subLabel}");
+                totalSousmenus++;
+
+                if (procItems.Length == 0)
+                {
+                    sb.AppendLine($"    (vide)");
+                    Console.WriteLine($"   [dump]   sousmenu[{i}] '{subLabel}' : lstProcessus vide");
+                    continue;
+                }
+
+                Console.WriteLine($"   [dump]   sousmenu[{i}] '{subLabel}' : {procItems.Length} processus");
+                foreach (var pItem in procItems)
+                {
+                    string procName = ToAscii(SafeText(() => pItem.Name));
+                    if (string.IsNullOrWhiteSpace(procName)) continue;
+                    sb.AppendLine($"    PROC: {procName}");
+                    totalProcessus++;
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"=== TOTAUX : {totalRails} rails, {totalSousmenus} sous-menus, {totalProcessus} processus ===");
+
+        // Log resume console
+        Console.WriteLine($"   [dump] Arbre complet : {totalRails} rails non vides, {totalSousmenus} sous-menus, {totalProcessus} processus");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Transliteration ASCII best-effort : remplace les caracteres accentues
+    /// les plus courants (francais) par leur equivalent ASCII. Garantit une
+    /// sortie propre dans les fichiers texte mono-encodage (UTF-8 sans BOM mais
+    /// lisible sans police speciale).
+    /// </summary>
+    private static string ToAscii(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        // Normalise en NFD puis garde les caracteres ASCII (supprime les diacritiques)
+        var normalized = s.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (char c in normalized)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            if (cat != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+        return sb.ToString();
+    }
 }

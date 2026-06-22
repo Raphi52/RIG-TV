@@ -125,6 +125,11 @@ internal static class Program
         // --legacy-rapture en priorité (avant --legacy car ce dernier match aussi le préfixe)
         if (HasFlag(args, "--legacy-rapture"))
             return RunLegacyRapture(args);
+        // --dump-menu = scan READ-ONLY de toute la navigation Console d'accueil.
+        // Lance RIG, se connecte, enumere les 7 rails x sous-menus x processus
+        // (SANS ouvrir aucun PROC), ecrit l'arbre dans Audit\rig-menu-tree.txt.
+        if (HasFlag(args, "--dump-menu"))
+            return RunDumpMenu(args);
         // --loop = CLI de la boucle rig-testing (run/build/bench). Émet du JSON.
         if (HasFlag(args, "--loop"))
             return LoopMode.RunLoop(args);
@@ -2967,5 +2972,77 @@ internal static class Program
         Console.WriteLine("──────────────────────────────────────────────────────────────────────");
         Console.WriteLine();
         return (fatal || _failed > 0) ? 1 : 0;
+    }
+
+    /// <summary>
+    /// Mode --dump-menu : lance RIG, se connecte, scanne TOUS les rails x sous-menus
+    /// x processus (READ-ONLY, aucun PROC ouvert), ecrit l'arbre dans
+    /// C:\Code RIG\Audit\rig-menu-tree.txt.
+    /// </summary>
+    private static int RunDumpMenu(string[] args)
+    {
+        var sw = Stopwatch.StartNew();
+        Console.WriteLine();
+        Console.WriteLine("╔══════════════════════════════════════════════════════════════════════╗");
+        Console.WriteLine("║   Rig.Wpf.Kbis.SmokeRunner --dump-menu — scan navigation Console    ║");
+        Console.WriteLine("╚══════════════════════════════════════════════════════════════════════╝");
+        Console.WriteLine();
+
+        var rigExe = Environment.GetEnvironmentVariable("RIG_LEGACY_EXE");
+        if (string.IsNullOrWhiteSpace(rigExe))
+            rigExe = @"C:\rig\exe\RigClientAccueil.exe";
+
+        var outDir = @"C:\Code RIG\Audit";
+        Directory.CreateDirectory(outDir);
+        var outFile = Path.Combine(outDir, "rig-menu-tree.txt");
+
+        TryStep($"Sanity : RigClientAccueil.exe present a {rigExe}", () =>
+        {
+            if (!File.Exists(rigExe))
+                throw new Exception("Binaire introuvable. Definir RIG_LEGACY_EXE pour override le path.");
+        });
+
+        if (!File.Exists(rigExe)) return PrintSummaryAndExit(sw);
+
+        bool headless = (Environment.GetEnvironmentVariable("RIG_DRIVER_HEADLESS") ?? "1") != "0";
+        string runId = Process.GetCurrentProcess().Id.ToString();
+        var desktop = RigDesktop.Create(headless, runId);
+        string? treeText = null;
+        try
+        {
+            desktop.RunAttached(() =>
+            {
+                using (var driver = new LegacyDriver(rigExe, desktop))
+                {
+                    TryStep("Lancement RIG : RigClientAccueil.exe demarre", () => driver.Launch());
+                    TryStep("Click Se connecter : connexion a la base RIG", () => driver.ClickSeConnecter());
+
+                    if (_failed > 0) return; // abort si login KO
+
+                    TryStep("DumpMenuTree : scan READ-ONLY 7 rails x sous-menus x processus", () =>
+                    {
+                        treeText = driver.DumpMenuTree();
+                    });
+                }
+            });
+        }
+        finally
+        {
+            try { desktop.Dispose(); } catch { }
+        }
+
+        if (treeText != null)
+        {
+            // UTF-8 sans BOM
+            File.WriteAllText(outFile, treeText, new System.Text.UTF8Encoding(false));
+            Console.WriteLine();
+            Console.WriteLine($"  Arbre ecrit : {outFile}");
+            // Extrait le resume depuis la derniere ligne de l'arbre
+            var lines = treeText.Split('\n');
+            var summary = lines.LastOrDefault(l => l.StartsWith("=== TOTAUX"))?.Trim() ?? "";
+            Console.WriteLine($"  {summary}");
+        }
+
+        return PrintSummaryAndExit(sw);
     }
 }
