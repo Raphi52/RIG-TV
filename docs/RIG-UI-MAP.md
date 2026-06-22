@@ -362,4 +362,92 @@ RETAUD-import / DCADEMAT / Alertes = vérif statique code↔doc (walk, 0 écart 
   mapper un écran NEUF, lancer un smoke proche (`--legacy-*`) qui amène RIG sur l'écran via le driver, PUIS
   brancher un dump sur la fenêtre active. La vérif live de bout en bout passe par un **smoke réel**, pas par ce script seul.
 
-*Source : `LegacyDriver.cs` ~7762 lignes · `Interaction.cs` ~570 · `LegacyParsing.cs` ~884 · `Program.cs` ~2761 — lus et vérifiés le 2026-06-22 (code + run live KBIS-VK).*
+---
+
+## 8. Inventaire complet des écrans RIG (objectif : couvrir TOUTE l'app)
+
+> But (2026-06-22, demande user) : TestViewer doit à terme englober TOUT RIG → inventaire de TOUS les écrans,
+> pas seulement les ~12 pilotés. Source inventaire : `RigApplication\Documentation\reference\proc\` (183 fiches,
+> **165 plugins PROC_* .NET** = écrans WinForms) — chaque PROC a sa fiche métier `reference\proc\<nom>.md`.
+> Au-delà : 379 PROCVB6 (legacy COM), 147 EXE, batchs/services sans UI (hors scope pilotage UI direct).
+
+**3 profondeurs de mapping (à ne pas confondre) :**
+1. **Inventaire** (cette section) — QUELS écrans existent + domaine. ✅ FAIT ici.
+2. **Navigation** (où chaque écran vit dans les menus) — ⚠ **DATA-DRIVEN** : les rails `btn1..btn7`, sous-menus
+   et l'affectation PROC→menu sont en BASE (`MENU_ONGLET`, `MENU_SOUS_MENU`, `PROCESSUS_ET_FONCTIONALITE`,
+   col. `PROCF_VISIBLE_DANS_MENU`/`PROCF_DOMAINE`/`PROCF_CATEGORIE`), PAS statiques. → obtenir via (a) `SELECT`
+   read-only sur `RIG_DEV` (auth dev-DB requise) OU (b) dump live du menu (lancer RIG + scanner les 7 rails).
+3. **Détail d'interaction** (AutomationIds/séquences par écran) — ⚠ **PAS extractible des docs** (fidélité doc
+   ~8-10 %) : SEUL moyen = lancer+naviguer chaque écran via le driver + `DumpDescendants`/MSAA (recette §6).
+   → INCRÉMENTAL : se construit écran par écran à mesure que TestViewer étend sa couverture.
+
+**Légende statut** : ✅ piloté + détaillé (§1-2) · 📋 inventorié, détail UI à faire (recette §6).
+
+### Affaires judiciaires — cycle de vie instances
+`PROC_ARRIVEE` `PROC_CJUD` `PROC_MJUD` `PROC_MJUDS` `PROC_MDJUD` `PROC_CHORGANESENMASSE` `PROC_CHORGANESMASSE` `PROC_MODIF_REPER` `PROC_JOIN` `PROC_LIBAFFAIRE` `PROC_RECHAFF` `PROC_RECHENC` `PROC_PARTIES` `PROC_ACTEUR_JUD` `PROC_SUPP_ACTEUR_JUD` `PROC_RAPPACTEUR` `PROC_RECLAFF` · 📋 (17)
+
+### Audience & plumitif
+`PROC_AUDIENCE` `PROC_PREAUD`✅ `PROC_RETAUD`✅ `PROC_GESTAUDS` `PROC_RELANCEFILE` `PROC_RELANCELOT` `PROC_RETOURLRAR` `PROC_STATCA` · ✅ RETAUD (audience+import Rapture+pubs), PREAUD (export JSON) ; 📋 les 6 autres
+
+### Décision, signature & GED judiciaire
+`PROC_ORDOSIGN` `PROC_SIGNJUD` `PROC_GEDJUD` `PROC_DEPOTJUD` `PROC_SDEMATJUD` `PROC_ACTES_NUM` `PROC_REGJUD` `PROC_VJUD` `PROC_MPCS` `PROC_CLOT` · 📋 (10)
+
+### Acteurs, mandataires, prévention
+`PROC_MANDATAIRE` `PROC_MDIL` `PROC_MMA` `PROC_MESIN` `PROC_CABINET` `PROC_CJUDINFOG` `PROC_SURVBOD` `PROC_SURVMES` · 📋 (8)
+
+### EDI / dématérialisation judiciaire
+`PROC_EDI_RPJC_REN` `PROC_EDI_RPJC_TRCNC` `PROC_EDI_RPVAINS` `PROC_IA` · 📋 (4)
+
+### RCS — inscriptions & modifications
+`PROC_NPC` `PROC_NF` `PROC_MPC` `PROC_MPCS` `PROC_DCA` `PROC_DEP` `PROC_ARCHIRAD` `PROC_NUM` `PROC_SCEAU` `PROC_IPE` `PROC_IPSUIVI` `PROC_SURVIP` `PROC_INTEGCREANCE` `PROC_MODCREANCE` `PROC_CREANCE` `PROC_CREANREP` `PROC_ADDCREANCE` `PROC_DAS` `PROC_DASBEN` · 📋 (19)
+
+### RCS — consultation / KBIS / vues
+`PROC_KBIS`(VK)✅ `PROC_XEX`✅ `PROC_VDOSSIER` `PROC_VFNIG` `PROC_FNIG` `PROC_XAFF` `PROC_XXAFF` `PROC_XLIEN` · ✅ KBIS-VK (visualisation extrait), XEX (édition interne) ; 📋 les 6 autres
+
+### RCS — INPI / Guichet unique
+`PROC_GINPI` `PROC_INPIPAY` `PROC_CFENET_RET` · 📋 (3)
+
+### Alertes RCS / DCADEMAT
+`PROC_DEMANDE`✅ `PROC_ACTREJ` `PROC_ACTREJ_CMD_WEB` `PROC_ACTRET` `PROC_DOC_DEMAT`✅ `PROC_REJET` · ✅ Alertes RCS (ouverture demande), DCADEMAT (dépôt DCA + réclamation + formalité/refus) ; 📋 le reste
+
+### Endettement (BEN / DCA)
+`PROC_DBE` `PROC_DBEN` `PROC_DBEN_ALERT` `PROC_DBE_INJ` `PROC_DBE_RELANCE` `PROC_DCA_INJ` `PROC_DCA_RELANCE` · 📋 (7)
+
+### Comptabilité / caisse
+`PROC_JCAISSE` `PROC_JVENTE` `PROC_JLR` `PROC_ENCAISS` `PROC_RECHENC` `PROC_COMPTABILISATION` `PROC_FACTURE` `PROC_FACTURE_ETAPEFACTURE` `PROC_FACTURE_RECETTE` `PROC_FACTREEDIT` `PROC_VLETTRAGE` `PROC_VCHIFFRES` · 📋 (12)
+
+### Facturation / clients
+`PROC_FCLIENT` `PROC_GCLIENT` `PROC_RELCLI` `PROC_REMBANQ` `PROC_REMBANQ_EXE` · 📋 (5)
+
+### GED / documents
+`PROC_REDA` `PROC_REDAA` `PROC_REDA_MASSE` `PROC_COURRIER_DIVERS` `PROC_COURRIERM` `PROC_IMAGE` `PROC_PDF` `PROC_PDF_WRITER` `PROC_GED_HISTORIQUE` `PROC_GED_LIER_DJ` `PROC_GED_MODELE_MAIL` `PROC_GED_MODIF` `PROC_GED_NATURE_DOC` `PROC_VGED` `PROC_TRANSDOC` · 📋 (15)
+
+### EDI / intégrations
+`PROC_EDCHQEMIS` `PROC_ENV_JAL` `PROC_CORDJRCS` `PROC_CORRESPMIG` `PROC_FIBEN` `PROC_FIBEN_EXE` `PROC_CFENET_RET` `PROC_GESTLOT` `PROC_GESTBOD` · 📋 (9)
+
+### Surveillance
+`PROC_SURVBOD` `PROC_SURVIP` `PROC_SURVMES` `PROC_SRBE_RAPPEL` `PROC_DBEN_ALERT` · 📋 (5)
+
+### Paramétrage / administration
+`PROC_GTABREF` `PROC_TARIFS` `PROC_TAXESETTOURS` `PROC_ARTICLE` `PROC_GCOM` `PROC_GCONV` `PROC_GESTBANQ` `PROC_GESTDATE` `PROC_GESTEMAIL` `PROC_GESTMODEPAIEMENT` `PROC_GESTTIERSPAYEURS` `PROC_PARAM_IP` `PROC_PARAM_LISTEEXCEL` · 📋 (14)
+
+### Éditions / impression / stats
+`PROC_IMPLEG` `PROC_LISTEEXCEL` `PROC_REQUETES` `PROC_STAT` `PROC_TABLEAU_LOT3` · 📋 (5)
+
+### Coffre-fort / dossier / bateaux
+`PROC_COFFRE_FORT` `PROC_DCOFFRE` `PROC_BATEAU` `PROC_RECHERCHE_BATEAU` · 📋 (4)
+
+### Accueil / pilotage / divers / outils dev
+`PROC_ACCUEIL` `PROC_ACCUEIL_PARAM` `PROC_XPILOTAGE` `PROC_WIKI` `PROC_WEB_BROWSER` `PROC_PAPERCUT` `PROC_OPE` `PROC_DJ_OCCULTATIONS` `PROC_EDIT_MAQUETTE` `PROC_EDT_DIFF` `PROC_DEST_REDA` `PROC_TESTNLH` `PROC_DEBUG_CONTROLS` `PROC_DEMO` `PROC_DEV*` · 📋 (outils/dev, basse priorité)
+
+**Roadmap pour compléter (profondeurs 2 et 3) :**
+- **Nav (où vit chaque écran)** : `SELECT PROCF_CODE, PROCF_LIBELLE, PROCF_DOMAINE, PROCF_CATEGORIE FROM
+  PROCESSUS_ET_FONCTIONALITE WHERE PROCF_VISIBLE_DANS_MENU=1` sur `RIG_DEV` (read-only) + `MENU_ONGLET`/`MENU_SOUS_MENU`
+  → reconstruit les 7 rails et l'affectation des PROC. **Nécessite l'OK d'accès lecture à la base dev.** Alternative
+  sans SQL : étendre SmokeRunner d'un mode `--dump-menu` (réutilise `Launch()`+login + scan `OpenProcessus`).
+- **Détail UI par écran** : INCRÉMENTAL. Pour chaque PROC à piloter → `OpenProcessus()` (driver, L618) + dump UIA +
+  screenshot (recette §6) → ajouter au §1/§2 + relancer `verify-rig-ui-map.ps1`. Priorisable par domaine métier.
+
+---
+
+*Source : `LegacyDriver.cs` ~7762 lignes · `Interaction.cs` ~570 · `LegacyParsing.cs` ~884 · `Program.cs` ~2761 — lus et vérifiés le 2026-06-22 (code + run live KBIS-VK). Inventaire §8 : `RigApplication\Documentation\reference\proc\` (165 PROC).*
