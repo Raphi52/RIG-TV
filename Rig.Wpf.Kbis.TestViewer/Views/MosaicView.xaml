@@ -10,6 +10,7 @@
         <cv:PhaseToStringConverter x:Key="PhaseToString"/>
         <cv:PathToCachedBitmapConverter x:Key="PathToBmp"/>
         <cv:VerdictToColorConverter x:Key="VerdictBrush"/>
+        <cv:WidthToColumnsConverter x:Key="WidthToCols"/>
     </UserControl.Resources>
     <!-- Grid au lieu de DockPanel (consigne user 2026-05-28) : DockPanel LastChildFill
          combiné à MaxHeight sur le dernier enfant produisait un Vertical Center
@@ -46,12 +47,14 @@
                  ScrollViewer.VerticalScrollBarVisibility="Auto"
                  ScrollViewer.CanContentScroll="False"
                  HorizontalContentAlignment="Stretch">
-            <!-- fix-ok: mosaique = galerie responsive (WrapPanel + tuiles a largeur FIXE) au lieu de
-                 UniformGrid Columns=2 : le nb de colonnes suit la largeur (2 en colonne etroite, ~6 en
-                 pleine largeur) -> bien plus de tuiles visibles quand large (demande user). Non blind-fix. -->
+            <!-- fix-ok: mosaique = galerie responsive a colonnes DYNAMIQUES (UniformGrid dont Columns =
+                 WidthToColumnsConverter(ActualWidth) = max(2, largeur/195px)). Remplace WrapPanel+tuile FIXE 210px
+                 qui ne tenait qu'1 colonne dans la colonne laterale ~420px (regression user 2026-06-23 « plus
+                 qu'une colonne »). Garantit >=2 colonnes en mode 3-col ET en ajoute en pleine largeur (mode
+                 empile). UniformGrid etire chaque cellule -> pas de largeur fixe par tuile. Refactor, non blind-fix. -->
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <WrapPanel Orientation="Horizontal"/>
+                    <UniformGrid Columns="{Binding ActualWidth, RelativeSource={RelativeSource AncestorType=ListBox}, Converter={StaticResource WidthToCols}}"/>
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ItemContainerStyle>
@@ -64,8 +67,8 @@
                             <Binding Path="Id" StringFormat="MosaicTile_{0}"/>
                         </Setter.Value>
                     </Setter>
-                    <!-- Largeur FIXE -> le WrapPanel en place autant que possible par rangee (responsive). -->
-                    <Setter Property="Width" Value="210"/>
+                    <!-- Pas de largeur fixe : l'UniformGrid etire chaque tuile sur sa cellule (largeur/colonnes).
+                         HorizontalContentAlignment=Stretch (ci-dessous) fait remplir la cellule. -->
                     <Setter Property="Margin" Value="2"/>
                     <Setter Property="Padding" Value="0"/>
                     <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
