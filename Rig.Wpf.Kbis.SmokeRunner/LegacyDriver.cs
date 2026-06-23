@@ -63,6 +63,7 @@ public sealed class LegacyDriver : IDisposable
     private string? _snapDir;
     private int _snapSeq;
     private volatile bool _snapStopped;
+    private volatile bool _snapReMaximizedOnce;   // self-heal taille : logge le 1er re-maximize par cycle de snap
 
     /// <summary>#2 — dernier index de self-snap publié (le NNNN du PNG snap-…-NNNN.png).
     /// Lu par Program.Pass/Fail/Skip pour tagger chaque ligne d'event d'un [snap=NNNN]
@@ -3603,6 +3604,7 @@ public sealed class LegacyDriver : IDisposable
         _snapSeq = 0;
         LastSnapSeq = -1;   // #2 : reset le tag [snap=] au début d'un nouveau cycle de self-snap
         _snapStopped = false;
+        _snapReMaximizedOnce = false;   // self-heal : ré-arme le log "re-maximisee" pour ce cycle
         Console.WriteLine($"      ⓘ Self-snap demarre : hwnd=0x{hwnd.ToInt64():X} interval={intervalMs}ms dir={_snapDir}");
         _snapTimer = new System.Threading.Timer(_ => SnapTick(), null, intervalMs, intervalMs);
     }
@@ -3612,6 +3614,27 @@ public sealed class LegacyDriver : IDisposable
         if (_snapStopped || _snapHwnd == IntPtr.Zero || string.IsNullOrEmpty(_snapDir)) return;
         try
         {
+            // Self-heal taille (fix « box minuscule » 2026-06-23) : RIG est maximisé au login + au snap-start
+            // (L3582) UNE fois, mais un PROC ouvert APRÈS le login le dé-maximise → il retombe à sa taille
+            // legacy 750x480 et SnapTick capture alors tout le run en petit (preuve : un run = 1 frame 1920x1080
+            // puis 382 frames 750x480). On re-maximise la console capturée si elle est repassée sous le seuil.
+            // ShowWindow(SW_MAXIMIZE) = même mécanisme prouvé qu'au démarrage (cross-desktop OK), Win32-only donc
+            // sûr depuis ce callback threadpool (pas d'UIA cross-thread). Borné : no-op quand w>=1400 → zéro spam,
+            // zéro effet quand déjà maximisé. Gate Headless : en non-headless la mosaïque tuile volontairement
+            // (<1400px) → ne pas la combattre (cf. RIG_TILE_*, MainWindowViewModel L3165).
+            if (Headless && GetWindowRect(_snapHwnd, out var wr))
+            {
+                int w = wr.Right - wr.Left;
+                if (w > 0 && w < 1400)
+                {
+                    Interaction.MaximizeWindow(_snapHwnd);
+                    if (!_snapReMaximizedOnce)
+                    {
+                        _snapReMaximizedOnce = true;
+                        Console.WriteLine($"      → self-heal : console RIG re-maximisee (etait {w}px < 1400, de-maximisee post-login)");
+                    }
+                }
+            }
             int seq = System.Threading.Interlocked.Increment(ref _snapSeq);
             var now = DateTime.Now;
             var fileName = Observability.SnapFileName(seq, now);   // #4 : ms dans le nom (source unique)
