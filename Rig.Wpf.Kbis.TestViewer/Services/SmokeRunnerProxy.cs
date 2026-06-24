@@ -85,8 +85,14 @@ public sealed class SmokeRunnerProxy
         get { lock (_lock) { return _lines.ToList(); } }
     }
 
+    // Le préfixe "[hh:mm:ss.fff] [snap=NNNN] " émis par SmokeRunner.Stamp() est OPTIONNEL et NON capturé :
+    // desc = le LABEL PROPRE (sans stamp). Sinon Description commencerait par "[10:..] [snap=..] " et les
+    // adapters legacy (Kbis/Alertes/Dcademat) — qui font Description.StartsWith("{TAG} : Action"/"Ouvrir …")
+    // pour détecter le step terminal — ne matcheraient JAMAIS → tuile figée sur "Running" (bug observé
+    // DCADEMAT 2026-06-24). Le stamp reste dans le stdout brut (sr-*.stdout.log) pour le debug CLI ; la
+    // corrélation temporelle est portée par SmokeResultLine.Timestamp.
     private static readonly Regex ResultLineRegex = new(
-        @"^\s+(?<icon>[✓✗⊘])\s+(?<desc>.+?)\s*$",
+        @"^\s+(?<icon>[✓✗⊘])\s+(?:\[\d{2}:\d{2}:\d{2}\.\d{3}\]\s+\[snap=[^\]]*\]\s+)?(?<desc>.+?)\s*$",
         RegexOptions.Compiled);
 
     /// <summary>
