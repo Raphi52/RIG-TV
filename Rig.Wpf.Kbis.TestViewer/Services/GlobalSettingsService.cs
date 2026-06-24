@@ -60,11 +60,39 @@ public sealed class GlobalSettings
     public bool UseTestResultCache { get; set; } = false;
 
     /// <summary>
+    /// Serveur SQL (instance) contre lequel tournent les smoke tests.
+    /// Défaut = <c>SQL-DEV\DEV</c> (poste de dev historique). Éditable dans le
+    /// dialog Paramètres (combobox alimentée par le scan réseau) et surchargeable
+    /// au lancement par <c>--server=</c>. Propagé aux workers via la connexion
+    /// assemblée posée sur l'env var <c>RIG_LEGACY_CONNECTION</c>.
+    /// </summary>
+    [JsonPropertyName("databaseServer")]
+    public string DatabaseServer { get; set; } = @"SQL-DEV\DEV";
+
+    /// <summary>
+    /// Base de données ciblée sur le serveur. Défaut = <c>RIG_DEV</c>.
+    /// Surchargeable au lancement par <c>--db=</c>. La base doit posséder le
+    /// schéma + les données RIG attendues par les scénarios (sinon FAIL métier).
+    /// </summary>
+    [JsonPropertyName("databaseName")]
+    public string DatabaseName { get; set; } = "RIG_DEV";
+
+    /// <summary>
     /// Schéma de validation : numéro de version. Bump à chaque ajout de field
     /// (pour piloter une éventuelle migration des fichiers existants).
     /// </summary>
     [JsonPropertyName("schemaVersion")]
-    public int SchemaVersion { get; set; } = 2;
+    public int SchemaVersion { get; set; } = 3;
+
+    /// <summary>Connexion SQL assemblée depuis le serveur + la base courants.</summary>
+    public string BuildConnectionString() => BuildConnectionString(DatabaseServer, DatabaseName);
+
+    /// <summary>
+    /// Assemble une chaîne de connexion en auth Windows (Integrated Security),
+    /// même forme que les défauts en dur de SmokeRunner (LegacyDriver/Program).
+    /// </summary>
+    public static string BuildConnectionString(string server, string database)
+        => $"Server={server};Database={database};Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10;";
 }
 
 /// <summary>

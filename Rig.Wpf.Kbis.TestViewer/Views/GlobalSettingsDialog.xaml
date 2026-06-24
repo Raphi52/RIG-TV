@@ -2,7 +2,7 @@
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Paramètres globaux — Rig Testing"
-        Height="700" Width="560"
+        Height="840" Width="560"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BgWindow}"
         FontFamily="Segoe UI" FontSize="13"
@@ -10,6 +10,7 @@
         ShowInTaskbar="False">
     <Grid Margin="22">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
@@ -134,8 +135,49 @@
             </StackPanel>
         </Border>
 
+        <!-- Section : Base de données (smoke tests → RIG_LEGACY_CONNECTION) -->
+        <Border Grid.Row="5" BorderBrush="{StaticResource BorderSubtle}" BorderThickness="0,0,0,1"
+                Padding="0,12,0,16">
+            <StackPanel>
+                <TextBlock Text="Base de données (smoke tests)" FontWeight="SemiBold" FontSize="14"
+                           Foreground="{StaticResource TextPrimary}"/>
+                <TextBlock Text="Serveur + base contre lesquels tournent les smoke tests. Propagé aux workers via RIG_LEGACY_CONNECTION. Le scan réseau (UDP 1434) est souvent vide → la saisie manuelle du serveur reste possible. Surchargé au lancement par --server= / --db=."
+                           TextWrapping="Wrap" FontSize="11"
+                           Foreground="{StaticResource TextSecondary}" Margin="0,2,0,8"/>
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="64"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Serveur" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondary}"/>
+                    <ComboBox Grid.Row="0" Grid.Column="1" IsEditable="True" Margin="0,0,8,6"
+                              ItemsSource="{Binding DiscoveredServers}"
+                              Text="{Binding DatabaseServer, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              AutomationProperties.AutomationId="CmbDatabaseServer"/>
+                    <Button Grid.Row="0" Grid.Column="2" Content="Scanner réseau" Padding="8,2" Margin="0,0,0,6"
+                            Click="ScanServers_Click"
+                            AutomationProperties.AutomationId="BtnScanServers"/>
+
+                    <TextBlock Grid.Row="1" Grid.Column="0" Text="Base" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextSecondary}"/>
+                    <TextBox Grid.Row="1" Grid.Column="1" Margin="0,0,8,0"
+                             Text="{Binding DatabaseName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             AutomationProperties.AutomationId="TxtDatabaseName"/>
+                </Grid>
+                <TextBlock Text="{Binding DatabaseScanStatus}" FontSize="11" FontFamily="Consolas"
+                           Foreground="{StaticResource TextSecondary}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+            </StackPanel>
+        </Border>
+
         <!-- Spacer + path info -->
-        <StackPanel Grid.Row="5" VerticalAlignment="Bottom" Margin="0,16,0,0">
+        <StackPanel Grid.Row="6" VerticalAlignment="Bottom" Margin="0,16,0,0">
             <TextBlock Text="Fichier de configuration :" FontSize="10"
                        Foreground="{StaticResource TextSecondary}"/>
             <TextBlock Text="{Binding FilePath}" FontFamily="Consolas" FontSize="11"
@@ -143,7 +185,7 @@
         </StackPanel>
 
         <!-- Buttons -->
-        <StackPanel Grid.Row="6" Orientation="Horizontal" HorizontalAlignment="Right"
+        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,16,0,0">
             <Button Content="Annuler" Style="{StaticResource SecondaryButton}"
                     Width="100" Height="34" Margin="0,0,8,0"

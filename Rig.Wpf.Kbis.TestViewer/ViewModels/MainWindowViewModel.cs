@@ -83,6 +83,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _raptureExportProxy = raptureExportProxy;
         _globalSettings = globalSettings;
         _testCache = testCache;
+        // DB des smoke tests : pose RIG_LEGACY_CONNECTION sur ce process (CLI > persisté > défaut)
+        // → héritée par tous les workers SmokeRunner spawnés ensuite.
+        DatabaseStartup.Apply(_globalSettings.Current);
         ScenarioDetail = new ScenarioDetailViewModel(
             _scenarioFiles, _sourceExtractor, _regression,
             jumpToXUnit: NavigateToXUnitTest);
@@ -2348,7 +2351,9 @@ public sealed partial class MainWindowViewModel : ObservableObject
             var result = dlg.ShowDialog();
             if (result == true)
             {
-                Log.Info($"GlobalSettings updated: parallelism={_globalSettings.Current.Parallelism} screenshotsLoop={_globalSettings.Current.ScreenshotsLoopEnabled}");
+                Log.Info($"GlobalSettings updated: parallelism={_globalSettings.Current.Parallelism} screenshotsLoop={_globalSettings.Current.ScreenshotsLoopEnabled} db={_globalSettings.Current.DatabaseServer}/{_globalSettings.Current.DatabaseName}");
+                // Re-applique la connexion DB choisie sur l'env var → les prochains workers l'héritent.
+                DatabaseStartup.Apply(_globalSettings.Current);
                 OnPropertyChanged(nameof(GlobalSettingsSummary));
                 // Note : le parallélisme global pilote RAPTURE uniquement. La suite KBIS = 2 tuiles
                 // fixes (1 VK + 1 XEX) ; le nb de tuiles stress vient du champ X dédié, pas d'ici.
