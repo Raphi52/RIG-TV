@@ -40,6 +40,16 @@
     <Reference Include="System.Runtime.Serialization" />
   </ItemGroup>
 
+  <!-- Source-link du parser + DTO EDI lot3 (worktree wt-edilot3). Standalone : SEULE dépendance =
+       System.Runtime.Serialization (ci-dessus). Aucune ProjectReference / DLL RIG (le reste de
+       RAPTURE_IMPORT — Mapper/Validator/Apply — touche Juge/Instance et n'est PAS linké ici). -->
+  <ItemGroup>
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportDto.cs"
+             Link="RaptureLot3\RaptureImportDto.cs" />
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportParser.cs"
+             Link="RaptureLot3\RaptureImportParser.cs" />
+  </ItemGroup>
+
   <!-- Découplage 2026-05-29 : retiré le link du code Rapture LEGACY (Source/RIG/.../RAPTURE_IMPORT
        + PROC_PREAUD/PREAUD) + les fixtures RGPD. Ces tests (dossiers Import/ + Export/) testaient le
        monolithe → ils y restent. RIG-TV ne garde que les tests DU HARNAIS (KbisTextChecks + RaptureUi
