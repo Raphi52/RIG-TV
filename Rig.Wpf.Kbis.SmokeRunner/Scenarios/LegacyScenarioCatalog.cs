@@ -32,6 +32,21 @@ internal static class LegacyScenarioCatalog
         var numGestion = NumGestion();
         var list = new List<ScenarioDefinition>
         {
+            // ── raptuval-inspect — outil de DIAG : à utiliser avec RIG_LEGACY_EXE=PROC_RAPTUVAL_EXE.exe.
+            //    Après le login (fait par le harnais), laisse vivre le cockpit jusqu'à 90 s pour passer
+            //    l'overlay de chargement, puis le screenshot final fullScreen (RunLegacyKbisScenario)
+            //    capture l'état réel de la grille. Poll borné (pas de condition UIA fiable sur l'overlay
+            //    custom RIG : le hwnd overlay/MainWindow varie — cf. checkpoint 5 du run rapture).
+            ScenarioBuilder.New("raptuval-inspect", "DIAG cockpit RAPTUVAL : attente rendu grille + screenshot final")
+                .Module("kbis")
+                .Step("Attendre le rendu de la grille (poll 500ms, cap 90s)", d =>
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    while (sw.Elapsed.TotalSeconds < 90)
+                        System.Threading.Thread.Sleep(500); // sleep-ok: poll settle-UI borné — overlay custom RIG sans condition UIA pollable, le verdict est le screenshot final
+                })
+                .Build(),
+
             // ── kbis-vk — migré depuis RunLegacyKbisVk. Libellés VERBATIM : ils sont le contrat de
             //    complétion matché par KbisLegacyScenarioAdapter (préfixe "VK :"). NE PAS les altérer.
             ScenarioBuilder.New("kbis-vk", "PROC_VK : Visualisation extrait RCS depuis num_gestion")
