@@ -73,6 +73,17 @@ public partial class MainWindow : Window
         {
             FixedArgs = "--legacy-rapture-export",
         };
+        // 5e proxy : script PowerShell rapture-edi-import.ps1 (tab Import EDI, Chemin B).
+        // Lance powershell.exe -File <script> ; le stdout est streame live dans la box de log.
+        var raptureEdiScript = System.IO.Path.GetFullPath(System.IO.Path.Combine(
+            System.IO.Path.GetDirectoryName(paths.SmokeRunnerExe) ?? ".", @"..\..\..\..\rapture-edi-import.ps1"));
+        var raptureEdiImportProxy = new SmokeRunnerProxy(
+            System.IO.Path.Combine(System.Environment.GetFolderPath(System.Environment.SpecialFolder.System), @"WindowsPowerShell\v1.0\powershell.exe"),
+            paths.SmokeRendersDir)
+        {
+            FixedArgs = "-ExecutionPolicy Bypass -NoProfile -File \"" + raptureEdiScript + "\"",
+        };
+        Log.Info("Paths resolved: RaptureEdiScript=" + raptureEdiScript);
         var regression = new RegressionRunner(paths);
         var regressionCatalog = new RegressionCatalog(paths);
         var scenarioFiles = new ScenarioFileService(paths);
@@ -104,7 +115,7 @@ public partial class MainWindow : Window
 
         _vm = new MainWindowViewModel(paths, smokeProxy, legacySmokeProxy, regression, regressionCatalog,
             scenarioFiles, sourceExtractor, raptureRegression, raptureRegressionCatalog, raptureSmokeProxy, raptureExportProxy,
-            globalSettings, testCache);
+            globalSettings, testCache, raptureEdiImportProxy);
         DataContext = _vm;
 
         Loaded += async (_, _) =>
@@ -238,9 +249,9 @@ public partial class MainWindow : Window
     private async void RunMlLoop_Click(object sender, RoutedEventArgs e)
     {
         const string script = @"C:\Code RIG\Tools\ml-loop.ps1";
-        const string promptPath = @"C:\Code RIG\Audit\ml-loop-prompt.md";
-        const string loopStatePath = @"C:\Code RIG\Audit\LOOP_STATE.md";
-        const string jsonPath = @"C:\Code RIG\Audit\last-batch-result.json";
+        string promptPath = System.IO.Path.Combine(Rig.Wpf.Kbis.SmokeRunner.AuditPaths.Root, "ml-loop-prompt.md");
+        string loopStatePath = System.IO.Path.Combine(Rig.Wpf.Kbis.SmokeRunner.AuditPaths.Root, "LOOP_STATE.md");
+        string jsonPath = System.IO.Path.Combine(Rig.Wpf.Kbis.SmokeRunner.AuditPaths.Root, "last-batch-result.json");
 
         if (!System.IO.File.Exists(script))
         {

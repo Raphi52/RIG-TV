@@ -36,6 +36,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
     private readonly RegressionCatalog _raptureRegressionCatalog;
     private readonly SmokeRunnerProxy _raptureSmokeProxy;
     private readonly SmokeRunnerProxy _raptureExportProxy;
+    private readonly SmokeRunnerProxy _raptureEdiImportProxy;
     private readonly GlobalSettingsService _globalSettings;
     // ML LOOP Phase 4 — cache des résultats de tests (memoization).
     // Lookup par (codeHash drivers × scenarioId) → PASS connu = skip exec.
@@ -68,7 +69,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         SmokeRunnerProxy raptureSmokeProxy,
         SmokeRunnerProxy raptureExportProxy,
         GlobalSettingsService globalSettings,
-        TestResultCacheService testCache)
+        TestResultCacheService testCache,
+        SmokeRunnerProxy raptureEdiImportProxy)
     {
         _paths = paths;
         _smokeProxy = smokeProxy;
@@ -81,6 +83,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _raptureRegressionCatalog = raptureRegressionCatalog;
         _raptureSmokeProxy = raptureSmokeProxy;
         _raptureExportProxy = raptureExportProxy;
+        _raptureEdiImportProxy = raptureEdiImportProxy;
         _globalSettings = globalSettings;
         _testCache = testCache;
         // DB des smoke tests : pose RIG_LEGACY_CONNECTION sur ce process (CLI > persisté > défaut)
@@ -198,6 +201,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
         _raptureExportProxy.LinesChanged += OnRaptureExportLinesChanged;
         _raptureExportProxy.StateChanged += OnRaptureExportStateChanged;
         RefreshRaptureExportFileCount(); // initial badge count
+        _raptureEdiImportProxy.LinesChanged += OnRaptureEdiImportLinesChanged;
+        _raptureEdiImportProxy.StateChanged += OnRaptureEdiImportStateChanged;
 
         // ── Scénarios (snapshots .verified.json) ─────────────────────────
         ScenarioFiles = new ObservableCollection<ScenarioFileViewModel>();
@@ -1099,6 +1104,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
     public string RaptureExportExeStatus => RaptureExportExeExists
         ? $"SmokeRunner --legacy-rapture-export : {_raptureExportProxy.ExePath}"
         : $"⚠ SmokeRunner.exe introuvable : {_raptureExportProxy.ExePath}";
+
+    // ── Rapture EDI Import (tab Import EDI) : log live du scenario rapture-edi-import.ps1 ──
+    [ObservableProperty] private string? raptureEdiImportLastStdout;
+    public bool IsRaptureEdiImportRunning => _raptureEdiImportProxy.IsRunning;
 
     // ── Scénarios section (snapshots .verified.json) ────────────────────
     public ObservableCollection<ScenarioFileViewModel> ScenarioFiles { get; }
@@ -3341,7 +3350,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
         // Le driver poll ce fichier et compare son timestamp à un baseline.
         try
         {
-            var auditDir = @"C:\Code RIG\Audit";
+            var auditDir = Rig.Wpf.Kbis.SmokeRunner.AuditPaths.Root;
             if (!Directory.Exists(auditDir)) Directory.CreateDirectory(auditDir);
 
             // (1) Compat — fichier txt légacy
@@ -3815,6 +3824,44 @@ public sealed partial class MainWindowViewModel : ObservableObject
     }
 
     private bool CanControlRaptureExport() => IsRaptureExportRunning;
+
+    // ── Rapture EDI Import (tab Import EDI) : lance rapture-edi-import.ps1, streame le log ──
+    [RelayCommand(CanExecute = nameof(CanRunRaptureEdiImport))]
+    private async Task RunRaptureEdiImportAsync()
+    {
+        Log.Info("RunRaptureEdiImport clicked");
+        try { await _raptureEdiImportProxy.RunAsync(enableUi: false); }
+        catch (Exception ex) { Log.Error("RunRaptureEdiImport threw", ex); ShowError("Import EDI", ex); }
+    }
+    private bool CanRunRaptureEdiImport() => !IsRaptureEdiImportRunning;
+
+    [RelayCommand(CanExecute = nameof(CanStopRaptureEdiImport))]
+    private void StopRaptureEdiImport()
+    {
+        Log.Info("Stop Import EDI demande");
+        _raptureEdiImportProxy.Stop();
+    }
+    private bool CanStopRaptureEdiImport() => IsRaptureEdiImportRunning;
+
+    private void OnRaptureEdiImportLinesChanged()
+    {
+        Application.Current?.Dispatcher.BeginInvoke((Action)(() =>
+        {
+            RaptureEdiImportLastStdout = _raptureEdiImportProxy.LastFullStdout;
+        }));
+    }
+
+    private void OnRaptureEdiImportStateChanged()
+    {
+        Application.Current?.Dispatcher.BeginInvoke((Action)(() =>
+        {
+            OnPropertyChanged(nameof(IsRaptureEdiImportRunning));
+            RunRaptureEdiImportCommand.NotifyCanExecuteChanged();
+            StopRaptureEdiImportCommand.NotifyCanExecuteChanged();
+            if (!_raptureEdiImportProxy.IsRunning)
+                RaptureEdiImportLastStdout = _raptureEdiImportProxy.LastFullStdout;
+        }));
+    }
 
     /// <summary>Libellé pause/reprise pour le tab Export (binding miroir de l'Import).</summary>
     public string RaptureExportPauseLabel => _raptureExportProxy.IsPaused ? "▶  Reprendre" : "⏸  Pause";
