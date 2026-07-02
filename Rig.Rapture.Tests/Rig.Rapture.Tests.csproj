@@ -40,6 +40,32 @@
     <Reference Include="System.Runtime.Serialization" />
   </ItemGroup>
 
+  <!-- P1 couverture xUnit Mapper/Validator (2026-07-01) — Option C : réf DLL prébuildées AnyCPU/MSIL
+       (CorFlags 0x9, chargeables net48 AnyCPU). PAS de ProjectReference PROC_RETAUD (tirerait
+       Forms/Crystal/VB6/COM → casse). HintPath sur le bin\Debug du worktree wt-edilot3 (frais = anti-drift
+       vs la GAC C:\rig\Bin Dot Net Gac datée 04). Private=true : copie au test-host pour le chargement runtime
+       des types RigMetier référencés par Mapper/Validator. -->
+  <ItemGroup>
+    <Reference Include="RigMetier">
+      <HintPath>..\..\wt-edilot3\Source\Outils\DLL\RigMetier\bin\Debug\RigMetier.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="RigTools">
+      <HintPath>..\..\wt-edilot3\Source\Outils\DLL\RigTools\bin\Debug\RigTools.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="RigToolsInterface">
+      <HintPath>..\..\wt-edilot3\Source\Outils\DLL\RigToolsInterface\bin\Debug\RigToolsInterface.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <!-- check: CS0012 build citait explicitement RigBaseGreffe (classes BASE_GREFFE_PARQUETIER/CODE_PLUMITIF/
+         TYPE_PC/TYPE_PATRIMOINE_EI, bases des types METIER) v4.0.2013.80 → réf ajoutée (worktree = même version). -->
+    <Reference Include="RigBaseGreffe">
+      <HintPath>..\..\wt-edilot3\Source\Outils\DLL\RigBaseGreffe\bin\Debug\RigBaseGreffe.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
   <!-- Source-link du parser + DTO EDI lot3 (worktree wt-edilot3). Standalone : SEULE dépendance =
        System.Runtime.Serialization (ci-dessus). Aucune ProjectReference / DLL RIG (le reste de
        RAPTURE_IMPORT — Mapper/Validator/Apply — touche Juge/Instance et n'est PAS linké ici). -->
@@ -48,6 +74,22 @@
              Link="RaptureLot3\RaptureImportDto.cs" />
     <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportParser.cs"
              Link="RaptureLot3\RaptureImportParser.cs" />
+    <!-- P1 (2026-07-01) : Mapper + Validator linkés (compilent contre les réf DLL ci-dessus). -->
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportMapper.cs"
+             Link="RaptureLot3\RaptureImportMapper.cs" />
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportValidator.cs"
+             Link="RaptureLot3\RaptureImportValidator.cs" />
+    <!-- P1 Apply : ApplyService + ses transitifs même-dossier (Diff/NoteAccessor/PCImportService).
+         On teste seulement ses HELPERS PURS (ParseDate/SqlStr*/BuildInputsForField) par réflexion ;
+         Apply() lui-même (SqlRigConnectionWriteOnly + BD réelle) reste couvert par les smoke tests. -->
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportDiff.cs"
+             Link="RaptureLot3\RaptureImportDiff.cs" />
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureNoteAccessor.cs"
+             Link="RaptureLot3\RaptureNoteAccessor.cs" />
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\PCImportService.cs"
+             Link="RaptureLot3\PCImportService.cs" />
+    <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportApplyService.cs"
+             Link="RaptureLot3\RaptureImportApplyService.cs" />
   </ItemGroup>
 
   <!-- Découplage 2026-05-29 : retiré le link du code Rapture LEGACY (Source/RIG/.../RAPTURE_IMPORT

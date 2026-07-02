@@ -11,15 +11,27 @@ namespace Rig.Rapture.Tests
     // de Mutex nommés (Global\RigSmokeAud_<id>) en exécution parallèle.
     public class AudienceLockTests
     {
+        // CausalHypothesis (vérifiée) : l'ancien corps `await Task.Run(...)` DANS le `using` faisait reprendre
+        // le Dispose (ReleaseMutex) sur un thread ≠ thread acquéreur (Mutex thread-affine, cf. AudienceLock.cs:11).
+        // ReleaseMutex hors-thread échoue silencieusement → mutex ABANDONNÉ → au run suivant WaitOne lève
+        // AbandonedMutexException, traité comme "acquis" (AudienceLock.cs:40-43) → le 2e acquire réussit →
+        // "No exception thrown" (flaky sous charge/répétition). Fix : méthode SYNCHRONE + thread dédié pour le
+        // acquire concurrent → release garanti sur le thread acquéreur, déterministe.
         [Fact]
-        public async Task Acquire_meme_audience_pendant_qu_un_lock_est_tenu_throw_TimeoutException()
+        public void Acquire_meme_audience_pendant_qu_un_lock_est_tenu_throw_TimeoutException()
         {
             int aud = 990001; // ID dédié au test, jamais utilisé en base
             using (AudienceLock.Acquire(aud, TimeSpan.FromSeconds(5)))
             {
-                await Task.Run(() =>
-                    Assert.Throws<TimeoutException>(() =>
-                        AudienceLock.Acquire(aud, TimeSpan.FromMilliseconds(300))));
+                TimeoutException caught = null;
+                var contender = new Thread(() =>
+                {
+                    try { using (AudienceLock.Acquire(aud, TimeSpan.FromMilliseconds(300))) { } }
+                    catch (TimeoutException ex) { caught = ex; }
+                });
+                contender.Start();
+                contender.Join();
+                Assert.NotNull(caught); // le 2e acquire (autre thread, verrou tenu) DOIT timeout
             }
         }
 

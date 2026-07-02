@@ -6,6 +6,21 @@
       "id": "cas-diff-replacement-note",
       "rate": "~20%",
       "cause": "OpenFileDialog absent après 10s — timing FlaUI, clic Importer Rapture parfois perdu"
+    },
+    {
+      "id": "cas-a-bis-audience-differente",
+      "rate": "intermittent (vu 2026-07-01, absent des runs suivants)",
+      "cause": "crash worker au 1er lancement (« JSON résultat worker absent ») — instabilité aléatoire de démarrage worker selfdrive sous parallélisme=4, change de scénario d'un run à l'autre ; self-healed au retry (coût = tail ~120s)"
+    },
+    {
+      "id": "cas-diff-affaire-non-trouvee",
+      "rate": "intermittent (vu 2026-07-01)",
+      "cause": "même instabilité de démarrage worker que cas-a-bis-audience-differente — pas un bug du scénario"
+    },
+    {
+      "id": "cas-err-date-invalide",
+      "rate": "intermittent (vu 2x 2026-07-01)",
+      "cause": "même instabilité de démarrage worker — pas un bug du scénario"
     }
   ],
   "dataDriftScenarios": [

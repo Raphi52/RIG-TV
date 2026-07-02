@@ -45,7 +45,7 @@ public class GlobalSettingsServiceTests : IDisposable
         svc.Current.HeadlessMode.Should().BeTrue("default HeadlessMode = true");
         svc.Current.ScreenshotsLoopEnabled.Should().BeTrue("default ScreenshotsLoopEnabled = true");
         svc.Current.UseTestResultCache.Should().BeFalse("default UseTestResultCache = false");
-        svc.Current.SchemaVersion.Should().Be(2, "default SchemaVersion = 2");
+        svc.Current.SchemaVersion.Should().Be(3, "default SchemaVersion = 3 (schéma bumpé, cf. GlobalSettingsService.cs SchemaVersion = 3)");
     }
 
     [Fact]
