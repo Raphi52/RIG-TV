@@ -34,6 +34,11 @@ function Sql($server, $db, $query) {
     if ($LASTEXITCODE -ne 0) { throw "sqlcmd KO ($server/$db): $out" }
     return ($out | Where-Object { $_ -ne '' })
 }
+function SqlInt($server, $db, $query) {
+    $r = "$((Sql $server $db $query) | Select-Object -Last 1)".Trim()
+    if ($r -notmatch '^\d+$') { throw "Reponse SQL inattendue (attendu un entier) : '$r'" }
+    return [int]$r
+}
 
 $fail = $false
 try {
@@ -49,7 +54,7 @@ try {
     Write-Host "[fixture] $tmp (id_audience=$IdAudience)"
 
     # 2. Snapshot DEMAT_RAPTURE (pour isoler les lignes creees par CE run).
-    $maxBefore = [int]((Sql $RigDevServer $RigDevDb "SELECT ISNULL(MAX(RAPTU_ID_RAPTU),0) FROM DEMAT_RAPTURE") | Select-Object -Last 1)
+    $maxBefore = SqlInt $RigDevServer $RigDevDb "SELECT ISNULL(MAX(RAPTU_ID_RAPTU),0) FROM DEMAT_RAPTURE"
     Write-Host "[snapshot] DEMAT_RAPTURE max id avant = $maxBefore"
 
     # 3. Lancer l'import EDI (console dev-safe).
@@ -61,7 +66,7 @@ try {
     Write-Host "[console]`n$stdout"
 
     # 4. Assertion : des lignes staging ont ete creees.
-    $created = [int]((Sql $RigDevServer $RigDevDb "SELECT COUNT(*) FROM DEMAT_RAPTURE WHERE RAPTU_ID_RAPTU > $maxBefore AND RAPTU_ID_AUDNC = $IdAudience") | Select-Object -Last 1)
+    $created = SqlInt $RigDevServer $RigDevDb "SELECT COUNT(*) FROM DEMAT_RAPTURE WHERE RAPTU_ID_RAPTU > $maxBefore AND RAPTU_ID_AUDNC = $IdAudience"
     Write-Host "[assert] lignes DEMAT_RAPTURE creees = $created"
 
     if ($created -gt 0) {
@@ -79,7 +84,9 @@ try {
     # 5. Cleanup net-zero (toujours) : lignes staging de CE run + FICHIER/FLUX de test + temp.
     try {
         if ($null -ne $maxBefore) {
-            Sql $RigDevServer $RigDevDb "DELETE FROM DEMAT_RAPTURE WHERE RAPTU_ID_RAPTU > $maxBefore" | Out-Null
+            # Scope IDENTIQUE a l'assertion (id>snapshot ET audience) : ne JAMAIS toucher les lignes
+            # d'un autre process/audience sur la base dev PARTAGEE (bug corrige suite audit judge).
+            Sql $RigDevServer $RigDevDb "DELETE FROM DEMAT_RAPTURE WHERE RAPTU_ID_RAPTU > $maxBefore AND RAPTU_ID_AUDNC = $IdAudience" | Out-Null
         }
         Sql $EdiServer $EdiDb "DELETE FROM FLUX_ENTRANT WHERE FLUENT_CODE_EDI='$CodeEdi'; DELETE FROM FICHIER_ENTRANT WHERE FICENT_CODE_EDI='$CodeEdi';" | Out-Null
         Remove-Item $tmp -ErrorAction SilentlyContinue
