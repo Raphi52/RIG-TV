@@ -609,6 +609,22 @@ public sealed class LegacyDriver : IDisposable
     }
 
     /// <summary>
+    /// Sélectionne le dernier tab ≠ Accueil du tabControl (ex. le tab ouvert par un processus
+    /// qu'on vient de lancer) — utilisé par les scénarios de diag pour que le screenshot final
+    /// capture le processus et non le menu d'accueil.
+    /// </summary>
+    public void SelectLastNonAccueilTab()
+    {
+        var tabControl = FindByAutomationId("tabControl");
+        if (tabControl is null) { Console.WriteLine("      → SelectLastNonAccueilTab : tabControl introuvable"); return; }
+        var tabs = tabControl.FindAllChildren();
+        var target = tabs.LastOrDefault(t => SafeText(() => t.Name).IndexOf("accueil", StringComparison.OrdinalIgnoreCase) < 0);
+        if (target is null) { Console.WriteLine("      → SelectLastNonAccueilTab : aucun tab non-Accueil"); return; }
+        Console.WriteLine($"      → Select tab '{SafeText(() => target.Name)}'");
+        Interaction.Select(target);
+    }
+
+    /// <summary>
     /// Ouvre un processus de la Console d'accueil en scannant onglets btn1..btn7 +
     /// items lstSousmenu, et double-cliquant le 1er item de lstProcessus dont le
     /// Name matche <paramref name="nameMatcher"/>. Pattern générique extrait de
@@ -1249,7 +1265,7 @@ public sealed class LegacyDriver : IDisposable
         // pour observer que la valeur est BIEN affichée dans le champ.
         try
         {
-            var dbgDir = @"C:\Code RIG\Audit\screenshots-loop";
+            var dbgDir = AuditPaths.Combine("screenshots-loop");
             Directory.CreateDirectory(dbgDir);
             var dbgPath = Path.Combine(dbgDir, $"dialog-after-setvalue-{DateTime.Now:yyyyMMdd-HHmmss}.png");
             Interaction.CaptureWindow(dialog, dbgPath);

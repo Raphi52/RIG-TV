@@ -47,6 +47,32 @@ internal static class LegacyScenarioCatalog
                 })
                 .Build(),
 
+            // ── raptuval-cockpit — DIAG : lance RAPTUVAL par le VRAI chemin utilisateur (Console
+            //    d'accueil → scan menu → activation), là où le standalone PROC_RAPTUVAL_EXE reste
+            //    sur son overlay (cf. run rapture checkpoint 6 : le cycle demande→étape n'est
+            //    orchestré que par la Console). Verdict = tab ouvert (WaitForProcessusTabLoaded)
+            //    + screenshot final fullScreen après settle.
+            ScenarioBuilder.New("raptuval-cockpit", "DIAG cockpit RAPTUVAL via Console d'accueil : nav menu + rendu grille")
+                .Module("kbis")
+                .Step("Ouvrir RAPTUVAL depuis la Console d'accueil (scan menu)", d =>
+                    d.OpenProcessus("RAPTUVAL", name =>
+                    {
+                        var n = (name ?? "").Trim();
+                        if (n.Length == 0) return false;
+                        var firstToken = n.Split(' ')[0];
+                        if (firstToken.Equals("RAPTUVAL", StringComparison.OrdinalIgnoreCase)) return true;
+                        return n.IndexOf("validation", StringComparison.OrdinalIgnoreCase) >= 0
+                            && n.IndexOf("rapture", StringComparison.OrdinalIgnoreCase) >= 0;
+                    }))
+                .Step("Basculer sur le tab du processus (≠ Accueil)", d => d.SelectLastNonAccueilTab())
+                .Step("Attendre le rendu de la grille (poll 500ms, cap 45s)", d =>
+                {
+                    var sw = System.Diagnostics.Stopwatch.StartNew();
+                    while (sw.Elapsed.TotalSeconds < 45)
+                        System.Threading.Thread.Sleep(500); // sleep-ok: settle-UI borné post-ouverture tab — verdict = screenshot final
+                })
+                .Build(),
+
             // ── kbis-vk — migré depuis RunLegacyKbisVk. Libellés VERBATIM : ils sont le contrat de
             //    complétion matché par KbisLegacyScenarioAdapter (préfixe "VK :"). NE PAS les altérer.
             ScenarioBuilder.New("kbis-vk", "PROC_VK : Visualisation extrait RCS depuis num_gestion")
