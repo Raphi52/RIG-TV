@@ -1,0 +1,700 @@
+{
+    "codeGreffe": "9995",
+    "dateAudience": "2026-06-29",
+    "heureAudience": "14:30",
+    "salleAudience": "",
+    "chambre": "Audience interactive",
+    "section": "audience interactive",
+    "typeAudience": "contentieux général",
+    "composition": {
+        "president": "Mme LOMBARD Florence",
+        "juges": [
+            "M. LESBROS Michel",
+            "M. RUBAT Gilles"
+        ],
+        "greffier": "Mme ROCHE Marjorie",
+        "parquetier": null
+    },
+    "affaires": [
+        {
+            "numeroAppel": "01_001",
+            "numeroOrdre": 7,
+            "heureAppel": "14:30",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00037",
+            "idInstance": 476565,
+            "idAffaire": 5194343,
+            "natureAffaire": "exécution ou DI autre contrat",
+            "typeAffaire": "CO DIAC",
+            "nomAffaire": "ALDO INTERNATIONAL GROUPE GMBH c\/ SPARTOO",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "ALDO INTERNATIONAL GROUPE GMBH",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": "Me Frédéric JEANNIN",
+                    "avocatPostulant": "Me Marie-Catherine CALDARA-BATTINI",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "SPARTOO",
+                    "qualite": "défendeur",
+                    "siren": "489 895 821",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me ABAD Johanna",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "SARAGAGLIA Boris",
+                            "fonctionCode": "PRCA",
+                            "fonctionLibelle": "président conseil administration"
+                        },
+                        {
+                            "nom": "SARAGAGLIA Boris",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        },
+                        {
+                            "nom": "LORNE Paul",
+                            "fonctionCode": "DGD",
+                            "fonctionLibelle": "directeur général délégué"
+                        },
+                        {
+                            "nom": "MOSER Aymeric",
+                            "fonctionCode": "DGD",
+                            "fonctionLibelle": "directeur général délégué"
+                        },
+                        {
+                            "nom": "TEIL Sébastien",
+                            "fonctionCode": "DGD",
+                            "fonctionLibelle": "directeur général délégué"
+                        },
+                        {
+                            "nom": "SARAGAGLIA Boris",
+                            "fonctionCode": "ADCA",
+                            "fonctionLibelle": "administrateur"
+                        },
+                        {
+                            "nom": "SOFINA",
+                            "fonctionCode": "ADCA",
+                            "fonctionLibelle": "administrateur"
+                        },
+                        {
+                            "nom": "COLIN Sylvie",
+                            "fonctionCode": "ADCA",
+                            "fonctionLibelle": "administrateur"
+                        },
+                        {
+                            "nom": "COURT-PAYEN Niels",
+                            "fonctionCode": "ADCA",
+                            "fonctionLibelle": "administrateur"
+                        },
+                        {
+                            "nom": "THE BUSINESS INTELLIGENCE NETWORK LIMITED",
+                            "fonctionCode": "ADCA",
+                            "fonctionLibelle": "administrateur"
+                        },
+                        {
+                            "nom": "AGILI(3F)",
+                            "fonctionCode": "CCT",
+                            "fonctionLibelle": "commissaire aux comptes titulaire"
+                        },
+                        {
+                            "nom": "KPMG S.A",
+                            "fonctionCode": "CCT",
+                            "fonctionLibelle": "commissaire aux comptes titulaire"
+                        },
+                        {
+                            "nom": "SALUSTRO REYDEL ",
+                            "fonctionCode": "CCS",
+                            "fonctionLibelle": "commissaire aux comptes suppléant"
+                        },
+                        {
+                            "nom": "ARPACHA",
+                            "fonctionCode": "CCS",
+                            "fonctionLibelle": "commissaire aux comptes suppléant"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_002",
+            "numeroOrdre": 4,
+            "heureAppel": "14:50",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00243",
+            "idInstance": 483853,
+            "idAffaire": 5303297,
+            "natureAffaire": "divers",
+            "typeAffaire": "DIV",
+            "nomAffaire": "Me Christophe ROUMEZI ès qualités de liquidateur judiciaire de la société KERIA c\/ La SNC ALTA CRP GUIPAVAS",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "Me Christophe ROUMEZI ès qualités de liquidateur judiciaire de la société KERIA",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Cédric LENUZZA  Avocat",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SNC ALTA CRP GUIPAVAS",
+                    "qualite": "défendeur",
+                    "siren": "451 231 351",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me GOARANT Catherine",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_003",
+            "numeroOrdre": 4,
+            "heureAppel": "15:10",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00251",
+            "idInstance": 484016,
+            "idAffaire": 5308640,
+            "natureAffaire": "divers",
+            "typeAffaire": "DIV",
+            "nomAffaire": "Me Christophe ROUMEZI Mandataire liquidateur ès qualités de liquidateur de la société KERIA c\/ La SCI LIMOGES 87\/01",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "Me Christophe ROUMEZI Mandataire liquidateur ès qualités de liquidateur de la société KERIA",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Cédric LENUZZA  Avocat",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SCI LIMOGES 87\/01",
+                    "qualite": "défendeur",
+                    "siren": "440 573 400",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me GRIMAUD Alexis",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "BARBE Frédéric",
+                            "fonctionCode": "GERAN",
+                            "fonctionLibelle": "gérant"
+                        },
+                        {
+                            "nom": "HBI",
+                            "fonctionCode": "ASSO",
+                            "fonctionLibelle": "Associé"
+                        },
+                        {
+                            "nom": "SIBAR",
+                            "fonctionCode": "ASSO",
+                            "fonctionLibelle": "Associé"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_004",
+            "numeroOrdre": 8,
+            "heureAppel": "15:30",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00273",
+            "idInstance": 486002,
+            "idAffaire": 5333466,
+            "natureAffaire": "OP : assignation à bref délai",
+            "typeAffaire": "ABDOP",
+            "nomAffaire": "La SAS Concierge Personal SAS c\/ M. BOULO Marc-Antoine",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "La SAS Concierge Personal SAS",
+                    "qualite": "demandeur",
+                    "siren": "807 787 312",
+                    "avocatPlaidant": "Me BECAUD Alexandre",
+                    "avocatPostulant": "SELARL EUROPA AVOCATS",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. BOULO Marc-Antoine",
+                    "qualite": "défendeur",
+                    "siren": "880 996 319",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Clément LOPEZ",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_005",
+            "numeroOrdre": 4,
+            "heureAppel": "15:50",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00430",
+            "idInstance": 491036,
+            "idAffaire": 5400713,
+            "natureAffaire": "demande relative à un contrat",
+            "typeAffaire": "CON DIV",
+            "nomAffaire": "BPIFRANCE c\/ La SAS ASFOOD INTERNATIONAL",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "BPIFRANCE",
+                    "qualite": "demandeur à l'injonction de payer",
+                    "siren": "483 790 069",
+                    "avocatPlaidant": "TORIEL et Associés AVOCATS",
+                    "avocatPostulant": "Me SELARL CDMF - AVOCATS Maître Jean Luc MEDINA",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SAS ASFOOD INTERNATIONAL",
+                    "qualite": "défendeur à l'injonction de payer",
+                    "siren": "818 404 568",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Cabinet d'Avocats STEMM CORPORATE Maître Jean-Patrick HERNANDEZ Avocat",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "NONO Victor",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        },
+                        {
+                            "nom": "DUC Gilles",
+                            "fonctionCode": "DG",
+                            "fonctionLibelle": "directeur général"
+                        }
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_001",
+            "numeroOrdre": 10,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2024J00163",
+            "idInstance": 463738,
+            "idAffaire": 4997041,
+            "natureAffaire": "exécution ou DI autre contrat",
+            "typeAffaire": "CO DIAC",
+            "nomAffaire": "FRANCE BOISSONS RHONE ALPES, La SAS JP et GINE, M. Jean-Placide TSOUNGUI NDZINGA c\/ JP et GINE, La SAS FRANCE BOISSONS RHONE ALPES, M. TSOUNGUI NDZINGA Placide, LA COMMUNAUTE DE COMMUNE DU GRESIVAUDAN",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "FRANCE BOISSONS RHONE ALPES",
+                    "qualite": "demandeur",
+                    "siren": "310 455 043",
+                    "avocatPlaidant": "Me HUBERT Marion",
+                    "avocatPostulant": "SCP FICHTER & TAMBE",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                },
+                {
+                    "nom": "La SAS JP et GINE",
+                    "qualite": "demandeur",
+                    "siren": "830 868 022",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Alain GONDOUIN Avocat",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "TSOUNGUI NDZINGA Placide",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                },
+                {
+                    "nom": "M. Jean-Placide TSOUNGUI NDZINGA",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Alain GONDOUIN Avocat",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "JP et GINE",
+                    "qualite": "défendeur",
+                    "siren": "830 868 022",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Alain GONDOUIN Avocat",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "TSOUNGUI NDZINGA Placide",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                },
+                {
+                    "nom": "La SAS FRANCE BOISSONS RHONE ALPES",
+                    "qualite": "défendeur",
+                    "siren": "310 455 043",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "SCP FICHTER & TAMBE",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                },
+                {
+                    "nom": "M. TSOUNGUI NDZINGA Placide",
+                    "qualite": "défendeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Alain GONDOUIN Avocat",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                },
+                {
+                    "nom": "LA COMMUNAUTE DE COMMUNE DU GRESIVAUDAN",
+                    "qualite": "défendeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me David ROGUET Avocat",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_002",
+            "numeroOrdre": 11,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2024J00186",
+            "idInstance": 464379,
+            "idAffaire": 5009759,
+            "natureAffaire": "demande relative à un  prêt",
+            "typeAffaire": "PR DIV",
+            "nomAffaire": "Banque populaire Auvergne Rhône Alpes c\/ Mme NARDY Céline",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "Banque populaire Auvergne Rhône Alpes",
+                    "qualite": "demandeur",
+                    "siren": "605 520 071",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "SCP Franck BENHAMOU",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "Mme NARDY Céline",
+                    "qualite": "défendeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Alban VILLECROZE",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_003",
+            "numeroOrdre": 10,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2024J00431",
+            "idInstance": 469079,
+            "idAffaire": 5109236,
+            "natureAffaire": "divers",
+            "typeAffaire": "DIV",
+            "nomAffaire": "La SAS MALONE HOTEL 26 c\/ La SA AXA FRANCE IARD",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "La SAS MALONE HOTEL 26",
+                    "qualite": "demandeur",
+                    "siren": "918 020 272",
+                    "avocatPlaidant": "Me Thomas DE BOYSSON - AARPI CHATAIN & ASSOCIES",
+                    "avocatPostulant": "Me LE MAT GAELLE",
+                    "present": false,
+                    "dirigeants": [
+                        {
+                            "nom": "MALONE HOLDING",
+                            "fonctionCode": "PRPM",
+                            "fonctionLibelle": "président"
+                        }
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SA AXA FRANCE IARD",
+                    "qualite": "défendeur",
+                    "siren": "722 057 460",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Jean-Bruno PETIT, Cabinet LIGAS-RAYMOND, PETIT",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_004",
+            "numeroOrdre": 11,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2024J00461",
+            "idInstance": 470328,
+            "idAffaire": 5129699,
+            "natureAffaire": "paiement, résiliation crédit bail",
+            "typeAffaire": "CB PRE",
+            "nomAffaire": "COMPAGNIE GENERALE DE CREDIT AUX PARTICULIERS CREDIPAR c\/ M. GENEVOIS Cyrille",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "COMPAGNIE GENERALE DE CREDIT AUX PARTICULIERS CREDIPAR",
+                    "qualite": "demandeur",
+                    "siren": "317 425 981",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me SELARL CDMF - AVOCATS Maître Jean Luc MEDINA",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "M. GENEVOIS Cyrille",
+                    "qualite": "défendeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me MICCOLI Jordan",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "02_005",
+            "numeroOrdre": 9,
+            "heureAppel": null,
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2024J00462",
+            "idInstance": 470329,
+            "idAffaire": 5129797,
+            "natureAffaire": "action responsabilite fournisseurs (avant le 01\/01\/06)",
+            "typeAffaire": "PC  RESFOU",
+            "nomAffaire": "SAINT SULPICE ELEVAGE DREVON FRERES c\/ SCANIA FRANCE SAS",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "SAINT SULPICE ELEVAGE DREVON FRERES",
+                    "qualite": "demandeur",
+                    "siren": "327 686 275",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me JULIEN TAMBE",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "SCANIA FRANCE SAS",
+                    "qualite": "défendeur",
+                    "siren": "307 166 934",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me MICCOLI Jordan",
+                    "present": false,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        }
+    ]
+}

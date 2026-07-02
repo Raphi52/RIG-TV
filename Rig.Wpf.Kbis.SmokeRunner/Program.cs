@@ -1746,6 +1746,10 @@ internal static partial class Program
         public HashSet<int> PreNoteIds = new HashSet<int>();
         /// <summary>HashSet des APPAF_ID_INSTN pour scoper les requêtes au domaine de cette audience.</summary>
         public HashSet<int> InstanceIds = new HashSet<int>();
+        /// <summary>Map PRT_ID_PRT → [PRT_ID_MNDTR_PLAI, PRT_ID_MNDTR_POS, PRT_MODE_PRESENTATION] —
+        /// colonnes PARTIE écrites par ApplyPartie/ApplyPartiePresence (P2). Sans ce snapshot, un
+        /// scénario --apply qui exerce ces écritures ne serait pas net-zéro.</summary>
+        public Dictionary<int, object[]> PartieSnapshot = new Dictionary<int, object[]>();
     }
 
     /// <summary>Rapport du restore — utilisé pour vérifier net-zero.</summary>
@@ -1823,6 +1827,21 @@ internal static partial class Program
             }
         }
 
+        // 2-bis. Snapshot colonnes PARTIE écrites par l'apply (avocats + présence, P2)
+        using (var cmd = new System.Data.SqlClient.SqlCommand(
+            $"SELECT p.PRT_ID_PRT, p.PRT_ID_MNDTR_PLAI, p.PRT_ID_MNDTR_POS, p.PRT_MODE_PRESENTATION FROM PARTIE p WHERE p.PRT_ID_INSTN IN ({instIdsCsv})", conn))
+        {
+            using var dr = cmd.ExecuteReader();
+            while (dr.Read())
+            {
+                snap.PartieSnapshot[dr.GetInt32(0)] = new object[] {
+                    dr.IsDBNull(1) ? null : (object)dr.GetInt32(1),
+                    dr.IsDBNull(2) ? null : (object)dr.GetInt32(2),
+                    dr.IsDBNull(3) ? null : (object)dr.GetString(3)
+                };
+            }
+        }
+
         // 3. Snapshot IDs NOTE_PROCEDURE RAPTURE_* préexistantes (pour ne supprimer QUE les nouvelles)
         using (var cmd = new System.Data.SqlClient.SqlCommand(
             $"SELECT NTPRC_ID_NTPRC FROM NOTE_PROCEDURE WHERE NTPRC_ORIGINE_NOTE LIKE 'RAPTURE!_%' ESCAPE '!' AND NTPRC_ID_INSTN IN ({instIdsCsv})", conn))
@@ -1853,6 +1872,21 @@ internal static partial class Program
             try { report.AppafRestored += cmd.ExecuteNonQuery(); }
             catch (Exception ex) { Console.WriteLine($"      ⚠ restore APPAF inst={kv.Key} : {ex.Message}"); }
         }
+
+        // 1-bis. Restore colonnes PARTIE (avocats + présence, P2)
+        int partiesRestored = 0;
+        foreach (var kv in snap.PartieSnapshot)
+        {
+            using var cmd = new System.Data.SqlClient.SqlCommand(
+                "UPDATE PARTIE SET PRT_ID_MNDTR_PLAI = @plai, PRT_ID_MNDTR_POS = @pos, PRT_MODE_PRESENTATION = @mode WHERE PRT_ID_PRT = @id", conn);
+            cmd.Parameters.AddWithValue("@plai", kv.Value[0] ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@pos", kv.Value[1] ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@mode", kv.Value[2] ?? DBNull.Value);
+            cmd.Parameters.AddWithValue("@id", kv.Key);
+            try { partiesRestored += cmd.ExecuteNonQuery(); }
+            catch (Exception ex) { Console.WriteLine($"      ⚠ restore PARTIE id={kv.Key} : {ex.Message}"); }
+        }
+        Console.WriteLine($"      → PARTIE restaurées (avocats/présence) : {partiesRestored}");
 
         if (snap.InstanceIds.Count > 0)
         {
@@ -2692,7 +2726,7 @@ internal static partial class Program
     /// <summary>
     /// Mode --dump-menu : lance RIG, se connecte, scanne TOUS les rails x sous-menus
     /// x processus (READ-ONLY, aucun PROC ouvert), ecrit l'arbre dans
-    /// C:\Code RIG\Audit\rig-menu-tree.txt.
+    /// &lt;RIG_AUDIT_ROOT&gt;\rig-menu-tree.txt (défaut C:\Code RIG\RIG-TV\Audit).
     /// </summary>
     private static int RunDumpMenu(string[] args)
     {
@@ -2707,7 +2741,7 @@ internal static partial class Program
         if (string.IsNullOrWhiteSpace(rigExe))
             rigExe = @"C:\rig\exe\RigClientAccueil.exe";
 
-        var outDir = @"C:\Code RIG\Audit";
+        var outDir = AuditPaths.Root;
         Directory.CreateDirectory(outDir);
         var outFile = Path.Combine(outDir, "rig-menu-tree.txt");
 

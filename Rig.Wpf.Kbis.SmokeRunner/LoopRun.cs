@@ -19,6 +19,7 @@ internal sealed class LoopScenario
     [DataMember(Name = "id")]                public string Id { get; set; }
     [DataMember(Name = "jsonFile")]          public string JsonFile { get; set; }
     [DataMember(Name = "defaultAudienceId")] public int? DefaultAudienceId { get; set; }
+    [DataMember(Name = "expectedAppliedModifications")] public int? ExpectedAppliedModifications { get; set; }
 }
 
 [DataContract]
@@ -153,6 +154,8 @@ internal static class LoopRun
         string a = $"--rapture-selfdrive --json \"{jsonPath}\" --scenario-id \"{s.Id}\"";
         if (apply) a += " --apply";
         if (s.DefaultAudienceId.HasValue) a += $" --audience-id {s.DefaultAudienceId.Value}";
+        // Sans ce flag, un scénario apply qui n'écrit plus rien (régression) passerait vert (0 diff = 0 erreur).
+        if (apply && s.ExpectedAppliedModifications.HasValue) a += $" --expected-applied-modifications {s.ExpectedAppliedModifications.Value}";
         if (s.Id == "cas-b-multi-match") a += " --cas-b-auto-setup";
 
         var psi = new ProcessStartInfo(smokeExe, a)
