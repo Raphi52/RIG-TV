@@ -1,0 +1,124 @@
+{
+    "codeGreffe": "9995",
+    "dateAudience": "2026-05-22",
+    "heureAudience": "14:30",
+    "salleAudience": "",
+    "chambre": "Audience interactive",
+    "section": "audience interactive",
+    "typeAudience": "contentieux général",
+    "composition": {
+        "president": "Mme LOMBARD Florence",
+        "juges": [
+            "M. LESBROS Michel",
+            "M. RUBAT Gilles"
+        ],
+        "greffier": "Mme ROCHE Marjorie",
+        "parquetier": null
+    },
+    "affaires": [
+        {
+            "numeroAppel": "01_001",
+            "numeroOrdre": 7,
+            "heureAppel": "14:30",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00037",
+            "idInstance": 0,
+            "idAffaire": 5194343,
+            "natureAffaire": "exécution ou DI autre contrat",
+            "typeAffaire": "CO DIAC",
+            "nomAffaire": "ALDO INTERNATIONAL GROUPE GMBH c\/ SPARTOO",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "ALDO INTERNATIONAL GROUPE GMBH",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": "Me Frédéric JEANNIN",
+                    "avocatPostulant": "Me ABAD Johanna",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "SPARTOO",
+                    "qualite": "défendeur",
+                    "siren": "489 895 821",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Marie-Catherine CALDARA-BATTINI",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        },
+        {
+            "numeroAppel": "01_002",
+            "numeroOrdre": 4,
+            "heureAppel": "14:50",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00243",
+            "idInstance": 483853,
+            "idAffaire": 5303297,
+            "natureAffaire": "divers",
+            "typeAffaire": "DIV",
+            "nomAffaire": "Me Christophe ROUMEZI ès qualités de liquidateur judiciaire de la société KERIA c\/ La SNC ALTA CRP GUIPAVAS",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "Me Christophe ROUMEZI ès qualités de liquidateur judiciaire de la société KERIA",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Cédric LENUZZA  Avocat",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "La SNC ALTA CRP GUIPAVAS",
+                    "qualite": "défendeur",
+                    "siren": "451 231 351",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me GOARANT Catherine",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        }
+    ]
+}

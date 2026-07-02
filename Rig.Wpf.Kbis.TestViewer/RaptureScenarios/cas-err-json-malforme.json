@@ -1,0 +1,71 @@
+{
+    "codeGreffe": "9995",
+    "dateAudience": "2026-05-22",
+    "heureAudience": "14:30",
+    "salleAudience": "",
+    "chambre": "Audience interactive",
+    "section": "audience interactive",
+    "typeAudience": "contentieux général",
+    "composition": {
+        "president": "Mme LOMBARD Florence",
+        "juges": [
+            "M. LESBROS Michel",
+            "M. RUBAT Gilles"
+        ],
+        "greffier": "Mme ROCHE Marjorie",
+        "parquetier": null
+    },
+    "affaires": [
+        {
+            "numeroAppel": "01_001",
+            "numeroOrdre": 7,
+            "heureAppel": "14:30",
+            "numeroF": null,
+            "numeroRJ": null,
+            "numeroJ": null,
+            "numeroRole": "2025J00037",
+            "idInstance": 476565,
+            "idAffaire": 5194343,
+            "natureAffaire": "exécution ou DI autre contrat",
+            "typeAffaire": "CO DIAC",
+            "nomAffaire": "ALDO INTERNATIONAL GROUPE GMBH c\/ SPARTOO",
+            "isProcedureCollective": false,
+            "demandeurs": [
+                {
+                    "nom": "ALDO INTERNATIONAL GROUPE GMBH",
+                    "qualite": "demandeur",
+                    "siren": null,
+                    "avocatPlaidant": "Me Frédéric JEANNIN",
+                    "avocatPostulant": "Me ABAD Johanna",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "defendeurs": [
+                {
+                    "nom": "SPARTOO",
+                    "qualite": "défendeur",
+                    "siren": "489 895 821",
+                    "avocatPlaidant": null,
+                    "avocatPostulant": "Me Marie-Catherine CALDARA-BATTINI",
+                    "present": true,
+                    "dirigeants": [
+                    ]
+                }
+            ],
+            "intervenants": [
+            ],
+            "societeDebitrice": null,
+            "administrateursJudiciaires": [
+            ],
+            "mandatairesJudiciaires": [
+            ],
+            "jugesCommissaires": [
+            ],
+            "representantsPersonnel": [
+            ],
+            "chefDemande": null,
+            "noteAudience": null
+        }
+    ]
