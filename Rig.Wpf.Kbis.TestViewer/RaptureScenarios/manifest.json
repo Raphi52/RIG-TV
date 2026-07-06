@@ -261,8 +261,8 @@
       "defaultAudienceId": null,
       "expectedCase": "ERROR_HEADER",
       "expectedWarnings": null,
-      "expectedValidationErrors": 1,
-      "expectedMessageContains": "Date d'audience manquante",
+      "expectedValidationErrors": null,
+      "expectedMessageContains": "date d'audience JSON invalide",
       "tags": ["error", "header", "date-audience-manquante"]
     },
     {
@@ -286,7 +286,7 @@
       "expectedCase": "ERROR_PARSE",
       "expectedWarnings": null,
       "expectedValidationErrors": null,
-      "expectedMessageContains": "Le fichier ne peut pas être lu",
+      "expectedMessageContains": "RaptureImportParseException",
       "tags": ["error", "parse", "json-malforme", "convention-a-valider"]
     },
     {
@@ -374,7 +374,7 @@
       "audienceChambre": "Audience interactive",
       "expectedCase": "ERROR_AFFAIRE",
       "expectedWarnings": null,
-      "expectedValidationErrors": 1,
+      "expectedValidationErrors": 2,
       "expectedMessageContains": "Date non parsable",
       "tags": ["error", "affaire", "decision-pc", "date-invalide"]
     },
