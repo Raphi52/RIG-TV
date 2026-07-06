@@ -26,6 +26,16 @@ internal static class LegacyScenarioCatalog
         return string.IsNullOrWhiteSpace(n) ? "2024B00001" : n;
     }
 
+    /// <summary>Match du processus RAPTUVAL dans lstProcessus (code exact OU libellé « Validation … Rapture »).</summary>
+    private static bool RaptuvalMatch(string name)
+    {
+        var n = (name ?? "").Trim();
+        if (n.Length == 0) return false;
+        if (n.Split(' ')[0].Equals("RAPTUVAL", StringComparison.OrdinalIgnoreCase)) return true;
+        return n.IndexOf("validation", StringComparison.OrdinalIgnoreCase) >= 0
+            && n.IndexOf("rapture", StringComparison.OrdinalIgnoreCase) >= 0;
+    }
+
     /// <summary>Construit le catalogue (frais à chaque appel → lit les env vars au moment du run).</summary>
     public static IReadOnlyList<ScenarioDefinition> All()
     {
@@ -70,6 +80,41 @@ internal static class LegacyScenarioCatalog
                     var sw = System.Diagnostics.Stopwatch.StartNew();
                     while (sw.Elapsed.TotalSeconds < 45)
                         System.Threading.Thread.Sleep(500); // sleep-ok: settle-UI borné post-ouverture tab — verdict = screenshot final
+                })
+                .Build(),
+
+            // ── raptuval-ecarter / raptuval-reactiver — e2e des boutons du cockpit (judge Faithful :
+            //    « boutons jamais exécutés e2e »). Ouvre le cockpit via Console, sélectionne la 1ʳᵉ ligne,
+            //    clique l'action, confirme. VÉRIFICATION = transition RAPTU_ETAT en DB (côté PowerShell
+            //    appelant : Écarter → état 3 ; Réactiver → état 1). Paramétrés par le libellé du bouton.
+            //
+            //    ⚠⚠ FAUX-VERT CONNU EN HEADLESS (mur harnais, vécu 2026-07-02) : en HDESK Mode B le clic
+            //    ne ROUTE PAS (SelectionItem UIA ne peuple pas SelectedRows FullRowSelect ; le clic physique
+            //    n'atteint pas le bouton) → le scénario peut rendre N/0 passed SANS AUCUNE transition DB.
+            //    NE JAMAIS conclure sur l'exit-code seul : exiger la transition RAPTU_ETAT en DB.
+            //    Alternative PROUVÉE (2026-07-06) : pilotage bureau RÉEL par clics natifs →
+            //    voir `raptuval-live-drive.ps1` (racine RIG-TV) — Écarter → DB 1→3 confirmé.
+            ScenarioBuilder.New("raptuval-ecarter", "e2e bouton Écarter du cockpit RAPTUVAL (⚠ faux-vert possible en headless — exiger la transition DB)")
+                .Module("kbis")
+                .Step("Ouvrir RAPTUVAL (Console) puis Écarter la 1ʳᵉ ligne", d =>
+                {
+                    d.OpenProcessus("RAPTUVAL", n => RaptuvalMatch(n));
+                    d.SelectLastNonAccueilTab();
+                    System.Threading.Thread.Sleep(3000); // sleep-ok: settle grille avant sélection ligne
+                    if (!d.DriveCockpitAction("écarter"))
+                        throw new Exception("Écarter : action non exécutée (ligne ou bouton introuvable)");
+                })
+                .Build(),
+
+            ScenarioBuilder.New("raptuval-reactiver", "e2e bouton Réactiver du cockpit RAPTUVAL")
+                .Module("kbis")
+                .Step("Ouvrir RAPTUVAL (Console) puis Réactiver la 1ʳᵉ ligne", d =>
+                {
+                    d.OpenProcessus("RAPTUVAL", n => RaptuvalMatch(n));
+                    d.SelectLastNonAccueilTab();
+                    System.Threading.Thread.Sleep(3000); // sleep-ok: settle grille avant sélection ligne
+                    if (!d.DriveCockpitAction("réactiver"))
+                        throw new Exception("Réactiver : action non exécutée (ligne ou bouton introuvable)");
                 })
                 .Build(),
 

@@ -757,7 +757,7 @@ public sealed class TestViewerDriver : IDisposable
         // Driver : sentinel PARTAGÉ + gate run_stamp-change (I4) — hang-proof (un exact-match sur un sentinel
         // stampé pourrait pendre si l'env ne se propage pas au TV enfant). L'isolation concurrente du VERDICT
         // est portée par le JSON stampé lu par check-batch-green ; le driver-wait reste best-effort.
-        string sentinelPath = @"C:\Code RIG\Audit\last-batch-end.txt";
+        string sentinelPath = AuditPaths.Combine("last-batch-end.txt");
         bool batchMode = !string.IsNullOrEmpty(summaryMarker);
         DateTime? baselineSentinelTs = batchMode ? TryReadSentinelTs(sentinelPath) : null;
         // Verdict de confiance (fix M2) : capturer aussi le run_stamp du sentinel AVANT le run. La

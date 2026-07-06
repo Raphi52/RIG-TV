@@ -81,7 +81,7 @@ ajouts propres au harnais :
 
 **Loop UI / screenshot loop (règle 16 master)** :
 
-* Pendant pilotage UI : capturer dans `C:\Code RIG\Audit\screenshots-loop\`
+* Pendant pilotage UI : capturer dans `C:\Code RIG\RIG-TV\Audit\screenshots-loop\`
 * **Lire le PNG via `Read` après chaque capture** (sinon capture = aucune valeur)
 * Pas de capture pour les builds / SQL / fichiers texte
 
@@ -108,7 +108,7 @@ en boucle sur ce harnais :
 2. **Ne pas inventer une signature de méthode VM** → vérifier dans `MainWindowViewModel.cs`.
 3. **Pas de « le test passe »** sans avoir lu le RECAP ou le JSON `last-batch-result.json`.
 4. **Marquer ⚠ contre-intuitif** : ex. « Mode visible » dans UI ≠ HeadlessMode dans settings.
-5. **LOOP_STATE.md obligatoire** pour toute boucle multi-itération (`Audit\LOOP_STATE.md`).
+5. **LOOP_STATE.md obligatoire** pour toute boucle multi-itération (`RIG-TV\Audit\LOOP_STATE.md`).
 
 ---
 
@@ -135,8 +135,8 @@ vigilant si tu fais un `git add` accidentel).
 | **Mode visible** (checkbox UI) | Switch entre `selfdrive` (off) et `legacy-rapture-process` (on) côté worker |
 | **HeadlessMode** (setting) | Switch HDESK isolé (on) vs Desktop utilisateur (off) — propagé via env `RIG_DRIVER_HEADLESS` |
 | **Mosaïque** | Tiling 2x2 / 4x4 des fenêtres RIG via `SetWindowPos` quand visible + parallel |
-| **Sentinel** | Fichier `Audit\last-batch-end.txt` écrit par TestViewer à la fin du batch (source de vérité fin de run, plus fiable que le log box UIA) |
-| **JSON feedback** | `Audit\last-batch-result.json` — résumé structuré par scénario (schema_version=3) |
+| **Sentinel** | Fichier `RIG-TV\Audit\last-batch-end.txt` écrit par TestViewer à la fin du batch (source de vérité fin de run, plus fiable que le log box UIA) |
+| **JSON feedback** | `RIG-TV\Audit\last-batch-result.json` — résumé structuré par scénario (schema_version=3) |
 | **ML LOOP** | Pipeline auto-apprenant 5 phases (cf. section dédiée) |
 | **dHash** | Perceptual hash 64-bit du screenshot final batch (Phase 5) |
 
@@ -171,7 +171,7 @@ vigilant si tu fais un `git add` accidentel).
                 │ FlaUI / PostMessage
                 ▼
 ┌─ RigClientAccueil.exe (RIG legacy, x86, WinForms) ──┐
-│  Login VILAIN → PROC_RETAUD → audience → Importer    │
+│  Login <user> → PROC_RETAUD → audience → Importer    │
 └──────────────────────────────────────────────────────┘
 
 ┌─ Rig.Rapture.Tests (xUnit, net48) ──────────────────┐
@@ -219,8 +219,8 @@ adapters par module sous `ViewModels\Smoke\<Module>\` (`KbisLegacyScenarioAdapte
 `*Scenarios/` (contrairement à `RaptureScenarios/`).
 
 **Verdict / sortie par module** :
-* **RAPTURE** → `Audit\last-batch-result.json` (schema 3, `regressions`/`fixed_now`) +
-  `Audit\last-batch-end.txt`. Écrits **uniquement** par `RunAllRaptureScenariosAsync`
+* **RAPTURE** → `RIG-TV\Audit\last-batch-result.json` (schema 3, `regressions`/`fixed_now`) +
+  `RIG-TV\Audit\last-batch-end.txt`. Écrits **uniquement** par `RunAllRaptureScenariosAsync`
   (`MainWindowViewModel.cs`). C'est le seul module exploitable par `ml-loop.ps1`.
 * **KBIS / ALERTES / DCADEMAT** → **ni JSON ni sentinel**. Verdict = exit code SmokeRunner
   + `✓`/`✗` stdout. Self-snaps PNG sous `%LOCALAPPDATA%\rig-wpf-testviewer\self-snaps\<RIG_RUN_STAMP>\<instanceId>\`
@@ -240,7 +240,79 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 5. DCADEMAT v1 partiel (6/8 kinds s'arrêtent à « Ouvrir demande »).
 
 > Source : cartographie harnais via sous-agent Explore + vérif grep des AutomationIds,
-> flags CLI et writers JSON. Le code (`LegacySmokeCatalog.cs`, `Program.cs`, `MainWindow.xaml`) fait foi.
+> flags CLI et writers JSON. Le code (`LegacyScenarioCatalog.cs`, `Program.cs`, `MainWindow.xaml`) fait foi.
+
+---
+
+## 🧱 Engine de scénarios déclaratif (SmokeRunner — commit `ecdf6b0`)
+
+⚠️ **Change la façon d'ajouter un scénario KBIS/ALERTES/DCADEMAT** (≠ RAPTURE, qui reste en JSON
+dans `RaptureScenarios/`). Les 14 scénarios legacy sont désormais définis via un **builder fluent**,
+plus de méthode `RunLegacyXxx` ni de flag CLI à câbler à la main.
+
+**Où** : `Rig.Wpf.Kbis.SmokeRunner\Scenarios\` — `ScenarioModel.cs` (builder + executor),
+`LegacyScenarioCatalog.cs` (les 14 défs), `Program.ScenarioEngine.cs` (pont).
+
+**Ajouter un scénario MAINTENANT** = **un seul endroit** : ajouter une `ScenarioBuilder.New(id, …).…Build()`
+dans `LegacyScenarioCatalog.All()`. Le flag `--legacy-<id>` est **auto-généré** (dispatch
+`foreach scen in LegacyScenarioCatalog.All()` dans `Program.cs`). Pas de JSON, pas d'adapter.
+
+**Verbes du builder** (`ScenarioModel.cs:101-193`) :
+
+| Verbe | Rôle |
+|---|---|
+| `.Step(label, d => …)` | Geste de pilotage via `LegacyDriver` ; throw = Fail |
+| `.StepCtx(label, ctx => …)` | Partage d'état entre steps (`ctx.Set/Get<T>`) |
+| `.GateStep(label, flag, d => …)` | Enregistre un flag booléen (Pass=true) pour conditionner la suite |
+| `.StepIf(flag, label, d => …, skipLabel)` | Step exécuté seulement si flag vrai, sinon Skip |
+| `.ActionableStepIf(flag, label, ctx => bool, skipLabel)` | Gaté + 3 états : true=Pass / false=Skip / throw=Fail |
+| `.Expect(label, ctx => bool)` | Assertion sémantique (faux → `ScenarioAssertionException`) |
+
+`Build()` **valide à la construction** que tout `flag` requis est produit par un `GateStep` antérieur
+(sinon `InvalidOperationException` immédiate — pas de skip silencieux sur faute de frappe). L'executor
+est testable sans RIG (`Rig.Rapture.Tests\ScenarioEngineTests.cs`).
+
+---
+
+## 🗄️ Sélecteur de base de données (smoke — commit `12ede91`)
+
+⚠️ **SÉCURITÉ — aucun garde-fou anti-prod.** Choisir la base sur laquelle tournent les smoke tests.
+
+| Élément | Valeur / source |
+|---|---|
+| **Défaut serveur** | `SQL-DEV\DEV` (`GlobalSettingsService.cs:71`) |
+| **Défaut base** | `RIG_DEV` (`GlobalSettingsService.cs:79`) |
+| **UI** | ⚙ Paramètres globaux → section « Base de données (smoke tests) » : `CmbDatabaseServer` (combo éditable), `TxtDatabaseName`, bouton scan `BtnScanServers` |
+| **Persistance** | `%LOCALAPPDATA%\rig-wpf-kbis\global-settings.json` (`databaseServer` / `databaseName`) |
+| **Propagation worker** | env **`RIG_LEGACY_CONNECTION`** (connection string complète), héritée par les workers SmokeRunner |
+| **Override CLI (App)** | `--server=…`, `--db=…`, `--connection=…` (précédence : `--connection` > `--server`/`--db` > JSON > défaut) |
+
+⚠️ Le champ est **libre** + le scan réseau (UDP 1434) remonte **toute** instance SQL visible → **rien
+n'empêche de pointer une prod** (`RIGBD5`/`SQL-PROD`). Les modes `--apply`, `--reset-smoke-db`,
+`CleanupCreatedAudience` (`DELETE`), `RestoreAfterApply` (`UPDATE`) écrivent **réellement** sur la base
+choisie. **Réflexe : avant tout run avec écriture, vérifier `RIG_LEGACY_CONNECTION` / la base affichée.**
+(Rappel règle racine : PROD `RIGBD5` = interdite par défaut, SELECT-only sur accord explicite par tour.)
+
+---
+
+## 🔁 Boucle CLI autonome `--loop` + skill `/rig-loop` (commit `ecdf6b0`/`ca90689`)
+
+⚠️ **Nouveau, distinct de `ml-loop.ps1`** : `SmokeRunner --loop` est une boucle **sans UI TestViewer**
+(spawn direct de workers `--rapture-selfdrive`), pilotée par la skill Claude **`/rig-loop`** (6 phases).
+`ml-loop.ps1` reste l'orchestrateur « haute couche » du **bouton 🤖 ML Loop** (UI).
+
+```
+SmokeRunner --loop {run|build|bench} [options]
+  run    [--scenarios all|<id,id>] [--apply]   # batch //, retry-once, timeout 180s/worker, env RIG_SMOKE_PARALLELISM (4)
+  build                                         # build PROC_RETAUD Release + deploy (safeBuild.ps1)
+  bench  {acquire|release|status}               # verrou coopératif fichier .bench-lock, TTL 2h
+```
+
+* Émet `result.json` sous `%LOCALAPPDATA%\rig-wpf-testviewer\loop\<runId>\`.
+* ⚠️ **`--loop run` lit les scénarios dans `bin\Release\net48\RaptureScenarios\`** → un build **Debug
+  seul = 0 scénario** (`LoopRun.cs:232`). C'est l'exception à la règle « Debug par défaut » : pour `--loop`,
+  builder **Release**.
+* Pour un agent CLI autonome → passer par la skill `/rig-loop` (chemin recommandé). Détail : `.claude/skills/rig-loop/SKILL.md`.
 
 ---
 
@@ -251,7 +323,7 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 | `safeBuild.ps1` build le harnais | ❌ `safeBuild.ps1` est pour la solution RIG principale. Pour le harnais : `msbuild` direct sur le `.csproj` ou `ensure-fresh.ps1 -Project TestViewer` |
 | TestViewer est dans `Rig.Wpf.sln` | ❌ Pas inclus par défaut. Faut l'ajouter manuellement (Add → Existing Project) dans VS2022 |
 | « Mode visible » UI checkbox = afficher RIG | ⚠ Selon `HeadlessMode` setting : si headless=true, visible mode = RIG sur HDESK isolé (toujours invisible à l'utilisateur). Sinon RIG sur user desktop |
-| Le log box TextBox montre la fin du batch en temps réel | ⚠ Oui en streaming, mais **pas source de vérité** pour fin de batch — utiliser fichier sentinel `Audit\last-batch-end.txt` (race-free) |
+| Le log box TextBox montre la fin du batch en temps réel | ⚠ Oui en streaming, mais **pas source de vérité** pour fin de batch — utiliser fichier sentinel `RIG-TV\Audit\last-batch-end.txt` (race-free) |
 | `last-batch-end.txt` et `last-batch-result.json` = pareil | ❌ Deux fichiers complémentaires. `.txt` = sentinel timestamp pour driver wait. `.json` = résumé structuré pour orchestrateur ML |
 | FlaUI `_window.FindAllDescendants` ne franchit jamais les processus | ⚠ En théorie scoped au PID. En pratique avec UIA cache + 16 RIG en //, occasionnellement contaminé. Filtrer `b.Properties.ProcessId.ValueOrDefault == _app.ProcessId` par sécurité |
 | `Process.WaitForExitAsync()` dispo | ❌ Pas en .NET Fx 4.8. Utiliser `await Task.Run(() => proc.WaitForExit())` |
@@ -261,7 +333,9 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 | Cache hit = test pas exécuté = pas testé | ⚠ Vrai mais voulu : Phase 4 = memoization. Si tu doutes → décoche « Cache de résultats E2E » dans Settings ou clique « Vider le cache » |
 | MessageBox dans CC dialog affiche les emojis/box-drawing | ❌ Police MS Shell Dlg n'a pas les glyphes U+2500-257F ni emojis. Sanitize avant MessageBox.Show |
 | 5 instances PowerShell partagent l'état de `Start-Job` | ❌ Chaque session PS = ses propres jobs. Pour spawner un process qui survit à la session → `Start-Process -RedirectStandardOutput <file>` |
-| Mode B `exit 0` / « passed » = pas de mail envoyé | ❌ Le driver FlaUI ne voit PAS les crash-logs internes de RIG. RIG maile (`AmiLog`→`eLog9Crash`→`RigLog.SendMail`→SmtpClient `rig@amitel.fr`) pendant un import même si le driver renvoie `exit 0`. Trigger connu : import Rapture `RaptureImportOrchestrator.TryAudienceLabel`→`GetCHAMBRE("Mise ")`. Pour affirmer « pas de mail » → grep `C:\RIG\Data\Log\9995\RigClientAccueil-<user>-<stamp>.txt` pour `TestValidite`/`eLog9Crash`/`SendMail`. (Réf : mémoire `project_rigtv_modeb_mail_not_safe`) |
+| Mode B `exit 0` / « passed » = pas de mail envoyé | ❌ Le driver FlaUI ne voit PAS les crash-logs internes de RIG. RIG **maile chaque crash** (`AmiLog`→`eLog9Crash`→`RigLog.SendMail`→SmtpClient) pendant un import même si le driver renvoie `exit 0`. **Expéditeur observé : `automate@amitel.fr`** (pas `rig@amitel.fr`), sujet `Crash <PROC> / <Classe> / <Méthode> sur <MACHINE>/<base>`. Trigger connu : import Rapture `RaptureImportOrchestrator.TryAudienceLabel`→`GetCHAMBRE("Mise ")`. **→ La vraie source de vérité d'un échec passe souvent par le mail** : cf. section **📧 Erreurs par mail (Outlook)** + grep `C:\RIG\Data\Log\9995\RigClientAccueil-<user>-<stamp>.txt` (`TestValidite`/`eLog9Crash`/`SendMail`). (Réf : mémoire `project_rigtv_modeb_mail_not_safe`) |
+| Le sélecteur de BDD pointe forcément une base de test | ❌ Champ **libre, AUCUN garde-fou anti-prod** : défaut `SQL-DEV\DEV` / `RIG_DEV`, mais le scan réseau (UDP 1434) remonte toute instance visible et on peut taper n'importe quel serveur. Les modes `--apply` / `--reset-smoke-db` / cleanups SQL (`DELETE`/`UPDATE`) tournent contre la base **choisie**. ⚠️ Toujours vérifier serveur+base avant un run avec écriture — cf. section **🗄️ Sélecteur de base de données** |
+| Les scénarios KBIS/ALERTES/DCADEMAT vivent dans `LegacySmokeCatalog.cs` (TestViewer) | ⚠ L'**exécution** des 14 scénarios legacy se définit désormais côté **SmokeRunner** dans `Scenarios\LegacyScenarioCatalog.cs` (engine déclaratif fluent, commit `ecdf6b0`). C'est ce catalogue qui fait foi pour ajouter/modifier un scénario — cf. section **🧱 Engine de scénarios déclaratif** |
 
 ---
 
@@ -295,17 +369,26 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 | `%LOCALAPPDATA%\rig-wpf-kbis\global-settings.json` | Settings utilisateur (parallelism, headless, cache) | Persisté, écrasé par UI |
 | `%LOCALAPPDATA%\rig-wpf-kbis\test-cache.json` | Cache ML Phase 4 | Persisté, vidable via UI |
 | `%LOCALAPPDATA%\rig-wpf-testviewer\testviewer-yyyyMMdd.log` | Log applicatif TestViewer | Append day-by-day |
-| `C:\Code RIG\Audit\last-batch-end.txt` | Sentinel timestamp fin de batch | Écrasé à chaque batch |
-| `C:\Code RIG\Audit\last-batch-result.json` | JSON feedback structuré (Phase 1) | Écrasé à chaque batch |
-| `C:\Code RIG\Audit\ml-loop-history\iter-*.json` | Snapshots historiques des JSON | Append, jamais effacé |
-| `C:\Code RIG\Audit\ml-loop-prompt.md` | Prompt master généré (Phase 3) | Écrasé à chaque run ml-loop.ps1 |
-| `C:\Code RIG\Audit\LOOP_STATE.md` | État live boucle d'itération | Écrasé par ml-loop.ps1 |
-| `C:\Code RIG\Audit\screenshots-loop\` | Screenshots règle 16 + batch-recap-*.png | Append manuel + auto-batch-end |
-| `C:\Code RIG\Audit\ML_LOOP_PHASE{3,4,5}.md` | Docs implémentation phases | Permanent |
-| `C:\Code RIG\Tools\ml-loop.ps1` | Orchestrateur PowerShell | Versionné dans `Z:\test\rig-testing\Tools\` |
+| `C:\Code RIG\RIG-TV\Audit\last-batch-end.txt` | Sentinel timestamp fin de batch | Écrasé à chaque batch |
+| `C:\Code RIG\RIG-TV\Audit\last-batch-result.json` | JSON feedback structuré (Phase 1) | Écrasé à chaque batch |
+| `C:\Code RIG\RIG-TV\Audit\ml-loop-history\iter-*.json` | Snapshots historiques des JSON | Append, jamais effacé |
+| `C:\Code RIG\RIG-TV\Audit\ml-loop-prompt.md` | Prompt master généré (Phase 3) | Écrasé à chaque run ml-loop.ps1 |
+| `C:\Code RIG\RIG-TV\Audit\LOOP_STATE.md` | État live boucle d'itération | Écrasé par ml-loop.ps1 |
+| `C:\Code RIG\RIG-TV\Audit\screenshots-loop\` | Screenshots règle 16 + batch-recap-*.png | Append manuel + auto-batch-end |
+| `C:\Code RIG\RIG-TV\Audit\ML_LOOP_PHASE{3,4,5}.md` | Docs implémentation phases | Permanent |
+| `C:\Code RIG\Tools\ml-loop.ps1` | Orchestrateur PowerShell (bouton ML Loop UI) | Versionné dans `Z:\test\rig-testing\Tools\` |
 | `C:\Code RIG\ensure-fresh.ps1` | Rebuild-if-stale | Versionné |
+| `%LOCALAPPDATA%\rig-wpf-testviewer\loop\<runId>\result.json` | Résultat de `SmokeRunner --loop run` (boucle CLI autonome) | Écrasé par run |
+| `RIG-TV\docs\RIG-UI-MAP.md` | Carte des interactions RIG **prouvées live** (5 flux + nav) | Versionné |
+| `RIG-TV\docs\RIG-SCREENS-BACKLOG.md` | ~150 PROC_* inventoriés **non prouvés** (backlog) | Versionné |
+| `RIG-TV\docs\rig-menu-tree.txt` | Arbre menu RIG (6 rails/56 sous-menus/603 procs) régénéré par `--dump-menu` | Régénérable |
 | `%USERPROFILE%\Desktop\JsonRapture\screenshots\<PID>\` | Screenshots auto SmokeRunner per worker | Append, à nettoyer |
 | `Z:\test\rig-testing\` | Snapshot fichiers modifiés (convention « copie dans Z ») | Mirror manuel |
+
+> **Racine d'audit configurable** (`SmokeRunner\AuditPaths.cs`) : tous les artefacts ci-dessus sous
+> `Audit\` se résolvent via env **`RIG_AUDIT_ROOT`** si défini, sinon défaut **`C:\Code RIG\RIG-TV\Audit`**.
+> Autres overrides (`TestingPaths.cs`) : `RIG_KBIS_SMOKERUNNER_EXE`, `RIG_KBIS_REGRESSION_PROJECT_DIR`,
+> `RIG_RAPTURE_REGRESSION_PROJECT_DIR`. La connexion BDD : env `RIG_LEGACY_CONNECTION` (cf. § sélecteur BDD).
 
 ---
 
@@ -318,7 +401,7 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 3. Lancer TV → click via UIA (vérifier `AutomationId` existe) → screenshot post-invoke
 4. **Lire le screenshot** via `Read` (sinon = aucune valeur)
 5. Si comportement OK → snapshot vers `Z:\test\rig-testing\`
-6. Mettre à jour `Audit\LOOP_STATE.md` (Goal / Tried / Next)
+6. Mettre à jour `RIG-TV\Audit\LOOP_STATE.md` (Goal / Tried / Next)
 
 ### Ajouter un nouveau scénario Rapture
 
@@ -331,10 +414,10 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 
 ### Itérer sur un bug FAIL en boucle (workflow ML LOOP)
 
-1. Lire `Audit\LOOP_STATE.md` (Goal / Hypothesis / Tried)
+1. Lire `RIG-TV\Audit\LOOP_STATE.md` (Goal / Hypothesis / Tried)
 2. Lancer batch courant via Rig Testing UI
-3. Lire `Audit\last-batch-result.json` → identifier les FAIL
-4. Cliquer 🤖 ML Loop dans TV → génère `Audit\ml-loop-prompt.md`
+3. Lire `RIG-TV\Audit\last-batch-result.json` → identifier les FAIL
+4. Cliquer 🤖 ML Loop dans TV → génère `RIG-TV\Audit\ml-loop-prompt.md`
 5. Lire le prompt → investiguer (log RIG, screenshots, JSON scenario)
 6. Fix le code → `ensure-fresh.ps1`
 7. Re-lancer batch → comparer `regressions` / `fixed_now` dans le JSON
@@ -407,14 +490,14 @@ Cycle « code → batch → JSON → diff → fix → reboucle » :
 
 | Phase | Fichier | Rôle |
 |---|---|---|
-| 1 | `Audit\last-batch-result.json` | JSON résumé batch (16 entries + meta) |
+| 1 | `RIG-TV\Audit\last-batch-result.json` | JSON résumé batch (16 entries + meta) |
 | 2 | (inclus dans le même JSON) | `regressions` / `fixed_now` calculés en lisant l'ancien JSON |
 | 3 | `Tools\ml-loop.ps1` | Orchestrateur PowerShell |
-| 3 | `Audit\ml-loop-prompt.md` | Prompt structuré master agent |
-| 3 | `Audit\LOOP_STATE.md` | État courant de la boucle |
-| 3 | `Audit\ml-loop-history\iter-*.json` | Snapshots chronologiques |
+| 3 | `RIG-TV\Audit\ml-loop-prompt.md` | Prompt structuré master agent |
+| 3 | `RIG-TV\Audit\LOOP_STATE.md` | État courant de la boucle |
+| 3 | `RIG-TV\Audit\ml-loop-history\iter-*.json` | Snapshots chronologiques |
 | 4 | `%LOCALAPPDATA%\rig-wpf-kbis\test-cache.json` | Cache memoization |
-| 5 | `Audit\screenshots-loop\batch-recap-*.png` | Screenshot fin de batch (pour dHash) |
+| 5 | `RIG-TV\Audit\screenshots-loop\batch-recap-*.png` | Screenshot fin de batch (pour dHash) |
 
 **Activer le cache** : Settings ⚙ → cocher « 🗄 Cache de résultats E2E ». Désactivé
 par défaut (peut masquer une régression si invalidation rate un fichier influent).
@@ -466,14 +549,104 @@ ou directement via `dotnet test`.
   recommandé pour usage quotidien.
 * **TestViewer pas dans `Rig.Wpf.sln`** : ajout manuel requis (Add Existing Project).
 
-Cf. plan complet de stabilisation : `Audit\ML_LOOP_PHASE3.md` + `ML_LOOP_PHASE4.md`
+Cf. plan complet de stabilisation : `RIG-TV\Audit\ML_LOOP_PHASE3.md` + `ML_LOOP_PHASE4.md`
 + `ML_LOOP_PHASE5.md` + roadmap 20/20.
+
+---
+
+## 🧰 Commandes utilisables (cheat-sheet)
+
+> Tous chemins relatifs au repo `C:\Code RIG\RIG-TV\`. **Toujours `ensure-fresh` AVANT de piloter un exe.**
+
+**Scripts helper (PowerShell)** :
+
+| Commande | Rôle |
+|---|---|
+| `& "C:\Code RIG\ensure-fresh.ps1" -Project TestViewer` (puis `-Project SmokeRunner`) | Rebuild-if-stale, throw si build fail |
+| `& "C:\Code RIG\run-debug-smoke.ps1" -Module {RAPTURE\|KBIS\|ALERTES\|DCADEMAT} [-Parallelism N]` | **Lancement vetté** : kill-first → fresh Debug → lance `bin\Debug\` → assert path. Renvoie `{Pid, RunStamp}` |
+| `Get-Item "…\bin\Debug\net48\Rig.Wpf.Kbis.TestViewer.exe" \| Select LastWriteTime` | Vérifier la fraîcheur de l'exe avant relance |
+| `& "C:\Code RIG\Tools\ml-loop.ps1" -AutoSpawn -Watch -AutoRunBatch -MaxIterations 5` | Orchestrateur ML LOOP (RAPTURE, via bouton/JSON UI) |
+
+**SmokeRunner — boucle CLI autonome** (`SmokeRunner.exe`, depuis `bin\Release\net48\` pour `--loop run`) :
+
+| Commande | Rôle |
+|---|---|
+| `--loop run [--scenarios all\|<id,id>] [--apply]` | Batch // sans UI ; `--apply` = écriture réelle BDD ⚠️ |
+| `--loop build` | Build PROC_RETAUD Release + deploy |
+| `--loop bench {acquire\|release\|status}` | Verrou de banc (TTL 2h) |
+| `--dump-menu` | Scan READ-ONLY du menu RIG → `Audit\rig-menu-tree.txt` (mail-safe) |
+
+**SmokeRunner — modes de pilotage** (dispatcher `Program.cs:64-154`) :
+
+| Flag | Rôle |
+|---|---|
+| `--drive-testviewer-rapture-process` | Pilote « ▶ Start E2E » Smoke Import via FlaUI (le mode batch standard) |
+| `--drive-testviewer-rapture-export` | Idem tab Smoke Export |
+| `--drive-testviewer-rapture-import` / `-diag` / `-stoppause` | Pilote import / diagnostic / vérif Stop-Pause-Reprise |
+| `--drive-testviewer-legacy-kbis` / `--drive-testviewer-kbis-stress` | Rejoue / stresse le smoke KBIS via UI (seul module non-RAPTURE avec drive CLI) |
+| `--legacy-<id>` | **Auto-dispatch** vers `LegacyScenarioCatalog` (`kbis-vk`/`kbis-xex`, `alertes-*` ×4, `dcademat-*` ×8) |
+| `--legacy-rapture-process` / `--legacy-rapture-export` / `--legacy-rapture-import` / `--legacy-rapture` | Worker Rapture visible (RIG live), variantes import/export/complet |
+| `--rapture-selfdrive` | Worker invisible in-process, snapshot/restore SQL net-zero (rapide) |
+| `--rapture-diag` | Diagnostic import complet (Mapper/Validator/Diff/Apply + rapport placement) |
+| `--drive-retaud-pubs --audience-id <N>` | Navigation READ-ONLY « Publicités en attente » PROC_RETAUD + screenshot |
+| `--reset-smoke-db` | ⚠️ Panic restore SQL : restaure tous les résidus écrits par les smoke scenarios |
+| `--inspect-testviewer-kbis-legacy` | Diag : screenshot + dump UIA du tab Smoke Legacy KBIS |
+
+**xUnit (logique pure)** : `dotnet test --filter "FullyQualifiedName~<NomTest>"` dans `Rig.Rapture.Tests\`.
+
+⚠️ Rappel : **ne JAMAIS** lancer un mode scenario direct sans que le triplet bouton GUI + commande VM +
+AutomationId existe (cf. § Règles non-négociables). Le chemin par défaut reste **Rig Testing UI** ou
+`--drive-testviewer-*` / la skill `/rig-loop`.
+
+---
+
+## 📧 Erreurs par mail (Outlook) — souvent la VRAIE source de vérité
+
+⚠️ **Un exit code 0 / « passed » du driver ne prouve PAS l'absence d'erreur.** RIG envoie chaque crash
+interne par mail pendant un import, **invisible** au driver FlaUI. Quand un run paraît OK mais qu'un doute
+subsiste (ou pour confirmer un FAIL), **vérifier les mails de crash**.
+
+**Forme du mail** (vérifié) :
+* **Expéditeur** : `automate@amitel.fr`
+* **Sujet** : `Crash <PROC> / <Classe> / <Méthode> sur <MACHINE>/<base>`
+  (ex. `Crash PROC_RETAUD / RaptureImportValidator / ValidateAffaire sur PCLHOPITALW11/9995`)
+* **Corps** : `LogFile : C:\RIG\Data\Log\9995\RigClientAccueil-<user>-<stamp>.txt` + la ligne de crash
+  (ex. `Crash Invalid object name 'INSTANCE'. : SELECT INSTANCE.* FROM INSTANCE WHERE …` → typiquement
+  une **base mal choisie** dans le sélecteur BDD, cf. § dédiée).
+
+**Lister les mails de crash via Outlook (COM PowerShell, READ-ONLY — vérifié)** :
+
+```powershell
+$ol = New-Object -ComObject Outlook.Application
+$ns = $ol.GetNamespace('MAPI')
+$filter = "@SQL=urn:schemas:httpmail:subject LIKE '%Crash%'"
+# Les mails automate@amitel.fr n'arrivent PAS forcément dans le store par défaut → on balaie TOUS les stores.
+foreach ($store in $ns.Stores) {
+  $inbox = $store.GetRootFolder().Folders | Where-Object { $_.Name -match 'ception|nbox' } | Select-Object -First 1
+  if (-not $inbox) { continue }
+  $hits = $inbox.Items.Restrict($filter)
+  if ($hits.Count -eq 0) { continue }
+  $hits.Sort('[ReceivedTime]', $true)
+  "== $($store.DisplayName) : $($hits.Count) mails Crash =="
+  $hits | Select-Object -First 10 | ForEach-Object {
+    '{0} | {1}' -f $_.ReceivedTime.ToString('yyyy-MM-dd HH:mm'), $_.Subject
+    ($_.Body -split "`n") | Select-String 'LogFile|Crash' | Select-Object -First 3 | ForEach-Object { '    ' + $_.Line.Trim() }
+  }
+}
+```
+
+* ⚠️ **Plusieurs stores** peuvent coexister (boîte O365 `*.onmicrosoft.com` **+** boîte on-prem `amitel.fr`).
+  Les mails `automate@amitel.fr` n'arrivent **pas forcément dans le store par défaut** → `GetDefaultFolder()`
+  seul peut tout rater. **Balayer tous les stores** (la boucle ci-dessus) est la voie sûre.
+* Filtrer par date : ajouter `… LIKE '%Crash%' AND urn:schemas:httpmail:datereceived > '06/17/2026'`.
+* Le `LogFile :` du corps pointe le log RIG exact → chaîner avec le grep `C:\RIG\Data\Log\9995\…` pour la
+  stack complète (`TestValidite`/`eLog9Crash`/`SendMail`).
 
 ---
 
 ## 📞 Fallback
 
-* **Bloqué sur un échec batch que les logs ne tranchent pas** → lire `Audit\screenshots-loop\`
+* **Bloqué sur un échec batch que les logs ne tranchent pas** → lire `RIG-TV\Audit\screenshots-loop\`
   + `%USERPROFILE%\Desktop\JsonRapture\screenshots\<PID>\` (per-worker), puis
   `%LOCALAPPDATA%\rig-wpf-testviewer\testviewer-yyyyMMdd.log`.
 * **Cache te ment** (suspect : test marqué PASS alors qu'on a touché le code) →
@@ -483,7 +656,7 @@ Cf. plan complet de stabilisation : `Audit\ML_LOOP_PHASE3.md` + `ML_LOOP_PHASE4.
 * **`ml-loop.ps1` jette `JSON invalide`** → soit aucun batch n'a tourné, soit
   Phase 1 a crash en milieu de batch. Lancer un batch propre d'abord.
 * **Doute sur où placer un fichier d'audit / temp** → JAMAIS dans le repo, toujours
-  `Audit\`, `Z:\test\…` ou `$env:TEMP`.
+  `RIG-TV\Audit\`, `Z:\test\…` ou `$env:TEMP`.
 * **Doute sur une règle** → ce fichier, puis `C:\Code RIG\CLAUDE.md`, puis
   `\\ged2\rig\Projets IA\Documentation\AI-Generated\Claude.md`.
-* **Doute persistant ou règle manquante** → `raphael.vilain@amitel.fr`.
+* **Doute persistant ou règle manquante** → contacter le mainteneur du harnais (`<alias-équipe-RIG>@amitel.fr`).

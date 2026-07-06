@@ -5158,6 +5158,76 @@ public sealed class LegacyDriver : IDisposable
         }
     }
 
+    /// <summary>
+    /// Cockpit RAPTUVAL (Chemin B) : sélectionne la 1ʳᵉ ligne de la grille, clique un bouton d'action
+    /// de la toolbar (Écarter/Réactiver/Valider) par son libellé, et accepte les 2 popups WinForms
+    /// (confirmation OKCancel = bouton défaut OK, puis MessageBox de résultat). La VÉRIFICATION du succès
+    /// se fait CÔTÉ DB par l'appelant (transition RAPTU_ETAT) — le mur HDESK Mode B ne montre pas le
+    /// résultat de façon fiable. Renvoie false si aucune ligne/bouton (log explicite). Aucune impression.
+    /// </summary>
+    public bool DriveCockpitAction(string actionLower)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + ouverture cockpit RAPTUVAL requis avant DriveCockpitAction()");
+
+        EnsureWindowMaximized();
+        WaitForLoadingOverlayToClear(maxMs: 15000);
+
+        // 1. Sélectionner la 1ʳᵉ ligne de données de la grille (DataItem/ListItem/row custom).
+        var rows = _window.FindAllDescendants(cf =>
+            cf.ByControlType(ControlType.DataItem).Or(cf.ByControlType(ControlType.ListItem)));
+        var firstRow = rows.FirstOrDefault(r => { try { return r.IsAvailable && !r.IsOffscreen; } catch { return false; } });
+        if (firstRow is null)
+        {
+            Console.WriteLine("      → DriveCockpitAction : aucune ligne de grille (DataItem/ListItem) trouvée.");
+            DumpDescendants(_window!, maxDepth: 5);
+            return false;
+        }
+        Console.WriteLine($"      → Ligne grille ciblée : '{SafeText(() => firstRow.Name)}'");
+        // Sélection RÉELLE : le RigDataGridView est FullRowSelect + MultiSelect=false.
+        // Un Select() UIA sur la ligne NE peuple PAS SelectedRows (le handler WinForms n'est pas
+        // déclenché) → GetSelectedStagings() renvoyait vide = faux-vert historique. On poste un vrai
+        // WM_LBUTTONDOWN/UP au centre de la 1re cellule (Interaction.ClickAtScreenPoint) : OnCellMouseDown
+        // → sélection FullRowSelect → SelectedRows peuplé → l'action agit réellement sur la ligne.
+        bool rowClicked = false;
+        try
+        {
+            var rect = firstRow.BoundingRectangle; // coords écran
+            if (rect.Width > 0 && rect.Height > 0)
+            {
+                int cx = rect.X + System.Math.Min(40, rect.Width / 2); // 1re cellule (colIdAudience)
+                int cy = rect.Y + rect.Height / 2;
+                var hwnd = Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId);
+                rowClicked = hwnd != System.IntPtr.Zero;
+                Console.WriteLine($"      → Clic ligne (WM_LBUTTON) @({cx},{cy}) hwnd={(rowClicked ? "ok" : "ZERO")}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ clic ligne jeté : {ex.Message}"); }
+        // Filet : Select() UIA si le clic écran n'a pas abouti (point hors-écran / hwnd autre process).
+        if (!rowClicked)
+        {
+            try { firstRow.Patterns.SelectionItem.Pattern.Select(); Console.WriteLine("      → filet SelectionItem.Select()"); }
+            catch { try { Interaction.Click(firstRow); } catch (Exception ex) { Console.WriteLine($"      → ⚠ select ligne jeté : {ex.Message}"); } }
+        }
+        Thread.Sleep(300); // sleep-ok: settle de la sélection avant le clic action (pas de signal pollable)
+
+        // 2. Cliquer le bouton d'action nommé.
+        var btn = FindToolbarActionButton(new[] { actionLower }, System.Array.Empty<string>());
+        if (btn is null)
+        {
+            Console.WriteLine($"      → DriveCockpitAction : bouton '{actionLower}' introuvable dans la toolbar.");
+            return false;
+        }
+        Console.WriteLine($"      → Click action '{SafeText(() => btn.Name)}'");
+        try { Interaction.Click(btn); } catch (Exception ex) { Console.WriteLine($"      → ⚠ click action jeté : {ex.Message}"); }
+
+        // 3. Confirmation (OKCancel, défaut = OK) puis MessageBox de résultat.
+        AcceptConfirmationPopupIfAny(maxMs: 5000);
+        AcceptConfirmationPopupIfAny(maxMs: 5000);
+        EnsureRigStillAlive("DriveCockpitAction " + actionLower);
+        return true;
+    }
+
     /// <summary>Agrège le texte (Name + valeur Edit) des descendants Text/Pane/Edit de la fenêtre, jusqu'à
     /// <paramref name="maxChars"/>. Sert à relire les n° (demande/dépôt) après une action sans dépendre
     /// d'une grille précise. Lecture seule, tolérant aux exceptions.</summary>

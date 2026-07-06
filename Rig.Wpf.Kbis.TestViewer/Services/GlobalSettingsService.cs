@@ -27,7 +27,8 @@ public sealed class GlobalSettings
 
     /// <summary>
     /// Si vrai, les screenshots itératifs (règle 16 CLAUDE.md) sont écrits dans
-    /// <c>%USERPROFILE%\Code RIG\Audit\screenshots-loop\</c>. Permet aux agents
+    /// <c>screenshots-loop\</c> sous la racine d'audit (env RIG_AUDIT_ROOT, défaut
+    /// <c>C:\Code RIG\RIG-TV\Audit</c>). Permet aux agents
     /// IA de capturer l'état UI sans se reposer uniquement sur les logs.
     /// </summary>
     [JsonPropertyName("screenshotsLoopEnabled")]

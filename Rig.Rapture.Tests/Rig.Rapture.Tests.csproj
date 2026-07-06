@@ -90,6 +90,11 @@
              Link="RaptureLot3\PCImportService.cs" />
     <Compile Include="..\..\wt-edilot3\Source\RIG\DLL\Processus\PROC_RETAUD\RAPTURE_IMPORT\RaptureImportApplyService.cs"
              Link="RaptureLot3\RaptureImportApplyService.cs" />
+    <!-- NB Chemin B : la machine à états DematRapture (boutons cockpit RAPTUVAL) N'est PAS testée en xUnit ici.
+         Le type DematRapture souffre d'un skew d'identité d'assembly dans le test-host (RigMetier/RigBaseGreffe
+         worktree vs GAC 28/04 sans les nouveaux types → TypeLoadException runtime ; link source → CS0436 car
+         le type est aussi dans la DLL référencée). Couverture assurée à la place par le drive e2e du cockpit
+         (raptuval-cockpit : Écarter/Réactiver/Valider via l'UI réelle sur le binaire déployé). -->
   </ItemGroup>
 
   <!-- Découplage 2026-05-29 : retiré le link du code Rapture LEGACY (Source/RIG/.../RAPTURE_IMPORT

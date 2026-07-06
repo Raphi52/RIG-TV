@@ -48,7 +48,7 @@ public sealed class TestingPaths
     /// Résout les chemins en partant du dossier <see cref="AppContext.BaseDirectory"/>
     /// du TestViewer. Le mapping codé en dur ici suit la structure du repo :
     ///   <c>C:\Code RIG\RigApplication-testing\Source\Wpf\Rig.Wpf.Kbis.TestViewer\bin\…\net48\</c>
-    /// pour le TestViewer, et <c>C:\Code RIG\Audit\poc-kbis\tests\…\</c> pour les xUnit.
+    /// pour le TestViewer, et <c>C:\Code RIG\RIG-TV\Audit\poc-kbis\tests\…\</c> pour les xUnit.
     /// </summary>
     public static TestingPaths ResolveDefault()
     {
@@ -72,8 +72,8 @@ public sealed class TestingPaths
         var codeRigRoot = Path.GetFullPath(Path.Combine(repoRoot, ".."));
         var regressionRoot = FindFirstExisting(
             FromEnv("RIG_KBIS_REGRESSION_PROJECT_DIR"),
-            Path.Combine(codeRigRoot, "Audit", "poc-kbis", "tests", "Rig.Kbis.RegressionTests"),
-            @"C:\Code RIG\Audit\poc-kbis\tests\Rig.Kbis.RegressionTests");
+            Path.Combine(codeRigRoot, "RIG-TV", "Audit", "poc-kbis", "tests", "Rig.Kbis.RegressionTests"),
+            @"C:\Code RIG\RIG-TV\Audit\poc-kbis\tests\Rig.Kbis.RegressionTests");
 
         // Projet xUnit Rapture (net48) sous Source/Wpf/Rig.Rapture.Tests.
         // Path résolu via scan de baseDir pour trouver le sibling project (même approche
