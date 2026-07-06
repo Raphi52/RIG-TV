@@ -2244,10 +2244,66 @@ public sealed class LegacyDriver : IDisposable
             Console.WriteLine($"      → {matches.Count} matches : choisi celui avec affaires={best.affaireCount} (vs autres)");
         Console.WriteLine($"      → Sélection : {targetSummary}");
         try { Interaction.Select(targetRow); } catch { }
-        Thread.Sleep(500);
+        Thread.Sleep(500); // sleep-ok: settle sélection row avant Valider (FlaUI, pas de signal pollable)
         Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
         Interaction.Click(btnValider);
-        Thread.Sleep(1500);
+        Thread.Sleep(1500); // sleep-ok: settle transition phase Saisie post-Valider (rendu WinForms RIG, pas de signal pollable)
+    }
+
+    /// <summary>
+    /// Sélectionne la row RETAUD par date+heure+CHAMBRE EXACTE (code DB résolu via --audience-id).
+    /// ⚠ Finding scout 2026-07-06 : SelectAudienceInRetaudByDateHeure filtre par whitelist fuzzy + exclusion
+    /// "interactive" comme garde anti-mail-spam contre une chambre TRONQUÉE par UIA (ex "Mise " → GetCHAMBRE throw).
+    /// Ici on connaît la valeur EXACTE attendue (résolue en DB par ID) → on matche DESSUS : c'est SÛR (pas de
+    /// devinette de chambre) ET ça autorise les audiences INT (RIG FORM_RETAUD : bouton "Importer Rapture" =
+    /// eButtonVisibleOnPhase.Toujours, ImporterJsonRapture teste juste audCab==null → aucun blocage sur le type).
+    /// Les méthodes fuzzy existantes restent inchangées (chemins sans ID).
+    /// </summary>
+    public void SelectAudienceInRetaudByDateHeureChambre(string dateFr, string heure, string expectedChambre)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        var btnValider = FindButtonWithRetry("Valider la sélection", timeoutSec: 20.0);
+        if (btnValider is null)
+            throw new Exception("Bouton 'Valider la sélection' introuvable dans la phase Recherche de PROC_RETAUD (20s, pid-filtered)");
+        var rows = _window.FindAllDescendants().Where(c =>
+        {
+            try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+            catch { return false; }
+        }).ToList();
+        var ec = (expectedChambre ?? "").Trim();
+        Console.WriteLine($"      → {rows.Count} rows dans la grille, recherche '{dateFr}' + '{heure}' + chambre EXACTE '{ec}'");
+        var matches = new System.Collections.Generic.List<(AutomationElement row, string content, int affaireCount)>();
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var cells = rows[i].FindAllChildren();
+            var cellNames = cells.Select(c => SafeText(() => c.Name)).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            var content = string.Join(" | ", cellNames);
+            bool hasDate = content.IndexOf(dateFr, StringComparison.OrdinalIgnoreCase) >= 0;
+            bool hasHeure = content.IndexOf(heure, StringComparison.OrdinalIgnoreCase) >= 0;
+            // Match chambre EXACTE (pas de whitelist, pas d'exclusion INT) : une cellule = ec, OU le content
+            // contient ec, OU (tolérance troncature UIA) une cellule est un préfixe non-trivial de ec.
+            bool hasChambre = ec.Length > 0 && (
+                   cellNames.Any(c => c.Trim().Equals(ec, StringComparison.OrdinalIgnoreCase))
+                || content.IndexOf(ec, StringComparison.OrdinalIgnoreCase) >= 0
+                || cellNames.Any(c => { var t = c.Trim(); return t.Length >= 2 && ec.StartsWith(t, StringComparison.OrdinalIgnoreCase); }));
+            if (hasDate && hasHeure && hasChambre)
+            {
+                int affaireCount = cellNames.Select(n => int.TryParse(n, out var v) ? v : 0).Sum();
+                Console.WriteLine($"          row[{i}] ✓ MATCH {dateFr} {heure} chambre~'{ec}' (affaires={affaireCount}) : [{content}]");
+                matches.Add((rows[i], content, affaireCount));
+            }
+        }
+        if (matches.Count == 0)
+            throw new Exception($"Aucune row (date '{dateFr}' + heure '{heure}' + chambre '{ec}') dans la grille RETAUD.");
+        var best = matches.OrderByDescending(m => m.affaireCount).First();
+        if (matches.Count > 1)
+            Console.WriteLine($"      → {matches.Count} matches : choisi affaires={best.affaireCount}");
+        Console.WriteLine($"      → Sélection (chambre exacte, INT autorisé) : {best.content}");
+        try { Interaction.Select(best.row); } catch { }
+        Thread.Sleep(500); // sleep-ok: settle sélection row avant Valider (FlaUI, pas de signal pollable)
+        Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
+        Interaction.Click(btnValider);
+        Thread.Sleep(1500); // sleep-ok: settle transition phase Saisie post-Valider (rendu WinForms RIG, pas de signal pollable)
     }
 
     /// <summary>

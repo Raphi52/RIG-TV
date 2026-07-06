@@ -657,6 +657,7 @@ internal static partial class Program
         // Override par AUDNC_ID si fourni (ex. via le scénario UI Smoke Import) :
         // query DB pour résoudre date+heure correspondants, puis on navigue par date+heure
         // dans la grille RETAUD (le driver existant ne sait pas naviguer par ID).
+        string resolvedChambre = null; // chambre exacte (code DB) de l'audience ciblée → nav par row exacte (autorise INT)
         var audienceIdRaw = ArgVal("--audience-id");
         if (!string.IsNullOrEmpty(audienceIdRaw) && int.TryParse(audienceIdRaw, out var audId))
         {
@@ -667,7 +668,8 @@ internal static partial class Program
                 {
                     dateIso = resolved.Value.date.ToString("yyyy-MM-dd");
                     heure = resolved.Value.heure.ToString(@"hh\:mm");
-                    Console.WriteLine($"   Audience #{audId} résolue en DB : date={dateIso} heure={heure}");
+                    resolvedChambre = resolved.Value.chambre;
+                    Console.WriteLine($"   Audience #{audId} résolue en DB : date={dateIso} heure={heure} chambre={resolvedChambre}");
                 }
                 else
                 {
@@ -779,7 +781,15 @@ internal static partial class Program
                     {
                         try
                         {
-                            driver.SelectAudienceInRetaudByDateHeure(dateFr, heure);
+                            // Nav par ID+chambre EXACTE quand --audience-id a résolu la chambre : on cible la
+                            // row exacte (date+heure+chambre DB) SANS l'exclusion "interactive" ni le whitelist
+                            // fuzzy — SÛR car on matche la vraie valeur DB, pas une chambre devinée. Autorise les
+                            // audiences INT (Finding scout 2026-07-06 : RIG FORM_RETAUD bouton Import = Toujours,
+                            // aucun test type audience). Sans chambre résolue : ancienne nav fuzzy anti-mail-spam.
+                            if (!string.IsNullOrEmpty(resolvedChambre))
+                                driver.SelectAudienceInRetaudByDateHeureChambre(dateFr, heure, resolvedChambre);
+                            else
+                                driver.SelectAudienceInRetaudByDateHeure(dateFr, heure);
                         }
                         catch (Exception ex) when (acceptCreate)
                         {
@@ -1742,24 +1752,25 @@ internal static partial class Program
     /// AUDNC_HEURE est VARCHAR(5) en DB (format "HH:mm"), pas un type Time SQL.
     /// Best-effort : retourne null si la connexion DB échoue ou l'ID est inconnu.
     /// </summary>
-    private static (DateTime date, TimeSpan heure)? LookupAudienceDateHeureById(int audienceId)
+    private static (DateTime date, TimeSpan heure, string chambre)? LookupAudienceDateHeureById(int audienceId)
     {
         var cs = Environment.GetEnvironmentVariable("RIG_LEGACY_CONNECTION")
             ?? @"Server=SQL-DEV\DEV;Database=RIG_DEV;Integrated Security=True;TrustServerCertificate=True;Connect Timeout=10;";
         using var conn = new System.Data.SqlClient.SqlConnection(cs);
         conn.Open();
         using var cmd = new System.Data.SqlClient.SqlCommand(
-            "SELECT AUDNC_DATE, AUDNC_HEURE FROM AUDIENCE_CABINET WHERE AUDNC_ID_ADNC = @id", conn);
+            "SELECT AUDNC_DATE, AUDNC_HEURE, AUDNC_CHAMBRE FROM AUDIENCE_CABINET WHERE AUDNC_ID_ADNC = @id", conn);
         cmd.Parameters.AddWithValue("@id", audienceId);
         using var r = cmd.ExecuteReader();
         if (!r.Read()) return null;
         if (r.IsDBNull(0) || r.IsDBNull(1)) return null;
         var d = r.GetDateTime(0);
         var hStr = r.GetString(1); // VARCHAR "HH:mm"
+        var chambre = r.IsDBNull(2) ? "" : r.GetString(2); // code chambre DB (ex. INT, AU, PC, CLOT) — sert à cibler la row exacte
         if (!TimeSpan.TryParseExact(hStr, @"hh\:mm", System.Globalization.CultureInfo.InvariantCulture, out var h))
             if (!TimeSpan.TryParse(hStr, out h))
                 return null;
-        return (d, h);
+        return (d, h, chambre);
     }
 
     // ============================================================================
