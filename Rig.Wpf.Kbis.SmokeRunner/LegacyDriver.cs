@@ -1970,7 +1970,7 @@ public sealed class LegacyDriver : IDisposable
         //    SelectAudienceInRetaudByDateHeure pour explication. Valider une row
         //    avec chambre tronquée UIA ("Mise " au lieu de "Mise en état") déclenche
         //    RIG.METIER.TableRef.CHAMBRE.GetCHAMBRE("Mise ") → throw → mail envoyé.
-        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT", "CLOT", "DCP" };
         AutomationElement? targetRow = null;
         string targetSummary = "";
         for (int i = 0; i < rows.Count; i++)
@@ -2207,7 +2207,7 @@ public sealed class LegacyDriver : IDisposable
         // Whitelist des codes chambre courts valides (col 4 dans la grille RETAUD greffe 9995).
         // À étendre si nouveau code apparaît. Si content NE contient PAS l'un de ces codes,
         // la row est suspecte (probablement tronquée par UIA) → on skip.
-        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT", "CLOT", "DCP" };
         for (int i = 0; i < rows.Count; i++)
         {
             var cells = rows[i].FindAllChildren();

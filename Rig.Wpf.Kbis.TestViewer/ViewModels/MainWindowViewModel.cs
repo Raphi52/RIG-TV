@@ -2853,6 +2853,13 @@ public sealed partial class MainWindowViewModel : ObservableObject
             // --legacy-rapture-process navigue par date+heure dans la grille RETAUD
             extra += $" --audience-date {SelectedRaptureScenario.AudienceDate}";
             extra += $" --audience-heure {SelectedRaptureScenario.AudienceHeure}";
+            // Assertions UI-counters câblées en visible (verdict fiable, worker legacy Program.cs:818-838, SANS --apply).
+            if (SelectedRaptureScenario.ExpectedWarnings.HasValue)
+                extra += $" --expected-warnings {SelectedRaptureScenario.ExpectedWarnings.Value}";
+            if (SelectedRaptureScenario.EffectiveExpectedDetected.HasValue)
+                extra += $" --expected-detected-modifications {SelectedRaptureScenario.EffectiveExpectedDetected.Value}";
+            if (RaptureSmokeApplyReal && SelectedRaptureScenario.EffectiveExpectedApplied.HasValue)
+                extra += $" --expected-applied-modifications {SelectedRaptureScenario.EffectiveExpectedApplied.Value}";
         }
         if (!visibleMode && scenarioId == "cas-b-multi-match") extra += " --cas-b-auto-setup";
         // --scenario-id passe DANS LES DEUX MODES pour que le worker nomme correctement
@@ -3012,6 +3019,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
         var envPar = Environment.GetEnvironmentVariable("RIG_SMOKE_PARALLELISM");
         if (!string.IsNullOrEmpty(envPar) && int.TryParse(envPar, out var ep) && ep > 0) parallelism = ep;
         bool visibleMode = RaptureSmokeVisibleMode;
+        // Mode visible = RIG s'ouvre en live × N : au-delà de 2 en parallèle, contention du cache UIA de
+        // la Console d'accueil → OpenProcRetaud flake (scan btn1..btn7 introuvable). Cap dur à 2 en visible
+        // (même logique que la suite legacy lourde KBIS/ALERTES/DCADEMAT). Selfdrive garde le parallélisme plein.
+        if (visibleMode) parallelism = Math.Min(parallelism, 2);
         string modeLabel = visibleMode ? "legacy-visible" : "selfdrive";
 
         // ML LOOP Phase 4 — Cache des résultats.
@@ -3137,7 +3148,12 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     // nommer son dir self-snap (sinon fallback "(adhoc)" → nom du JSON →
                     // collision quand plusieurs scenarios partagent le meme JSON).
                     workerArgs += $" --scenario-id \"{s.Id}\"";
-                    // Assertions structurées non câblées sur le legacy (recap UI uniquement)
+                    // Assertions UI-counters câblées AUSSI en visible (2026-07-06) : le worker legacy asserte
+                    // les compteurs de la fenêtre recap (LastRecapCounters, Program.cs:818-838) — SANS --apply.
+                    // Avant : rien passé → assertions_run=0 → UNVERIFIED. La voie DB (--expected-applied) exige --apply.
+                    if (s.ExpectedWarnings.HasValue) workerArgs += $" --expected-warnings {s.ExpectedWarnings.Value}";
+                    if (s.EffectiveExpectedDetected.HasValue) workerArgs += $" --expected-detected-modifications {s.EffectiveExpectedDetected.Value}";
+                    if (RaptureSmokeApplyReal && s.EffectiveExpectedApplied.HasValue) workerArgs += $" --expected-applied-modifications {s.EffectiveExpectedApplied.Value}";
                 }
                 else
                 {
