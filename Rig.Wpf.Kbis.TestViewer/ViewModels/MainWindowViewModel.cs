@@ -2872,6 +2872,10 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 extra += $" --expected-validation-errors {SelectedRaptureScenario.ExpectedValidationErrors.Value}";
             if (!string.IsNullOrEmpty(SelectedRaptureScenario?.ExpectedMessageContains))
                 extra += $" --expected-message-contains \"{SelectedRaptureScenario.ExpectedMessageContains}\"";
+            // Fail-closed : un scénario A/B/C dont le worker rapporte ok=False (ex. MSDTC sur INSERT Cas C)
+            // doit virer ROUGE ; les scénarios ERROR_* sont exemptés côté handler.
+            if (!string.IsNullOrEmpty(SelectedRaptureScenario?.ExpectedCase))
+                extra += $" --expected-case \"{SelectedRaptureScenario.ExpectedCase}\"";
         }
         _raptureSmokeProxy.ExtraArgs = extra;
         // Propagate RIG_DRIVER_HEADLESS depuis GlobalSettings au worker SmokeRunner.
@@ -3147,6 +3151,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     if (s.EffectiveExpectedApplied.HasValue) workerArgs += $" --expected-applied-modifications {s.EffectiveExpectedApplied.Value}";
                     if (s.ExpectedValidationErrors.HasValue) workerArgs += $" --expected-validation-errors {s.ExpectedValidationErrors.Value}";
                     if (!string.IsNullOrEmpty(s.ExpectedMessageContains)) workerArgs += $" --expected-message-contains \"{s.ExpectedMessageContains}\"";
+                    if (!string.IsNullOrEmpty(s.ExpectedCase)) workerArgs += $" --expected-case \"{s.ExpectedCase}\"";
                 }
 
                 Emit($"   ▶ [{s.Id}] démarrage worker {modeLabel}");

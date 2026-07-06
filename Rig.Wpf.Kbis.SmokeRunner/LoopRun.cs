@@ -20,6 +20,7 @@ internal sealed class LoopScenario
     [DataMember(Name = "jsonFile")]          public string JsonFile { get; set; }
     [DataMember(Name = "defaultAudienceId")] public int? DefaultAudienceId { get; set; }
     [DataMember(Name = "expectedAppliedModifications")] public int? ExpectedAppliedModifications { get; set; }
+    [DataMember(Name = "expectedCase")]      public string ExpectedCase { get; set; }
 }
 
 [DataContract]
@@ -156,6 +157,9 @@ internal static class LoopRun
         if (s.DefaultAudienceId.HasValue) a += $" --audience-id {s.DefaultAudienceId.Value}";
         // Sans ce flag, un scénario apply qui n'écrit plus rien (régression) passerait vert (0 diff = 0 erreur).
         if (apply && s.ExpectedAppliedModifications.HasValue) a += $" --expected-applied-modifications {s.ExpectedAppliedModifications.Value}";
+        // Transmis pour le fail-closed du handler : un scénario A/B/C dont le worker rapporte ok=False
+        // (ex. escalade MSDTC → INSERT Cas C) doit virer ROUGE ; un scénario ERROR_* est exempté.
+        if (!string.IsNullOrEmpty(s.ExpectedCase)) a += $" --expected-case \"{s.ExpectedCase}\"";
         if (s.Id == "cas-b-multi-match") a += " --cas-b-auto-setup";
 
         var psi = new ProcessStartInfo(smokeExe, a)

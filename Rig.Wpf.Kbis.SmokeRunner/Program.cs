@@ -961,6 +961,7 @@ internal static partial class Program
         int? expectedAppliedMods = int.TryParse(ArgVal("--expected-applied-modifications") ?? "", out var eam) ? (int?)eam : null;
         int? expectedValidationErrors = int.TryParse(ArgVal("--expected-validation-errors") ?? "", out var eve) ? (int?)eve : null;
         string expectedMessageContains = ArgVal("--expected-message-contains");
+        string expectedCase = ArgVal("--expected-case");
         int timeoutSec = int.TryParse(ArgVal("--timeout") ?? "", out var ts) ? ts : 120;
 
         Console.WriteLine($"   JSON          : {jsonPath}");
@@ -1081,6 +1082,19 @@ internal static partial class Program
         if (workerResult == null)
             VerifyStep("Worker result JSON present", () =>
                 throw new Exception("JSON résultat worker absent - worker probablement crashé (aucune assertion n'a pu tourner)"));
+
+        // ── Fail-closed sur ok=False (anti faux-vert MSDTC — cas-b/cas-c) ──
+        // Un worker qui rapporte ok=False (exception non gérée : escalade MSDTC sur INSERT Cas C, erreur
+        // d'apply, etc.) N'EST PAS un succès. Sans ça, ok=False avec JSON présent sortait exit 0 → PASS
+        // silencieux au batch (LoopRun.cs juge sur le seul exit code). On EXEMPTE les scénarios d'erreur
+        // déclarés (expectedCase ERROR_*), pour qui ok=False (ex. ERROR_PARSE) est le résultat ATTENDU.
+        // expectedCase absent (chemin qui ne le transmet pas) → on ne fail PAS (comportement inchangé).
+        bool expectsError = !string.IsNullOrEmpty(expectedCase)
+            && expectedCase.StartsWith("ERROR", StringComparison.OrdinalIgnoreCase);
+        if (workerResult != null && !workerResult.Ok && !string.IsNullOrEmpty(expectedCase) && !expectsError)
+            VerifyStep($"Worker import ok (fail-closed, expectedCase={expectedCase})", () =>
+                throw new Exception("Worker a rapporté ok=False (inattendu pour expectedCase=" + expectedCase
+                    + ") : " + (workerResult.Message ?? "(sans message)")));
 
         // ── Assertions vs expected ──
         if (workerResult != null && expectedWarnings.HasValue)
