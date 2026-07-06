@@ -134,6 +134,20 @@ public sealed class RaptureScenario
         ExpectedAppliedModifications ?? ExpectedModifications;
     [JsonPropertyName("expectedValidationErrors")] public int? ExpectedValidationErrors { get; set; }
     [JsonPropertyName("expectedMessageContains")] public string? ExpectedMessageContains { get; set; }
+    // Assertions ajoutées 2026-07-06 : compteurs UI recap "erreur bloquante"/"affaires bloquées" (cas-err qui
+    // affichent la recap) ; affaires ignorées par le Diff (cas affaire-non-trouvee) ; texte du DialogBox
+    // ERROR_PARSE (json-malformé, pas de recap). Passés aux workers par MainWindowViewModel.
+    [JsonPropertyName("expectedErrors")] public int? ExpectedErrors { get; set; }
+    [JsonPropertyName("expectedBlocked")] public int? ExpectedBlocked { get; set; }
+    [JsonPropertyName("expectedAffairesIgnorees")] public int? ExpectedAffairesIgnorees { get; set; }
+    [JsonPropertyName("expectedErrorContains")] public string? ExpectedErrorContains { get; set; }
+    // Compteurs VISIBLE-spécifiques : la tuile UI recap "modifications détectées"/"avertissements" peut DIFFÉRER
+    // du diff selfdrive (mesuré 2026-07-06 : subset UI=1 vs selfdrive=31 ; a-bis UI=23 vs 1). Le chemin visible
+    // utilise ces valeurs si présentes, sinon fallback sur les valeurs selfdrive.
+    [JsonPropertyName("expectedVisibleDetectedModifications")] public int? ExpectedVisibleDetectedModifications { get; set; }
+    [JsonPropertyName("expectedVisibleWarnings")] public int? ExpectedVisibleWarnings { get; set; }
+    [JsonIgnore] public int? EffectiveVisibleDetected => ExpectedVisibleDetectedModifications ?? EffectiveExpectedDetected;
+    [JsonIgnore] public int? EffectiveVisibleWarnings => ExpectedVisibleWarnings ?? ExpectedWarnings;
     [JsonPropertyName("tags")] public List<string>? Tags { get; set; }
 
     /// <summary>Chemin absolu du JSON (résolu par <see cref="RaptureScenarioCatalog.Load"/>).</summary>

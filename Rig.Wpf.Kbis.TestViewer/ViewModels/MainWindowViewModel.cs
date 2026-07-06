@@ -583,18 +583,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
     /// pipeline complet + assertions DB/UIA, plus rapide). Ignoré en mode "All
     /// scenarios" qui reste en self-drive batch (sinon 16 RIG visibles séquentiels).
     /// </summary>
-    // Default = true (legacy dispatch) car aligned avec selectedRaptureMode default = B (legacy + HDESK).
-    // Si on garde le default false ici alors que selectedRaptureMode = B, le partial method
-    // OnSelectedRaptureModeChanged ne fire PAS au boot (pas de change) → batch part en selfdrive
-    // alors qu'on est censé être en legacy. Confirmed bug 2026-05-27 lors du smoke Mode B.
-    [ObservableProperty] private bool raptureSmokeVisibleMode = true;
+    // Default 2026-07-06 : SELFDRIVE (false), aligné avec selectedRaptureMode default = D. Le mode VISIBLE
+    // (legacy-rapture-process) a des blocages RIG/data PROFONDS : crash ChargerAudienceCabinet sur la section
+    // INT (GetSECTION), popup multi-audience qui bloque les cas-err, compteurs UI recap ≠ diff selfdrive →
+    // NON fiable sans session supervisée + fix RIG. Le SELFDRIVE est 27/27 vert + propre (0 crash) → « Play All »
+    // marche par défaut. Détail complet : RUN rapture-visible-reliable. Pour finir le chantier visible : session supervisée.
+    [ObservableProperty] private bool raptureSmokeVisibleMode = false;
 
     // ── Mode selector (P2) — combo box CmbRaptureMode ──────────────────
     /// <summary>Source ItemsSource du combo <c>CmbRaptureMode</c> (B = défaut en première position).</summary>
     public IReadOnlyList<RaptureModeOption> RaptureModeOptions { get; } = RaptureModeOption.All;
 
-    /// <summary>Mode visibilité du batch sélectionné (default B = HDESK self-snap, 0 vol focus).</summary>
-    [ObservableProperty] private RaptureMode selectedRaptureMode = RaptureMode.B;
+    /// <summary>Mode visibilité du batch (default 2026-07-06 = D selfdrive, fiable 27/27 ; cf. raptureSmokeVisibleMode).</summary>
+    [ObservableProperty] private RaptureMode selectedRaptureMode = RaptureMode.D;
 
     /// <summary>Nombre de workers RIG en parallèle (1-16, default 4). Synchronisé avec <c>RIG_SMOKE_PARALLELISM</c>.</summary>
     [ObservableProperty] private int raptureParallelism = 4;
@@ -2854,12 +2855,19 @@ public sealed partial class MainWindowViewModel : ObservableObject
             extra += $" --audience-date {SelectedRaptureScenario.AudienceDate}";
             extra += $" --audience-heure {SelectedRaptureScenario.AudienceHeure}";
             // Assertions UI-counters câblées en visible (verdict fiable, worker legacy Program.cs:818-838, SANS --apply).
-            if (SelectedRaptureScenario.ExpectedWarnings.HasValue)
-                extra += $" --expected-warnings {SelectedRaptureScenario.ExpectedWarnings.Value}";
-            if (SelectedRaptureScenario.EffectiveExpectedDetected.HasValue)
-                extra += $" --expected-detected-modifications {SelectedRaptureScenario.EffectiveExpectedDetected.Value}";
+            if (SelectedRaptureScenario.EffectiveVisibleWarnings.HasValue)
+                extra += $" --expected-warnings {SelectedRaptureScenario.EffectiveVisibleWarnings.Value}";
+            if (SelectedRaptureScenario.EffectiveVisibleDetected.HasValue)
+                extra += $" --expected-detected-modifications {SelectedRaptureScenario.EffectiveVisibleDetected.Value}";
             if (RaptureSmokeApplyReal && SelectedRaptureScenario.EffectiveExpectedApplied.HasValue)
                 extra += $" --expected-applied-modifications {SelectedRaptureScenario.EffectiveExpectedApplied.Value}";
+            // cas-err en visible : compteurs UI "erreur bloquante"/"affaires bloquées" + DialogBox ERROR_PARSE (2026-07-06)
+            if (SelectedRaptureScenario.ExpectedErrors.HasValue)
+                extra += $" --expected-errors {SelectedRaptureScenario.ExpectedErrors.Value}";
+            if (SelectedRaptureScenario.ExpectedBlocked.HasValue)
+                extra += $" --expected-blocked {SelectedRaptureScenario.ExpectedBlocked.Value}";
+            if (!string.IsNullOrEmpty(SelectedRaptureScenario.ExpectedErrorContains))
+                extra += $" --expected-error-contains \"{SelectedRaptureScenario.ExpectedErrorContains}\"";
         }
         if (!visibleMode && scenarioId == "cas-b-multi-match") extra += " --cas-b-auto-setup";
         // --scenario-id passe DANS LES DEUX MODES pour que le worker nomme correctement
@@ -2879,6 +2887,8 @@ public sealed partial class MainWindowViewModel : ObservableObject
                 extra += $" --expected-validation-errors {SelectedRaptureScenario.ExpectedValidationErrors.Value}";
             if (!string.IsNullOrEmpty(SelectedRaptureScenario?.ExpectedMessageContains))
                 extra += $" --expected-message-contains \"{SelectedRaptureScenario.ExpectedMessageContains}\"";
+            if (SelectedRaptureScenario?.ExpectedAffairesIgnorees.HasValue == true)
+                extra += $" --expected-affaires-ignorees {SelectedRaptureScenario.ExpectedAffairesIgnorees.Value}";
             // Fail-closed : un scénario A/B/C dont le worker rapporte ok=False (ex. MSDTC sur INSERT Cas C)
             // doit virer ROUGE ; les scénarios ERROR_* sont exemptés côté handler.
             if (!string.IsNullOrEmpty(SelectedRaptureScenario?.ExpectedCase))
@@ -3151,9 +3161,14 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     // Assertions UI-counters câblées AUSSI en visible (2026-07-06) : le worker legacy asserte
                     // les compteurs de la fenêtre recap (LastRecapCounters, Program.cs:818-838) — SANS --apply.
                     // Avant : rien passé → assertions_run=0 → UNVERIFIED. La voie DB (--expected-applied) exige --apply.
-                    if (s.ExpectedWarnings.HasValue) workerArgs += $" --expected-warnings {s.ExpectedWarnings.Value}";
-                    if (s.EffectiveExpectedDetected.HasValue) workerArgs += $" --expected-detected-modifications {s.EffectiveExpectedDetected.Value}";
+                    if (s.EffectiveVisibleWarnings.HasValue) workerArgs += $" --expected-warnings {s.EffectiveVisibleWarnings.Value}";
+                    if (s.EffectiveVisibleDetected.HasValue) workerArgs += $" --expected-detected-modifications {s.EffectiveVisibleDetected.Value}";
                     if (RaptureSmokeApplyReal && s.EffectiveExpectedApplied.HasValue) workerArgs += $" --expected-applied-modifications {s.EffectiveExpectedApplied.Value}";
+                    // cas-err en visible (2026-07-06) : compteurs UI recap "erreur bloquante"/"affaires bloquées"
+                    // (les cas-err ERROR_HEADER/ERROR_AFFAIRE affichent la recap) + texte DialogBox (ERROR_PARSE json-malformé).
+                    if (s.ExpectedErrors.HasValue) workerArgs += $" --expected-errors {s.ExpectedErrors.Value}";
+                    if (s.ExpectedBlocked.HasValue) workerArgs += $" --expected-blocked {s.ExpectedBlocked.Value}";
+                    if (!string.IsNullOrEmpty(s.ExpectedErrorContains)) workerArgs += $" --expected-error-contains \"{s.ExpectedErrorContains}\"";
                 }
                 else
                 {
@@ -3167,6 +3182,7 @@ public sealed partial class MainWindowViewModel : ObservableObject
                     if (s.EffectiveExpectedApplied.HasValue) workerArgs += $" --expected-applied-modifications {s.EffectiveExpectedApplied.Value}";
                     if (s.ExpectedValidationErrors.HasValue) workerArgs += $" --expected-validation-errors {s.ExpectedValidationErrors.Value}";
                     if (!string.IsNullOrEmpty(s.ExpectedMessageContains)) workerArgs += $" --expected-message-contains \"{s.ExpectedMessageContains}\"";
+                    if (s.ExpectedAffairesIgnorees.HasValue) workerArgs += $" --expected-affaires-ignorees {s.ExpectedAffairesIgnorees.Value}";
                     if (!string.IsNullOrEmpty(s.ExpectedCase)) workerArgs += $" --expected-case \"{s.ExpectedCase}\"";
                 }
 

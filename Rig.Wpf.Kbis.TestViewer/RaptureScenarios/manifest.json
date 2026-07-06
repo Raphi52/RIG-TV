@@ -9,6 +9,7 @@
       "description": "Garde anti-régression e2e des écritures P2 : copie de cas-a-contentieux-10 avec present=false partout + 2 avocats postulants permutés → écart PERMANENT vs l'état canonique de l'audience 28590 → chaque run --apply exerce réellement ApplyPartie (FK avocats) + ApplyPartiePresence (PRT_MODE_PRESENTATION). Snapshot/restore PARTIE étendu (net-zéro). En batterie standard (dry-run) : PASS sur le diff seul.",
       "jsonFile": "cas-apply-partie-writes.json",
       "expectedAppliedModifications": 27,
+      "expectedDetectedModifications": 50,
       "defaultAudienceId": 28590,
       "audienceDate": "2026-06-29",
       "audienceHeure": "14:30",
@@ -193,7 +194,8 @@
       "audienceHeure": "14:30",
       "audienceChambre": "Audience interactive",
       "expectedCase": "B",
-      "expectedWarnings": null,
+      "expectedWarnings": 0,
+      "expectedDetectedModifications": 23,
       "expectedModifications": null,
       "tags": ["cas-b", "multi-match", "requires-sql-setup"]
     },
@@ -207,7 +209,8 @@
       "audienceHeure": "09:00",
       "audienceChambre": "Mise en etat",
       "expectedCase": "A",
-      "expectedWarnings": null,
+      "expectedWarnings": 20,
+      "expectedDetectedModifications": 31,
       "expectedModifications": null,
       "tags": ["diff", "replacement", "idempotence", "requires-apply-mode"]
     },

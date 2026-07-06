@@ -2307,7 +2307,9 @@ internal static partial class Program
             // ML LOOP fix : visible parallel=4 avec 16 scenarios × 4 waves × 180s = 12min worst case.
             // Driver doit attendre que la TestViewer batch écrive son JSON sinon la boucle
             // ML LOOP n'a pas de feedback structuré. 10min = sécurité 1.5×.
-            TimeSpan pollTimeout = visibleMode ? TimeSpan.FromMinutes(10) : TimeSpan.FromMinutes(8);
+            // Visible : batch 27 × parallélisme 2 en RIG live dépasse 10min (mesuré 2026-07-06 : drive bail
+            // à 10min avant 'RECAP ALL SCENARIOS'). 25min = marge pour 27 scénarios visibles.
+            TimeSpan pollTimeout = visibleMode ? TimeSpan.FromMinutes(25) : TimeSpan.FromMinutes(8);
             TryStep($"Attendre fin du run (poll log box, max {pollTimeout.TotalMinutes:F0} min)", () =>
             {
                 string marker = isAllScenarios ? "RECAP ALL SCENARIOS" : null;
