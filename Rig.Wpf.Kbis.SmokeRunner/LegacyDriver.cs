@@ -1025,6 +1025,13 @@ public sealed class LegacyDriver : IDisposable
     public RecapCounters LastRecapCounters { get; private set; }
 
     /// <summary>
+    /// Texte du dernier DialogBox d'erreur GÉNÉRIQUE capturé (cas ERROR_PARSE / json-malformé : RIG ne
+    /// montre PAS de recap mais un DialogBox.Show — scout 2026-07-06 FORM_RETAUD:223-225). Renseigné dans la
+    /// branche Refus de la gestion popup AVANT fermeture ; consommé par SmokeRunner pour --expected-error-contains.
+    /// </summary>
+    public string LastErrorDialogText { get; private set; }
+
+    /// <summary>
     /// Lit les 4 stat tiles de la recap (label "modifications détectées" / "avertissements"
     /// / "erreur bloquante" / "affaires bloquées") + le label de valeur adjacent (chiffre).
     /// Best-effort : retourne null sur les champs qu'on ne trouve pas. Le matching se fait
@@ -1641,7 +1648,16 @@ public sealed class LegacyDriver : IDisposable
             return;
         }
 
-        // Refus (défaut) : clique Non / Annuler / Fermer / OK
+        // Refus (défaut) : capture d'abord le TEXTE du dialog (ex. ERROR_PARSE json-malformé : DialogBox
+        // générique sans recap — scout 2026-07-06) pour permettre l'assertion --expected-error-contains,
+        // PUIS clique Non / Annuler / Fermer / OK.
+        try
+        {
+            LastErrorDialogText = ExtractStaticText(popup);
+            if (!string.IsNullOrEmpty(LastErrorDialogText))
+                Console.WriteLine($"      → Dialog text capturé : {LastErrorDialogText.Replace("\r\n", " | ")}");
+        }
+        catch { }
         var btnRefuse = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
             .FirstOrDefault(b =>
             {

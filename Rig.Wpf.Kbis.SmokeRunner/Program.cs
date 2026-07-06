@@ -700,6 +700,14 @@ internal static partial class Program
         bool idempotence2Run = args.Any(a => a.Equals("--idempotence-2run", StringComparison.OrdinalIgnoreCase));
         bool casBAutoSetup = args.Any(a => a.Equals("--cas-b-auto-setup", StringComparison.OrdinalIgnoreCase));
         int? expectedWarnings = int.TryParse(ArgVal("--expected-warnings") ?? "", out var ew) ? (int?)ew : null;
+        // Compteurs UI "erreur bloquante" / "affaires bloquées" attendus (cas-err ERROR_HEADER/ERROR_AFFAIRE :
+        // la recap S'AFFICHE avec ces tuiles peuplées même si le bouton Importer est grisé — scout 2026-07-06 :
+        // FormRaptureImportRecap montre la fenêtre + désactive juste btnImporter).
+        int? expectedErrors = int.TryParse(ArgVal("--expected-errors") ?? "", out var eerr) ? (int?)eerr : null;
+        int? expectedBlocked = int.TryParse(ArgVal("--expected-blocked") ?? "", out var eblk) ? (int?)eblk : null;
+        // Texte attendu dans le DialogBox d'erreur GÉNÉRIQUE (ERROR_PARSE json-malformé : pas de recap, RIG
+        // affiche un DialogBox.Show — scout 2026-07-06). Asserté contre driver.LastErrorDialogText.
+        string expectedErrorContains = ArgVal("--expected-error-contains");
         // Compteur UI "modifications détectées" attendu (stat tile recap). Fallback sur
         // --expected-modifications pour rétrocompat.
         int? expectedDetectedMods = int.TryParse(ArgVal("--expected-detected-modifications") ?? "", out var edm) ? (int?)edm
@@ -825,7 +833,7 @@ internal static partial class Program
 
                     // ── UI assertion (UIA) : compare les compteurs lus sur la recap aux expected ──
                     // UI = "modifications détectées" stat tile (= count AVANT décochage).
-                    if (expectedWarnings.HasValue || expectedDetectedMods.HasValue)
+                    if (expectedWarnings.HasValue || expectedDetectedMods.HasValue || expectedErrors.HasValue || expectedBlocked.HasValue)
                     {
                         VerifyStep("Verify UI recap counters vs expected", () =>
                         {
@@ -845,7 +853,27 @@ internal static partial class Program
                             {
                                 throw new Exception($"⚠ UI MODIFICATIONS DIVERGE : attendus={expectedDetectedMods.Value} actual={c.Modifications.Value}");
                             }
+                            if (expectedErrors.HasValue && c.Errors.HasValue && c.Errors.Value != expectedErrors.Value)
+                            {
+                                throw new Exception($"⚠ UI ERRORS (erreur bloquante) DIVERGE : attendus={expectedErrors.Value} actual={c.Errors.Value}");
+                            }
+                            if (expectedBlocked.HasValue && c.Blocked.HasValue && c.Blocked.Value != expectedBlocked.Value)
+                            {
+                                throw new Exception($"⚠ UI BLOCKED (affaires bloquées) DIVERGE : attendus={expectedBlocked.Value} actual={c.Blocked.Value}");
+                            }
                             Console.WriteLine($"      → ✓ UI counters matchent les expected (ou null = champ non vérifié)");
+                        });
+                    }
+
+                    // ── Assertion dialog d'erreur (ERROR_PARSE json-malformé : DialogBox générique, pas de recap) ──
+                    if (!string.IsNullOrEmpty(expectedErrorContains))
+                    {
+                        VerifyStep($"Verify error dialog contains \"{expectedErrorContains}\"", () =>
+                        {
+                            var txt = driver.LastErrorDialogText ?? "";
+                            if (txt.IndexOf(expectedErrorContains, StringComparison.OrdinalIgnoreCase) < 0)
+                                throw new Exception($"ERROR DIALOG MISMATCH : attendu contient \"{expectedErrorContains}\" actual=\"{txt}\"");
+                            Console.WriteLine($"      → ✓ Error dialog OK (contains \"{expectedErrorContains}\")");
                         });
                     }
 
