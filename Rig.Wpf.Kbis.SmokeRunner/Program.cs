@@ -960,6 +960,7 @@ internal static partial class Program
         int? expectedDetectedMods = int.TryParse(ArgVal("--expected-detected-modifications") ?? "", out var edm) ? (int?)edm : null;
         int? expectedAppliedMods = int.TryParse(ArgVal("--expected-applied-modifications") ?? "", out var eam) ? (int?)eam : null;
         int? expectedValidationErrors = int.TryParse(ArgVal("--expected-validation-errors") ?? "", out var eve) ? (int?)eve : null;
+        int? expectedAffairesIgnorees = int.TryParse(ArgVal("--expected-affaires-ignorees") ?? "", out var eai) ? (int?)eai : null;
         string expectedMessageContains = ArgVal("--expected-message-contains");
         string expectedCase = ArgVal("--expected-case");
         int timeoutSec = int.TryParse(ArgVal("--timeout") ?? "", out var ts) ? ts : 120;
@@ -1135,6 +1136,15 @@ internal static partial class Program
                 Console.WriteLine($"      → ✓ Validation errors OK ({workerResult.ValidationErrors})");
             });
         }
+        if (workerResult != null && expectedAffairesIgnorees.HasValue)
+        {
+            VerifyStep($"Assert affaires ignorées (expected={expectedAffairesIgnorees.Value})", () =>
+            {
+                if (workerResult.AffairesIgnorees != expectedAffairesIgnorees.Value)
+                    throw new Exception($"AFFAIRES IGNORÉES DIVERGE : attendues={expectedAffairesIgnorees.Value} actual={workerResult.AffairesIgnorees}");
+                Console.WriteLine($"      → ✓ Affaires ignorées OK ({workerResult.AffairesIgnorees})");
+            });
+        }
         if (workerResult != null && !string.IsNullOrEmpty(expectedMessageContains))
         {
             VerifyStep($"Assert message contains \"{expectedMessageContains}\"", () =>
@@ -1211,6 +1221,7 @@ internal static partial class Program
         [System.Runtime.Serialization.DataMember(Name = "applied")] public int Applied { get; set; }
         [System.Runtime.Serialization.DataMember(Name = "skipped")] public int Skipped { get; set; }
         [System.Runtime.Serialization.DataMember(Name = "errors")] public int Errors { get; set; }
+        [System.Runtime.Serialization.DataMember(Name = "affairesIgnorees")] public int AffairesIgnorees { get; set; }
     }
 
     private static SelfDriveResultDto ParseSelfDriveResult(string json)

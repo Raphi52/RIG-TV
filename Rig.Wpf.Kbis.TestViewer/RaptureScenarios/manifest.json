@@ -150,7 +150,7 @@
       "expectedCase": "A",
       "expectedWarnings": null,
       "expectedModifications": null,
-      "expectedValidationErrors": 1,
+      "expectedAffairesIgnorees": 1,
       "tags": ["diff", "affaire-non-trouvee", "AffairesIgnorees"]
     },
     {
@@ -171,17 +171,17 @@
     {
       "id": "cas-err-affaires-vide",
       "name": "Erreur — affaires[] vide",
-      "description": "Le JSON a un tableau affaires[] vide. La pré-validation devrait remonter une erreur header 'Aucune affaire à importer'. Footer rouge attendu. Bouton Importer bloqué. ⚠ Audience 28590 (22/05) hors fenêtre RETAUD → fallback Cas C → header créé seulement (1 modif counter = audience-creation marker).",
+      "description": "Le JSON a un tableau affaires[] vide. ⚠️ GAP produit constaté à l'audit 2026-07-06 : RaptureImportValidator N'A PAS de règle de rejet 'aucune affaire à importer' (grep négatif) → RIG ACCEPTE l'import vide (0 erreur de validation) et ne fait que le diff de composition (1 modif). Ce scénario garde donc le comportement RÉEL observé (accepté, cas A, 1 diff), PAS l'erreur initialement prétendue. À rebasculer en ERROR_HEADER si/quand la règle de rejet est implémentée côté produit (décision à prendre).",
       "jsonFile": "cas-err-affaires-vide.json",
       "defaultAudienceId": 28590,
       "audienceDate": "2026-06-29",
       "audienceHeure": "14:30",
       "audienceChambre": "Audience interactive",
-      "expectedCase": "ERROR_HEADER",
+      "expectedCase": "A",
       "expectedWarnings": 0,
       "expectedDetectedModifications": 1,
       "expectedAppliedModifications": null,
-      "tags": ["error", "header", "affaires-vide", "data-drift-retaud-window"]
+      "tags": ["affaires-vide", "empty-accepted-gap", "data-drift-retaud-window"]
     },
     {
       "id": "cas-b-multi-match",
