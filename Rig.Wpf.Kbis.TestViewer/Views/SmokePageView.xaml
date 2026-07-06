@@ -6,7 +6,13 @@
              xmlns:vm="clr-namespace:Rig.Wpf.Kbis.TestViewer.ViewModels"
              x:Name="root">
     <!-- Source de vérité UNIQUE du corps d'une page smoke. Édité ici = affecte toutes les catégories. -->
-    <Grid Margin="0,12,0,0">
+    <!-- Borne la hauteur du corps à la zone VISIBLE du ScrollViewer ancêtre (PageScroll, MainWindow).
+         Sans ça, ce ScrollViewer (pan phone/RDP) mesure en hauteur INFINIE → le star-sizing de la Row 1
+         ne résout pas → AdaptivePanel + bloc Live (FocusView) mesurent au CONTENU (liste 27 scénarios) et
+         s'étirent sur des milliers de px. Avec le MaxHeight = ViewportHeight, le corps tient toujours dans
+         la fenêtre (toute résolution) ; le débordement scrolle DANS les panneaux (ListBox/DataGrid). -->
+    <Grid Margin="0,12,0,0"
+          MaxHeight="{Binding ViewportHeight, RelativeSource={RelativeSource AncestorType=ScrollViewer}}">
         <Grid.Resources>
             <!-- Converter local pour masquer Mosaic/List/Footer quand IsFullscreen = true. -->
             <cv:BoolToVisibilityInvertedConverter x:Key="SmokeBoolToVisInv"/>
