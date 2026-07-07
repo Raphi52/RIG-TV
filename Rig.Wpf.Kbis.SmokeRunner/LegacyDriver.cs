@@ -709,6 +709,26 @@ public sealed class LegacyDriver : IDisposable
             }
         }
 
+        // Cold-boot sous contention parallèle : la Console d'accueil (btn1..btn7) peut ne pas
+        // être encore rendue au moment du scan → flake "Pass 1 n'a vu AUCUN btn / Console pas
+        // rendue" (mesuré 2026-07-07 : 4/27 fails, tous en 1er wave visible à froid). Poll-until-
+        // rendered AVANT de scanner : attend qu'au moins un btn1..btn7 soit présent (cap 15s, 400ms).
+        // CausalHypothesis: scan lancé avant rendu console au cold-boot // → poll présence btn avant scan.
+        {
+            var renderSw = Stopwatch.StartNew();
+            bool consoleRendered = false;
+            while (renderSw.Elapsed.TotalSeconds < 15)
+            {
+                try { for (int n = 1; n <= 7; n++) if (FindByAutomationId("btn" + n) is not null) { consoleRendered = true; break; } } catch { }
+                if (consoleRendered) break;
+                Thread.Sleep(400);  // sleep-ok: fréquence de poll attente rendu Console d'accueil (cap 15s, condition = btn présent)
+            }
+            if (!consoleRendered)
+                Console.WriteLine($"      [DIAG] ⚠ Console d'accueil non rendue après 15s de poll (btn1..btn7 absents) — scan quand même");
+            else if (renderSw.Elapsed.TotalMilliseconds > 800)
+                Console.WriteLine($"      [DIAG] Console rendue après {renderSw.Elapsed.TotalSeconds:F1}s de poll (cold-boot)");
+        }
+
         // ML LOOP fix visible-parallel : scan complet btn1..btn7 avec
         // (a) retry sur chaque FindByAutomationId (mode //: UIA transient KO)
         // (b) PAS de break early sur null btn (continue à n+1)
@@ -1540,6 +1560,12 @@ public sealed class LegacyDriver : IDisposable
                 throw new Exception("Popup de confirmation 'Audience créée' pas apparue en 15s — Creator.CreateFromJson a peut-être throw");
             var createdText = ExtractStaticText(createdPopup);
             Console.WriteLine($"      → Popup 'Audience créée' : {createdText}");
+            // Capture le texte de la popup post-création : peut être un REFUS ("Création audience
+            // refusée : Refus : date d'audience JSON invalide ou absente…") → l'assertion
+            // --expected-error-contains le lit via LastErrorDialogText. Sans ça, le refus est loggé
+            // mais jamais asserté (worker.stdout 2026-07-07 : date-invalide/date-audience-manquante 0/2).
+            // fix-ok: refus create loggé mais absent de LastErrorDialogText → capturer ici.
+            if (!string.IsNullOrEmpty(createdText)) LastErrorDialogText = createdText;
             // Match "ID=12345" dans le texte (logique pure testée xUnit, cf. LegacyParsing)
             var newIdOpt = LegacyParsing.ExtractAudienceId(createdText);
             if (newIdOpt.HasValue)

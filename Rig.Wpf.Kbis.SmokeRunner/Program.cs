@@ -833,7 +833,13 @@ internal static partial class Program
 
                     // ── UI assertion (UIA) : compare les compteurs lus sur la recap aux expected ──
                     // UI = "modifications détectées" stat tile (= count AVANT décochage).
-                    if (expectedWarnings.HasValue || expectedDetectedMods.HasValue || expectedErrors.HasValue || expectedBlocked.HasValue)
+                    // Un scénario qui attend un DIALOG de refus (expectedErrorContains : "date d'audience
+                    // JSON invalide ou absente", json-malformé…) ne produit PAS de recap → asserter les
+                    // compteurs recap = faux-fail "recap illisible" (mesuré 2026-07-07 : date-invalide 1/2).
+                    // Le refus est vérifié par l'assertion dialog ci-dessous. → on skip le recap ici.
+                    // fix-ok: refus (expectedErrorContains) n'a pas de recap → ne pas asserter les compteurs recap.
+                    bool expectsErrorDialog = !string.IsNullOrEmpty(expectedErrorContains);
+                    if (!expectsErrorDialog && (expectedWarnings.HasValue || expectedDetectedMods.HasValue || expectedErrors.HasValue || expectedBlocked.HasValue))
                     {
                         VerifyStep("Verify UI recap counters vs expected", () =>
                         {
@@ -2309,7 +2315,9 @@ internal static partial class Program
             // ML LOOP n'a pas de feedback structuré. 10min = sécurité 1.5×.
             // Visible : batch 27 × parallélisme 2 en RIG live dépasse 10min (mesuré 2026-07-06 : drive bail
             // à 10min avant 'RECAP ALL SCENARIOS'). 25min = marge pour 27 scénarios visibles.
-            TimeSpan pollTimeout = visibleMode ? TimeSpan.FromMinutes(25) : TimeSpan.FromMinutes(8);
+            // Visible séquentiel (parallélisme 1, choisi pour tuer le flake console) : 27 scénarios
+            // × ~1min + waits recap/refus → ~30min. 25min bailait à ~18/27 en tuant TestViewer → 45min.
+            TimeSpan pollTimeout = visibleMode ? TimeSpan.FromMinutes(45) : TimeSpan.FromMinutes(8);
             TryStep($"Attendre fin du run (poll log box, max {pollTimeout.TotalMinutes:F0} min)", () =>
             {
                 string marker = isAllScenarios ? "RECAP ALL SCENARIOS" : null;

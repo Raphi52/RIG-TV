@@ -94,6 +94,40 @@ try {
         }
         Write-Host ""
     }
+
+    # ── Mur 1 (2026-07-07) : 28590 AUDNC_SECTION doit rester NULL. Sinon RIG crashe a l'ouverture
+    #    (ChargerAudienceCabinet -> GetSECTION sur "audience interactive" tronquee -> invalide) en mode VISIBLE.
+    #    Idempotent (ne touche que si non-null).
+    if ($Apply) {
+        $secCmd = $conn.CreateCommand()
+        $secCmd.CommandText = "UPDATE AUDIENCE_CABINET SET AUDNC_SECTION = NULL WHERE AUDNC_ID_ADNC = 28590 AND AUDNC_SECTION IS NOT NULL"
+        $secN = $secCmd.ExecuteNonQuery()
+        Write-Host "  [Mur1] 28590 AUDNC_SECTION -> NULL ($secN row)"
+    } else {
+        Write-Host "  [Mur1] 28590 AUDNC_SECTION -> NULL (dry-run)"
+    }
+
+    # ── Mur 2 (2026-07-07) : les cas-err JSON tracent la date de 28590 (offset -2) pour single-match
+    #    (sinon leur date stale matche plusieurs audiences -> popup "Choisir l'audience cible" -> pas de recap).
+    $iso28590 = $today.AddDays(-2).ToString('yyyy-MM-dd')
+    $casErrJsons = @(
+        'cas-err-affaire-id-instance-manquant.json','cas-err-affaires-null.json','cas-err-affaires-vide.json',
+        'cas-err-bloc-affaire-null.json','cas-err-greffe-inconnu.json','cas-err-greffe-manquant.json',
+        'cas-err-idinstance-negatif.json','cas-err-idinstance-zero.json','cas-err-ouverture-pc-sans-bloc.json',
+        'cas-err-pc-date-cessation-invalide.json','cas-err-pc-type-manquant.json','cas-err-type-decision-inconnu.json',
+        'cas-diff-affaire-non-trouvee.json','cas-diff-sans-changement.json'
+    )
+    Write-Host "  [Mur2] cas-err JSON -> dateAudience $iso28590 (tracent 28590 ; json-malforme EXCLU, reste casse)"
+    foreach ($cej in $casErrJsons) {
+        $cp = Join-Path $scenDir $cej
+        if (-not (Test-Path $cp)) { Write-Host "    [SKIP] $cej introuvable"; continue }
+        if ($Apply) {
+            $cr = Get-Content $cp -Raw
+            $cr = $cr -replace '("dateAudience"\s*:\s*")[^"]*(")', "`${1}$iso28590`${2}"
+            Set-Content -Path $cp -Value $cr -Encoding UTF8 -NoNewline
+        }
+    }
+    Write-Host ""
 }
 finally {
     $conn.Close()
