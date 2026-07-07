@@ -3,22 +3,25 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Paramètres globaux — Rig Testing"
         Height="840" Width="560"
+        MinWidth="380" MinHeight="360"
+        MaxHeight="{Binding Source={x:Static SystemParameters.WorkArea}, Path=Height}"
         WindowStartupLocation="CenterOwner"
         Background="{StaticResource BgWindow}"
         FontFamily="Segoe UI" FontSize="13"
-        ResizeMode="NoResize"
+        ResizeMode="CanResizeWithGrip"
         ShowInTaskbar="False">
     <Grid Margin="22">
         <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
+
+        <!-- Responsive (2026-07-07) : contenu scrollable quand la dialog est plus haute
+             que la work area (petit écran / DPI 175-200% / RDP). Les boutons Enregistrer/
+             Annuler restent épinglés hors du scroll pour toujours être atteignables. -->
+        <ScrollViewer Grid.Row="0" VerticalScrollBarVisibility="Auto"
+                      HorizontalScrollBarVisibility="Disabled">
+        <StackPanel>
 
         <!-- Title -->
         <StackPanel Grid.Row="0">
@@ -184,8 +187,11 @@
                        Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap"/>
         </StackPanel>
 
-        <!-- Buttons -->
-        <StackPanel Grid.Row="7" Orientation="Horizontal" HorizontalAlignment="Right"
+        </StackPanel>
+        </ScrollViewer>
+
+        <!-- Buttons (épinglés hors du scroll) -->
+        <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right"
                     Margin="0,16,0,0">
             <Button Content="Annuler" Style="{StaticResource SecondaryButton}"
                     Width="100" Height="34" Margin="0,0,8,0"

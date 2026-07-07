@@ -135,7 +135,20 @@ public partial class MainWindow : Window
     /// </summary>
     private void PlaceOnPrimaryScreen()
     {
-        var wa = SystemParameters.WorkArea; // écran primaire, unités WPF
+        var wa = SystemParameters.WorkArea; // écran primaire, unités WPF (DIP)
+        // Responsive (2026-07-07) : la taille de conception (1640×980 DIP) dépasse la
+        // work area sur écran plus petit OU à DPI élevé (à 150% la work area = 1280×752
+        // DIP, à 200% ≈ 960×552). On BORNE la fenêtre à la work area pour qu'aucun bord
+        // (footer, grille, boutons) ne parte hors écran / sous la taskbar. Le contenu
+        // reflow ensuite à cette largeur. L'utilisateur peut toujours maximiser/agrandir.
+        // On borne AUSSI MinWidth/MinHeight à la work area : sinon, sur une work area plus
+        // petite que le mini (ex. 1024×768 @150% ≈ 683 DIP < MinWidth 720), la mise en page
+        // WPF force la taille au mini et la fenêtre déborde malgré le clamp, tandis que le
+        // centrage ci-dessous (calculé sur Width) serait désynchronisé (revue 2026-07-07).
+        if (MinWidth  > wa.Width)  MinWidth  = wa.Width;
+        if (MinHeight > wa.Height) MinHeight = wa.Height;
+        Width  = Math.Min(Width,  wa.Width);
+        Height = Math.Min(Height, wa.Height);
         Left = Math.Max(wa.Left, wa.Left + (wa.Width  - Width)  / 2.0);
         Top  = Math.Max(wa.Top,  wa.Top  + (wa.Height - Height) / 2.0);
     }
