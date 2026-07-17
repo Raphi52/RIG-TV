@@ -484,6 +484,53 @@ namespace Rig.Wpf.Kbis.SmokeRunner
         /// sur la cellule, alors que le WM_RBUTTONDOWN posté (message) déclenche réellement le handler.</summary>
         public static bool MoveCursor(int screenX, int screenY) => SetCursorPos(screenX, screenY);
 
+        [DllImport("user32.dll")]
+        private static extern bool GetCursorPos(out POINT lpPoint);
+        [DllImport("user32.dll", EntryPoint = "SendMessageW")]
+        private static extern IntPtr SendMessagePtr(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
+        /// <summary>Position courante du curseur du desktop du thread appelant (GetCursorPos).</summary>
+        public static bool TryGetCursor(out int x, out int y)
+        {
+            if (GetCursorPos(out POINT p)) { x = p.X; y = p.Y; return true; }
+            x = 0; y = 0; return false;
+        }
+
+        /// <summary>
+        /// Clic "case peinte" HDESK-compatible : le WndProc RIG (Ult_Container) toggle sa case en lisant
+        /// Control.MousePosition (curseur RÉEL du desktop), pas le lParam. Donc : AttachThreadInput au
+        /// thread UI cible (partage d'état d'input), SetCursorPos sur la case, READBACK GetCursorPos
+        /// (diagnostic), puis SendMessage SYNCHRONE WM_LBUTTONDOWN/UP au hwnd exact de l'élément —
+        /// le handler s'exécute pendant que le curseur est encore posé. Retourne un diag loggable.
+        /// </summary>
+        public static string ClickPaintedCheckBox(AutomationElement element, int screenX, int screenY)
+        {
+            IntPtr hwnd = NativeHandleOf(element);
+            if (hwnd == IntPtr.Zero) return "hwnd=0 (élément sans handle natif)";
+            uint targetThread = GetWindowThreadProcessId(hwnd, out _);
+            uint myThread = GetCurrentThreadId();
+            bool attached = false;
+            if (targetThread != 0 && targetThread != myThread)
+            {
+                try { attached = AttachThreadInput(myThread, targetThread, true); } catch { }
+            }
+            try
+            {
+                bool setOk = SetCursorPos(screenX, screenY);
+                GetCursorPos(out POINT rb);
+                POINT client = new POINT { X = screenX, Y = screenY };
+                ScreenToClient(hwnd, ref client);
+                IntPtr lParam = (IntPtr)((client.Y << 16) | (client.X & 0xFFFF));
+                SendMessagePtr(hwnd, WM_LBUTTONDOWN, (IntPtr)MK_LBUTTON, lParam);
+                SendMessagePtr(hwnd, WM_LBUTTONUP, IntPtr.Zero, lParam);
+                return $"setOk={setOk} readback=({rb.X},{rb.Y}) cible=({screenX},{screenY}) attach={attached}";
+            }
+            finally
+            {
+                if (attached) { try { AttachThreadInput(myThread, targetThread, false); } catch { } }
+            }
+        }
+
         /// <summary>
         /// Poste une touche clavier (VK_*) sur un hwnd : WM_KEYDOWN puis WM_KEYUP avec
         /// le lParam standard (repeat=1, scan=0, ext=0, ctx=0, prev=0, transition=0
