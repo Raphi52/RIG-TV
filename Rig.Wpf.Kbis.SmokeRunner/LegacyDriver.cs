@@ -277,6 +277,7 @@ public sealed class LegacyDriver : IDisposable
     private const uint SWP_NOACTIVATE = 0x0010;
     private const uint WM_SYSCOMMAND = 0x0112;
     private const int SC_MAXIMIZE = 0xF030;
+    private const int SW_MAXIMIZE = 3;
     // Molette : pour rendre une cellule DataGridView offscreen visible avant de double-cliquer
     // (les coords MSAA sont absolues ecran -> une demande en bas de grille scrollable depasse l'ecran).
     private const uint WM_MOUSEWHEEL = 0x020A;
@@ -423,6 +424,8 @@ public sealed class LegacyDriver : IDisposable
             if (hwnd != IntPtr.Zero)
             {
                 PostMessage(hwnd, WM_SYSCOMMAND, (IntPtr)SC_MAXIMIZE, IntPtr.Zero);
+                // Fallback : SC_MAXIMIZE (fire-and-forget) rate parfois → ShowWindow force l'état maximisé.
+                ShowWindow(hwnd, SW_MAXIMIZE);
                 Console.WriteLine($"      → SC_MAXIMIZE tentative {attempt} (fenetre {w:F0}x{h:F0} < {minWidth})");
             }
             Thread.Sleep(400);
@@ -745,6 +748,201 @@ public sealed class LegacyDriver : IDisposable
         // Diagnostic screenshot avant throw — voir l'état RIG au moment du fail.
         try { CaptureScreenshot($"open-{processusLabel.ToLowerInvariant()}-failed"); } catch { }
         throw new Exception($"{processusLabel} introuvable dans la Console d'accueil après scan complet btn1..btn7 (2 passes)");
+    }
+
+    /// <summary>
+    /// Ouvre un processus via la ZONE DE RECHERCHE de l'accueil (txtNaviSearch, haut-gauche) :
+    /// saisit le code puis clique la loupe (pnlNaviSearch). Plus direct que le scan des menus.
+    /// </summary>
+    public void OpenProcessusViaSearch(string code)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + ClickSeConnecter() doivent être appelés avant OpenProcessusViaSearch()");
+        if (Headless) EnsureWindowMaximized();
+        // Revenir à l'onglet Accueil si un autre processus est actif.
+        var tabControl = FindByAutomationId("tabControl");
+        if (tabControl is not null)
+        {
+            var accueilTab = tabControl.FindAllChildren()
+                .FirstOrDefault(t => SafeText(() => t.Name).IndexOf("accueil", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (accueilTab is not null) { Interaction.Select(accueilTab); WaitForAutomationId("txtNaviSearch", 1500); }
+        }
+        var box = WaitForAutomationId("txtNaviSearch", 5000);
+        if (box is null)
+            throw new InvalidOperationException("Zone de recherche 'txtNaviSearch' introuvable dans l'accueil.");
+        Console.WriteLine($"      → Saisie '{code}' dans txtNaviSearch");
+        Interaction.SetText(box, code);
+        int prevTabCount = SnapshotTabCount();
+        var loupe = FindByAutomationId("pnlNaviSearch");
+        if (loupe is not null) { Console.WriteLine("      → Click loupe (pnlNaviSearch)"); Interaction.Click(loupe); }
+        else Console.WriteLine("      ⚠ pnlNaviSearch (loupe) introuvable");
+        WaitForProcessusTabLoaded(prevTabCount, code, 8000);
+    }
+
+    /// <summary>Diagnostic : dump des contrôles de la fenêtre active (id | name | type | patterns).</summary>
+    public void DumpActiveTabControls()
+    {
+        if (_window is null) return;
+        Console.WriteLine("      [DUMP] Contrôles fenêtre active (id | name | type | patterns) :");
+        AutomationElement[] all;
+        try { all = _window.FindAllDescendants(); } catch { return; }
+        foreach (var el in all)
+        {
+            try
+            {
+                string id = el.Properties.AutomationId.IsSupported ? (el.Properties.AutomationId.ValueOrDefault ?? "") : "";
+                string nm = SafeText(() => el.Name);
+                if (string.IsNullOrEmpty(id) && string.IsNullOrEmpty(nm)) continue;
+                string ct = el.ControlType.ToString();
+                var pats = new List<string>();
+                try { if (el.Patterns.Value.IsSupported) pats.Add("Value"); } catch { }
+                try { if (el.Patterns.Toggle.IsSupported) pats.Add("Toggle"); } catch { }
+                try { if (el.Patterns.Invoke.IsSupported) pats.Add("Invoke"); } catch { }
+                try { if (el.Patterns.SelectionItem.IsSupported) pats.Add("SelItem"); } catch { }
+                Console.WriteLine($"        id='{id}' | name='{nm}' | {ct} | {string.Join(",", pats)}");
+            }
+            catch { }
+        }
+    }
+
+    /// <summary>
+    /// RECHENC : renseigne une plage de dates, lance la recherche, déplie l'arbre.
+    /// Coche la case de chaque date via clic ÉCRAN (case non exposée en UIA), saisit la valeur
+    /// dans l'edit interne (txtAffichage), puis clique 'Rechercher' et 'Déplier' (boutons par Name).
+    /// </summary>
+    public void SearchRechencDateRangeAndExpand(string dateDebut, string dateFin)
+    {
+        if (_window is null) throw new InvalidOperationException("Fenêtre nulle");
+        if (Headless) EnsureWindowMaximized();
+        _SetRechencDate("ult_DateDebut", dateDebut);
+        _SetRechencDate("ult_DateFin", dateFin);
+        var btnRech = _FindButtonByName("Rechercher");
+        if (btnRech is null) throw new InvalidOperationException("Bouton 'Rechercher' introuvable");
+        Console.WriteLine("      → Click 'Rechercher'");
+        Interaction.Click(btnRech);
+        // Poll : 'Déplier' passe ACTIF quand LoadData a rempli l'arbre (cf. _ResetToggleButtons). Cap 30s.
+        var sw = Stopwatch.StartNew();
+        AutomationElement? btnDeplier = null;
+        bool enabled = false;
+        while (sw.ElapsedMilliseconds < 30000)
+        {
+            btnDeplier = _FindButtonByName("Déplier");
+            try { enabled = btnDeplier is not null && btnDeplier.Properties.IsEnabled.ValueOrDefault; } catch { enabled = false; }
+            if (enabled) break;
+            Thread.Sleep(400); // sleep-ok: fréquence de poll de l'attente de remplissage de l'arbre (pas de signal UIA direct sur le treeview custom)
+        }
+        if (enabled && btnDeplier is not null)
+        {
+            Console.WriteLine($"      → Résultats chargés en {sw.ElapsedMilliseconds}ms → Click 'Déplier'");
+            Interaction.Click(btnDeplier);
+            Thread.Sleep(1200); // sleep-ok: settle du dépliage (repaint WinForms de l'arbre, aucun signal de fin exploitable)
+        }
+        else Console.WriteLine("      ⚠ 'Déplier' resté inactif après 30s — recherche sans résultat ou dates non prises en compte.");
+    }
+
+    private void _SetRechencDate(string ultId, string dateStr)
+    {
+        // Recherche TOUJOURS fraîche (les rects/refs UIA périment après déplacement/redimensionnement).
+        Func<AutomationElement?> findUlt = () => FindByAutomationId(ultId);
+        Func<AutomationElement?> findEdit = () => findUlt()?.FindAllDescendants().FirstOrDefault(e =>
+        { try { return e.ControlType.ToString().Equals("Edit", StringComparison.OrdinalIgnoreCase); } catch { return false; } });
+        // Vérif par l'ISSUE : SetText réussit (champ devenu éditable = case cochée) ET le Name de
+        // l'ult reflète la date. Case décochée → champ readonly → SetText jette → false.
+        Func<bool> dateApplied = () =>
+        {
+            var e = findEdit();
+            if (e is null) return false;
+            try
+            {
+                Interaction.SetText(e, dateStr);
+                Thread.Sleep(200); // sleep-ok: settle repaint du champ masqué après écriture
+                string nm2 = SafeText(() => findUlt()?.Name ?? "").Replace(" ", "");
+                return nm2.Contains(dateStr.Replace(" ", ""));
+            }
+            catch { return false; }
+        };
+        if (findUlt() is null) { Console.WriteLine($"      ⚠ {ultId} introuvable"); return; }
+        if (findEdit() is null) { Console.WriteLine($"      ⚠ {ultId} : edit interne introuvable"); return; }
+        if (dateApplied()) { Console.WriteLine($"      → {ultId} déjà éditable, = {dateStr}"); return; }
+
+        // T1 — AttachThreadInput + SetCursorPos (readback loggé) + SendMessage synchrone WM_LBUTTONDOWN
+        // au hwnd exact de l'Ult_Container (dont le WndProc lit Control.MousePosition).
+        var er0 = findEdit()!.BoundingRectangle;
+        int midY = (int)er0.Top + (int)(er0.Height / 2);
+        int leftEdit = (int)er0.Left;
+        var candidates = new (int x, int y)[] { (leftEdit - 13, midY), (leftEdit - 9, midY), (leftEdit - 17, midY) };
+        foreach (var c in candidates)
+        {
+            var ult = findUlt();
+            if (ult is null) break;
+            string diag = Interaction.ClickPaintedCheckBox(ult, c.x, c.y);
+            Console.WriteLine($"      → [T1] Coche {ultId} : {diag}");
+            Thread.Sleep(350); // sleep-ok: settle repaint/état après le clic case peinte (aucun signal de fin UIA)
+            if (dateApplied()) { Console.WriteLine($"      → {ultId} coché + = {dateStr} (T1)"); return; }
+            Console.WriteLine("      ([T1] point KO : champ reste readonly)");
+        }
+
+        // T2 — INVERSION : on ne peut pas amener le curseur à la case (HDESK non-input) → on amène la
+        // CASE sous le curseur : lire GetCursorPos (valeur stable du desktop), restaurer la fenêtre
+        // (une maximisée ne se déplace pas), la DÉPLACER pour que la case coïncide avec le curseur,
+        // puis SendMessage le clic. Re-maximise ensuite.
+        if (_TryCheckboxViaWindowMove(ultId, findUlt, findEdit, dateApplied))
+        { Console.WriteLine($"      → {ultId} coché + = {dateStr} (T2 fenêtre-sous-curseur)"); return; }
+        Console.WriteLine($"      ⚠ {ultId} : case non cochée (T1 et T2 épuisés)");
+    }
+
+    private bool _TryCheckboxViaWindowMove(string ultId, Func<AutomationElement?> findUlt,
+        Func<AutomationElement?> findEdit, Func<bool> dateApplied)
+    {
+        IntPtr main = IntPtr.Zero;
+        try { if (_window is not null && _window.Properties.NativeWindowHandle.IsSupported) main = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (main == IntPtr.Zero) { Console.WriteLine("      [T2] hwnd fenêtre principale introuvable"); return false; }
+        // Sur un HDESK isolé SANS état curseur (Get/SetCursorPos échouent tous les deux),
+        // Control.MousePosition côté RIG ignore l'échec de GetCursorPos et renvoie (0,0) constant
+        // → on prend (0,0) comme ancre et on amène la case à l'écran (0,0).
+        int px, py;
+        if (!Interaction.TryGetCursor(out px, out py)) { px = 0; py = 0; Console.WriteLine("      [T2] GetCursorPos KO → ancre supposée (0,0) (MousePosition par défaut)"); }
+        const int SW_RESTORE = 9;
+        ShowWindow(main, SW_RESTORE);
+        Thread.Sleep(500); // sleep-ok: settle du restore + reflow des critères (aucun signal de fin)
+        try
+        {
+            var edit = findEdit();
+            var ult = findUlt();
+            if (edit is null || ult is null) { Console.WriteLine("      [T2] ult/edit introuvable après restore"); return false; }
+            var er = edit.BoundingRectangle;
+            int cbX = (int)er.Left - 13, cbY = (int)er.Top + (int)(er.Height / 2);
+            if (!GetWindowRect(main, out var w)) { Console.WriteLine("      [T2] GetWindowRect KO"); return false; }
+            int nx = w.Left + (px - cbX), ny = w.Top + (py - cbY);
+            Console.WriteLine($"      [T2] curseur=({px},{py}) case=({cbX},{cbY}) fenêtre ({w.Left},{w.Top})→({nx},{ny})");
+            SetWindowPos(main, IntPtr.Zero, nx, ny, w.Right - w.Left, w.Bottom - w.Top, SWP_NOZORDER | SWP_NOACTIVATE);
+            Thread.Sleep(500); // sleep-ok: settle du déplacement fenêtre (aucun signal de fin)
+            var ult2 = findUlt();
+            if (ult2 is null) return false;
+            string diag = Interaction.ClickPaintedCheckBox(ult2, px, py);
+            Console.WriteLine($"      [T2] clic case sous curseur : {diag}");
+            Thread.Sleep(350); // sleep-ok: settle repaint/état après le clic (aucun signal de fin UIA)
+            return dateApplied();
+        }
+        finally
+        {
+            if (Headless) EnsureWindowMaximized();
+        }
+    }
+
+    private AutomationElement? _FindButtonByName(string name)
+    {
+        if (_window is null) return null;
+        try
+        {
+            return _window.FindAllDescendants().FirstOrDefault(e =>
+            {
+                try { return e.ControlType.ToString().Equals("Button", StringComparison.OrdinalIgnoreCase)
+                          && SafeText(() => e.Name).Equals(name, StringComparison.OrdinalIgnoreCase); }
+                catch { return false; }
+            });
+        }
+        catch { return null; }
     }
 
     /// <summary>
@@ -3169,6 +3367,9 @@ public sealed class LegacyDriver : IDisposable
         if (_window is null) return null;
         try
         {
+            // Systématique : un PROC peut avoir dé-maximisé la fenêtre (retour à 750x480) → on
+            // re-maximise avant de capturer pour que le PNG montre la fenêtre pleine (bureau virtuel).
+            if (Headless) EnsureWindowMaximized();
             var shotPath = Path.Combine(ScreenshotDir(),
                 $"smoke-{string.Join("_", (label ?? "run").Split(Path.GetInvalidFileNameChars()))}-{DateTime.Now:yyyyMMdd-HHmmss-fff}.png");
             Interaction.CaptureWindow(_window, shotPath);
