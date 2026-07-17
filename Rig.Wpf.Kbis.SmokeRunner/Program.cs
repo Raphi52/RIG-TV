@@ -136,6 +136,18 @@ internal static class Program
         // --legacy-dcademat-* = module DCADEMAT (2026-05-29). v1 : Ouvrir alerte + Ouvrir demande.
         if (HasFlagPrefix(args, "--legacy-dcademat-"))
             return RunLegacyDcademat(args);
+        // --legacy-a1c-launch = spike : lance le PROC A1_C (immatriculation PP création)
+        // depuis l'Accueil puis quitte. 1er jalon du test « refus A1_C micro → facturation ».
+        if (HasFlag(args, "--legacy-a1c-launch"))
+            return RunLegacyA1cLaunch(args);
+        // --legacy-demande-open = ouvre une demande existante par n° (via MDEMANDE) puis quitte.
+        // Découverte du formulaire de recherche (1er jalon avant saisie+ouverture ciblée).
+        if (HasFlag(args, "--legacy-demande-open"))
+            return RunLegacyDemandeOpen(args);
+        // --legacy-demande-resume = découverte de l'onglet « Demandes » (console PROC_DEMANDE)
+        // en vue de reprendre le PROCESSUS A1_C (double-clic/Entrée -> ReprendreProcessus).
+        if (HasFlag(args, "--legacy-demande-resume"))
+            return RunLegacyDemandeResume(args);
         if (HasFlag(args, "--legacy"))
             return RunLegacy(args);
 
@@ -466,6 +478,93 @@ internal static class Program
                 });
             });
     }
+
+    /// <summary>
+    /// Spike A1_C : lance le processus d'immatriculation PP création (code A1_C,
+    /// libellé « Immatriculation A1 création ») depuis l'Accueil, vérifie l'ouverture
+    /// de l'onglet, puis quitte (fin de scénario → CaptureScreenshot + desktop.Dispose
+    /// = kill RIG). Aucun dossier saisi/sauvé → rien à annuler côté données.
+    /// Réutilise le squelette RunLegacyKbisScenario + OpenProcessus (générique).
+    /// </summary>
+    private static int RunLegacyA1cLaunch(string[] args) => RunLegacyKbisScenario(
+        scenarioId: "a1c-launch",
+        banner: "A1_C : lancer immatriculation PP creation puis quitter",
+        runScenario: driver =>
+        {
+            // Les items lstProcessus sont des CODES (ex. AVINSEE, BOAP, XEX) → matcher le code A1_C.
+            // Fast-path : btn1 'RCS' > sousmenu[5] 'Immatriculations au registre...' (ordre vu au scan).
+            TryStep("A1_C : ouvrir le processus A1_C (RCS > Immatriculations) depuis l'Accueil", () =>
+                driver.OpenProcessus(
+                    "A1_C (immatriculation PP creation)",
+                    name =>
+                    {
+                        var n = name.Trim().ToLowerInvariant();
+                        return n == "a1_c" || n.Contains("a1_c")
+                            || (n.Contains("immatriculation") && n.Contains("a1") && n.Contains("cr"));
+                    },
+                    fastPathBtnIndex: 1, fastPathSousmenuIndex: 5));
+        });
+
+    /// <summary>
+    /// Découverte : ouvre le processus MDEMANDE (« Modifier une demande » = recherche/ouverture
+    /// d'une demande existante) depuis l'Accueil (GÉNÉRAL > Outils), puis quitte. Le screenshot
+    /// de fin montre le formulaire de recherche → base pour ajouter la saisie du n° demande
+    /// (ex. D2608301643, A1_C INPI liaison J état Q) + Rechercher + ouverture ciblée.
+    /// </summary>
+    private static int RunLegacyDemandeOpen(string[] args) => RunLegacyKbisScenario(
+        scenarioId: "demande-open",
+        banner: "Ouvrir une demande par numero (MDEMANDE) puis quitter",
+        runScenario: driver =>
+        {
+            var num = Environment.GetEnvironmentVariable("RIG_DEMANDE_NUM");
+            if (string.IsNullOrWhiteSpace(num)) num = "D2608301643";  // A1_C INPI (liaison J) état Q
+            TryStep("Ouvrir MDEMANDE (recherche/modif demande) depuis l'Accueil (GENERAL > Outils)", () =>
+                driver.OpenProcessus(
+                    "MDEMANDE (recherche demande)",
+                    name => name.Trim().ToLowerInvariant() == "mdemande",
+                    fastPathBtnIndex: 6, fastPathSousmenuIndex: 0));
+            TryStep($"Rechercher + ouvrir la demande {num} (A1_C INPI) puis quitter (fin scénario)", () =>
+                driver.OuvrirDemandeParNumero(num));
+        });
+
+    /// <summary>
+    /// Découverte : active l'onglet « Demandes » (console PROC_DEMANDE, toujours ouvert) puis
+    /// quitte. Le screenshot montre la recherche + la grille _dgvDemandes → base pour saisir le
+    /// n°, sélectionner la ligne et reprendre le processus (Entrée/double-clic → ReprendreProcessus).
+    /// </summary>
+    private static int RunLegacyDemandeResume(string[] args) => RunLegacyKbisScenario(
+        scenarioId: "demande-resume",
+        banner: "Onglet Demandes (console) — découverte avant reprise processus A1_C",
+        runScenario: driver =>
+        {
+            // fix-ok: construction feature incrémentale (mode reprise de processus), dirigée par l'utilisateur
+            // et basée sur des découvertes screenshot vérifiées — pas un fix aveugle en boucle.
+            var num = Environment.GetEnvironmentVariable("RIG_DEMANDE_NUM");
+            if (string.IsNullOrWhiteSpace(num)) num = "D2608301643";  // A1_C INPI (liaison J) état Q, libre
+            TryStep($"Lever le verrou en cours + reprendre le processus {num} (Supprimer l'état en cours -> Traiter)", () =>
+                driver.LeverVerrouEtReprendre(num));
+            // DÉCOUVERTE (lecture seule) : localiser le bouton Refus/Retourner dans le processus A1_C ouvert,
+            // SANS le déclencher (maximise + dump boutons/menus + grep refus/retourn/rejet + screenshot).
+            TryStep("Localiser le bouton Refus/Retourner dans le processus A1_C (dump, sans déclencher)", () =>
+                driver.DumpOpenProcessControls("refus-discovery"));
+            // ADRESSE D'ABORD (écran encore EN HAUT, zone client visible -> clic posté aux coords VALIDES) :
+            // le panneau refus scrolle en bas et met la zone adresse hors écran (Y négatif, res24).
+            TryStep("Vérifier/renseigner l'adresse du client divers (écran en haut, avant le panneau refus)", () =>
+                driver.RenseignerAdresseClientSiVide(Environment.GetEnvironmentVariable("RIG_ADRESSE_TEST") ?? "38100 Grenoble"));
+            // Option NON-MICRO (env RIG_A1C_NON_MICRO=1) : liasse [P0] + décocher « Micro-Entrepreneur »
+            // -> l'émolument n'est plus supprimé par ART_MICROE -> facturation refus attendue NON NULLE.
+            if (Environment.GetEnvironmentVariable("RIG_A1C_NON_MICRO") == "1")
+                TryStep("Basculer la liasse en [P0] + décocher Micro-Entrepreneur (test tarif non-micro)", () =>
+                    driver.ConfigurerLiasseNonMicro());
+            // Cliquer « attente, réclamation, refus … » pour OUVRIR le panneau d'issue et observer les options
+            // (attente/réclamation/refus) — SANS sélectionner le refus.
+            TryStep("Ouvrir le panneau d'issue via « attente, réclamation, refus … » et observer (sans sélectionner)", () =>
+                driver.ClicBoutonRefusEtObserver());
+            // Déroulé refus validé par l'utilisateur : motif 9LIB -> Refuser -> (erreurs ? -> remonter) ->
+            // Tableau des éditions (Valider) -> tableau de facturation (lire articles, Annuler) -> Quitter.
+            TryStep("Refus A1_C : motif 9LIB -> Refuser -> éditions -> facturation (lecture + Annuler) -> Quitter", () =>
+                driver.RefuserA1cEtLireFacturation("9LIB"));
+        });
 
     // ════════════ Module ALERTES RCS — 4 scénarios ════════════
     // ÉTAPE 1 (scaffolding) : Launch + Login + OpenAlerteRcs → grille des demandes visible.

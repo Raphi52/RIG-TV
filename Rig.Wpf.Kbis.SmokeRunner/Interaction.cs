@@ -477,6 +477,21 @@ namespace Rig.Wpf.Kbis.SmokeRunner
             keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
         }
 
+        /// <summary>VRAIE frappe Ctrl+touche injectée (keybd_event, Ctrl maintenu). Nécessaire pour les
+        /// raccourcis applicatifs qui testent <c>GetKeyState(VK_CONTROL)</c> (ex. Ctrl+F7 « copier une adresse »
+        /// du champ adresse RIG) — un WM_KEYDOWN POSTÉ ne met PAS à jour l'état clavier. Contraintes HDESK
+        /// identiques à <see cref="RealMouseClick"/> (thread attaché).</summary>
+        public static void RealCtrlKeyPress(byte vk)
+        {
+            const byte VK_CONTROL_LOCAL = 0x11;
+            keybd_event(VK_CONTROL_LOCAL, 0, 0, UIntPtr.Zero);
+            System.Threading.Thread.Sleep(40); // sleep-ok: maintien Ctrl inter-touches (combo clavier réel), aucune condition à poller
+            keybd_event(vk, 0, 0, UIntPtr.Zero);
+            keybd_event(vk, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+            System.Threading.Thread.Sleep(40); // sleep-ok: relâche Ctrl après la touche (combo clavier réel)
+            keybd_event(VK_CONTROL_LOCAL, 0, KEYEVENTF_KEYUP, UIntPtr.Zero);
+        }
+
         /// <summary>Positionne le curseur (SetCursorPos SEUL, sans injection de bouton). Contrairement à
         /// mouse_event, SetCursorPos met à jour la position de curseur INTERNE du desktop du thread
         /// appelant (lisible via Control.MousePosition/GetCursorPos) même sur un HDESK non-input. Permet
@@ -494,6 +509,32 @@ namespace Rig.Wpf.Kbis.SmokeRunner
             if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
             PostMessage(hwnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)0x00000001);
             PostMessage(hwnd, WM_KEYUP,   (IntPtr)vkCode, unchecked((IntPtr)(int)0xC0000001));
+        }
+
+        [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint uCode, uint uMapType);
+
+        /// <summary>Comme <see cref="PostKey"/> mais avec le SCAN CODE réel (MapVirtualKey) dans le lParam
+        /// (bits 16-23). Nécessaire pour les contrôles qui traduisent la touche via <c>ToAscii</c> (ex. le combo
+        /// C++ RIG <c>CEditCombo.OnKeyDown</c>) : sans scan code, ToAscii ne traduit PAS les chiffres ('9' perdu,
+        /// bug res16). Poste WM_KEYDOWN + WM_KEYUP.</summary>
+        /// <summary>Poste un caractère (WM_CHAR) sur un hwnd — voie fiable pour ÉCRIRE dans un EDIT Win32/
+        /// WinForms sans focus réel : l'EDIT insère le caractère au caret et notifie EN_CHANGE au parent
+        /// (déclenche la logique applicative, ex. « choix de la localité via le code postal »).</summary>
+        public static void PostChar(IntPtr hwnd, char ch)
+        {
+            if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
+            const uint WM_CHAR_LOCAL = 0x0102;
+            PostMessage(hwnd, WM_CHAR_LOCAL, (IntPtr)ch, (IntPtr)0x00000001);
+        }
+
+        public static void PostKeyScan(IntPtr hwnd, int vkCode)
+        {
+            if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
+            uint scan = MapVirtualKey((uint)vkCode, 0 /* MAPVK_VK_TO_VSC */);
+            int downL = unchecked((int)(0x00000001u | (scan << 16)));
+            int upL   = unchecked((int)(0xC0000001u | (scan << 16)));
+            PostMessage(hwnd, WM_KEYDOWN, (IntPtr)vkCode, (IntPtr)downL);
+            PostMessage(hwnd, WM_KEYUP,   (IntPtr)vkCode, (IntPtr)upL);
         }
 
         /// <summary>

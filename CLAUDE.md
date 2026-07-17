@@ -242,6 +242,41 @@ Fonctions RAPTURE-spécifiques : `Navigate-RaptureSmokeImport`, `Invoke-RaptureT
 
 ---
 
+## 🔁 Flux DEMANDE / REFUS A1_C (console Demandes, headless E2E)
+
+Modes CLI SmokeRunner (validés E2E res32, 2026-07-17, base RIG_DEV-9995) :
+
+| Mode | Ce qu'il fait |
+|---|---|
+| `--legacy-a1c-launch` | Lance un processus A1_C frais (menu OpenProcessus) puis quitte |
+| `--legacy-demande-open` | MDEMANDE : recherche une demande par n° (`RIG_DEMANDE_NUM`) + « Charger cette demande » (métadonnées — PAS le refus) |
+| `--legacy-demande-resume` | **Flux refus complet** : console « Demandes » → lever verrou (« Supprimer l'état en cours ») → clic droit **« Traiter »** (= ReprendreProcessus) → adresse client (si vide) → motif **[9LIB]** → **Refuser** → Tableau des éditions (Valider) → **facturation lue** (grille articles via MSAA) → **Annuler** (pas de commit) → Quitter |
+
+Env : `RIG_DEMANDE_NUM` (n° demande, ex. `D2608300757` — A1_C INPI état Q),
+`RIG_ADRESSE_TEST` (`38100 Grenoble` défaut DEV ; `69001 Lyon` en RECETTE).
+
+**Règles d'input HDESK apprises (32 runs — à réutiliser, ne pas re-découvrir)** :
+* La console PROC_DEMANDE + grilles custom = **aveugles à UIA** → Win32 (`EnumWindows`+`GetWindowText`)
+  + MSAA (`AccessibleObjectFromWindow`) pour détecter les dialogues (titre UIA VIDE sur les modales
+  C++/WinForms) et cliquer les boutons **par NOM** (`accLocation` → `ClickAtScreenPoint` ; coords (0,0)
+  = titlebar → repli `accDoDefaultAction`).
+* Combo motif C++ (`RIgComboBox`) : SetValue **`[SYNONYME]`** (format crochets obligatoire,
+  `GetValUltFromEditCombo`) + **Entrée avec scan code** (`PostKeyScan`) sur le hwnd de l'edit —
+  jamais d'énumération du dropdown (lazy, ~8500 items ≈ 156 s).
+* **Saisie d'adresse client** (champ = référence ID_ADRBS, `SetValue` rejeté) : **poster F7**
+  (`PostKeyScan`) sur le hwnd du champ (`RIGEdit.cpp:205` → module « Saisir une adresse », ouverture
+  15-25 s → poll Win32 **hors** deadline UIA) → CP par **WM_CHAR** (`PostChar`) dans l'EDIT à droite
+  du label « C.P » (localité auto-résolue) → « Valider (F12) ». Ctrl+F7/`keybd_event` = mort sur
+  HDESK non-input (`GetAsyncKeyState` aveugle).
+* **Toujours Quitter le processus, même sur échec** (try/finally `QuitterProcessusBestEffort`) —
+  sinon la demande reste « en cours ». Déblocage SQL : `UPDATE DEMANDE SET DMND_EN_COURS=0,
+  DMND_NOM_UTILISATEUR=NULL WHERE DMND_NUM_DEMANDE='…'` (exiger `SET QUOTED_IDENTIFIER ON`).
+* Fenêtre « Visualisation des documents » (Liasses/Justificatifs) peut s'ouvrir → cliquer
+  **« Quitter »** (sinon blocage). « Rapport de vérification » (ThunderRT6FormDC) = erreurs de
+  validation → lire + Fermer + remonter.
+
+---
+
 ## ⚠️ Faux amis (TestViewer-specific)
 
 | Tu crois… | Réalité |
