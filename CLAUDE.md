@@ -250,10 +250,16 @@ Modes CLI SmokeRunner (validés E2E res32, 2026-07-17, base RIG_DEV-9995) :
 |---|---|
 | `--legacy-a1c-launch` | Lance un processus A1_C frais (menu OpenProcessus) puis quitte |
 | `--legacy-demande-open` | MDEMANDE : recherche une demande par n° (`RIG_DEMANDE_NUM`) + « Charger cette demande » (métadonnées — PAS le refus) |
-| `--legacy-demande-resume` | **Flux refus complet** : console « Demandes » → lever verrou (« Supprimer l'état en cours ») → clic droit **« Traiter »** (= ReprendreProcessus) → adresse client (si vide) → motif **[9LIB]** → **Refuser** → Tableau des éditions (Valider) → **facturation lue** (grille articles via MSAA) → **Annuler** (pas de commit) → Quitter |
+| `--legacy-demande-resume` | **Flux refus complet** : console « Demandes » → lever verrou (« Supprimer l'état en cours ») → clic droit **« Traiter »** (= ReprendreProcessus) → **`ChargerDossierSiPropose`** (modif/radiation/AC : « Charger ce dossier » sur l'écran *Entrée dans le RCS* ; absent en immatriculation) → **`DecocherDossierEntrepriseExistante`** (décoche « Dossier sur entreprise existante » → charge les infos INPI dont la dénomination) → adresse client (si vide) → motif **[9LIB]** → **Refuser** → Tableau des éditions (Valider) → **facturation lue** (grille articles via MSAA) → **Annuler** (pas de commit) → Quitter |
 
-Env : `RIG_DEMANDE_NUM` (n° demande, ex. `D2608300757` — A1_C INPI état Q),
-`RIG_ADRESSE_TEST` (`38100 Grenoble` défaut DEV ; `69001 Lyon` en RECETTE).
+Env : `RIG_DEMANDE_NUM` (n° demande INPI état Q) · `RIG_PROC_CODE` (sous-chaîne du nom
+d'onglet du processus attendu, ex. `b1_c` — défaut `a1` ; généralise le flux à toutes les
+formalités du Lot A) · `RIG_ADRESSE_TEST` (`38100 Grenoble` défaut DEV ; `69001 Lyon` en
+RECETTE) · `RIG_DENOMINATION_TEST` (`TEST REFUS` défaut — dénomination PM obligatoire au
+refus) · `RIG_A1C_NON_MICRO=1` (bascule liasse `[P0]` + décoche Micro-Entrepreneur pour
+tester un tarif non nul).
+⏱ Un run complet ≈ 4-7 min (demandes INPI avec pièces = chargements longs) → lancer les
+campagnes multi-runs en batch PowerShell background (cf. `E:\claude-temp\rig-tv-snaps\campagne*.ps1`).
 
 **Règles d'input HDESK apprises (32 runs — à réutiliser, ne pas re-découvrir)** :
 * La console PROC_DEMANDE + grilles custom = **aveugles à UIA** → Win32 (`EnumWindows`+`GetWindowText`)
@@ -271,9 +277,23 @@ Env : `RIG_DEMANDE_NUM` (n° demande, ex. `D2608300757` — A1_C INPI état Q),
 * **Toujours Quitter le processus, même sur échec** (try/finally `QuitterProcessusBestEffort`) —
   sinon la demande reste « en cours ». Déblocage SQL : `UPDATE DEMANDE SET DMND_EN_COURS=0,
   DMND_NOM_UTILISATEUR=NULL WHERE DMND_NUM_DEMANDE='…'` (exiger `SET QUOTED_IDENTIFIER ON`).
-* Fenêtre « Visualisation des documents » (Liasses/Justificatifs) peut s'ouvrir → cliquer
-  **« Quitter »** (sinon blocage). « Rapport de vérification » (ThunderRT6FormDC) = erreurs de
-  validation → lire + Fermer + remonter.
+* « Visualisation des pièces » = **process EXTERNE `PROC_DOC_DEMAT_EXE.exe`** lancé auto à la
+  reprise d'une demande démat (RIG teste son **MUTEX** — `divers.IsRigAppMutexNameExiste`,
+  `ULT_VERIFDEMAT`) → le FERMER (WM_CLOSE puis kill) sinon rapport « Veuillez fermer la
+  visualisation des pièces ». La fenêtre WinForms « Visualisation des documents » (Liasses/
+  Justificatifs) se ferme elle par son bouton « Quitter ». « Rapport de vérification »
+  (ThunderRT6FormDC) = erreurs de validation → lire + Fermer + remonter.
+* Champs TEXTE Ult (ex. dénomination PM) : `SetValue` AFFICHE mais ne committe PAS l'ULT
+  moteur → poster **Tab** (scan code) sur le hwnd après écriture (`MACRO_Validation`).
+  Label à matcher en **exact d'abord** (« dénomination » ≠ « Dénomination de correspondance »).
+* **Thread UI de RIG occupé après chargement d'un dossier lourd** (transformation multi-événements :
+  plusieurs dirigeants + Saisie Casier CJN + viewer de pièces) : RIG peut **peg son thread UI 40-120 s**
+  APRÈS la disparition de l'overlay « Veuillez patienter » → TOUS les lookups UIA suivants (adresse,
+  combo motif, bouton refus) sont abandonnés à leur deadline **sans jamais scanner** (faux « introuvable »).
+  → `WaitForUiResponsive()` : sonde un appel UIA *cheap* (lecture d'une propriété `Name`, pas de
+  `FindAllDescendants`) borné par une deadline COURTE via `RunUiaActionWithDeadline` ; exige **2 sondes
+  rapides consécutives** avant de déclarer RIG libre. Câblé dans `ChargerDossierSiPropose`. Sans lui, un
+  écran lourd fait échouer le refus par pur timing.
 
 ---
 
@@ -290,6 +310,7 @@ Env : `RIG_DEMANDE_NUM` (n° demande, ex. `D2608300757` — A1_C INPI état Q),
 | `Process.WaitForExitAsync()` dispo | ❌ Pas en .NET Fx 4.8. Utiliser `await Task.Run(() => proc.WaitForExit())` |
 | `[Console]::OutputEncoding` est UTF-8 par défaut en PS 5.1 | ❌ C'est CP850 (OEM Windows FR). Forcer `New-Object System.Text.UTF8Encoding($false)` au top de tout script PS appelé depuis C# avec stdout redirigé |
 | TestViewer `bin\Debug\net48\` cwd | ⚠ La WorkingDirectory au lancement = dossier du `.exe`. Donc `RaptureScenarios/` doit y être copié (post-build event) |
+| `--legacy-demande-resume` marche sur TOUTE formalité modif | ❌ Les processus de **transformation** (`MB2B1`…`MD2D1`, servis par l'étape refus `RCSMOPMPR1`) n'exposent **PAS** le bouton « attente, réclamation, refus » standard (toolbar = Valider/**Interrompre**/Vérifier/Quitter/… — « Interrompre » à la place). Le refus n'y est donc pas atteignable par ce flux (vérifié RIG réactif, 2026-07 : bouton réellement absent, pas un timeout). Comment refuse-t-on une transformation dans RIG = **question métier ouverte** |
 | « Build OK = scénario valide » | ❌ Le scénario JSON peut compiler sans erreur ET produire un FAIL runtime. Toujours valider via batch + lecture `last-batch-result.json` |
 | Cache hit = test pas exécuté = pas testé | ⚠ Vrai mais voulu : Phase 4 = memoization. Si tu doutes → décoche « Cache de résultats E2E » dans Settings ou clique « Vider le cache » |
 | MessageBox dans CC dialog affiche les emojis/box-drawing | ❌ Police MS Shell Dlg n'a pas les glyphes U+2500-257F ni emojis. Sanitize avant MessageBox.Show |

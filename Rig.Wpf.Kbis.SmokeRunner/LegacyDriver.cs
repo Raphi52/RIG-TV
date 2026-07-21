@@ -4231,6 +4231,39 @@ public sealed class LegacyDriver : IDisposable
                 + "on continue quand même (la recherche du combo / sa vérif tranchera).");
     }
 
+    /// <summary>Attend que le thread UI de RIG redevienne RÉACTIF après une action lourde. Sur un écran de
+    /// transformation multi-événements (plusieurs dirigeants + « Saisie Casier » CJN + viewer de pièces), le
+    /// chargement du dossier peut occuper le thread UI de RIG 40-120s : TOUS les appels UIA suivants (adresse,
+    /// combo motif, bouton refus) expirent alors à leur deadline sans jamais scanner réellement. On sonde donc
+    /// un appel UIA CHEAP (lecture d'une seule propriété Name, pas de FindAllDescendants) borné par une deadline
+    /// COURTE via <see cref="RunUiaActionWithDeadline"/> : tant que la sonde est abandonnée (thread occupé) on
+    /// réessaie ; on exige DEUX sondes rapides consécutives (réactivité soutenue, pas une accalmie entre deux
+    /// rafales) avant de déclarer RIG libre. Cap généreux — au pire on poursuit et le lookup suivant tranche.</summary>
+    private bool WaitForUiResponsive(int maxMs = 150000, int probeMs = 3000)
+    {
+        if (_window is null) return false;
+        var sw = Stopwatch.StartNew();
+        int tour = 0, consecutifs = 0;
+        while (sw.ElapsedMilliseconds < maxMs)
+        {
+            tour++;
+            bool ok = RunUiaActionWithDeadline("probe-ui-responsive-" + tour, probeMs, () =>
+            {
+                string _ = _window!.Properties.Name.ValueOrDefault ?? string.Empty;
+            }, out _);
+            if (ok) consecutifs++;
+            else consecutifs = 0;
+            if (consecutifs >= 2)
+            {
+                Console.WriteLine($"      ✓ RIG réactif après {sw.ElapsedMilliseconds}ms ({tour} sonde(s)).");
+                return true;
+            }
+            Thread.Sleep(500); // sleep-ok: poll <=500ms entre 2 sondes, condition = thread UI réactif 2x d'affilée
+        }
+        Console.WriteLine($"      → ⚠ RIG toujours occupé après {maxMs}ms ({tour} sondes) — on poursuit (le lookup suivant tranchera).");
+        return false;
+    }
+
     /// <summary>true si l'écran affiche actuellement l'overlay de chargement (« Veuillez patienter » /
     /// « Traitement en cours »). Agrège le Name des descendants Text/Pane puis délègue à la logique pure
     /// <see cref="LegacyParsing.IsLoadingOverlay"/>. Lecture seule.</summary>
@@ -6301,7 +6334,7 @@ public sealed class LegacyDriver : IDisposable
     /// pose <paramref name="cp"/> dans le champ de largeur CP (30-80px, vide) et <paramref name="ville"/> dans
     /// le champ large voisin — UNIQUEMENT si l'identification est non ambiguë (sinon on ne touche à rien et on
     /// retourne false : le dump du 1er run sert à câbler le mapping). WM_SETTEXT (VB6 accepte).</summary>
-    private bool RemplirModaleSaisieAdresse(IntPtr modalHwnd, string cp, string ville)
+    private List<(IntPtr h, string cls, string txt, RECT r)> EnumEnfantsModale(IntPtr modalHwnd)
     {
         var enfants = new List<(IntPtr h, string cls, string txt, RECT r)>();
         try
@@ -6320,7 +6353,17 @@ public sealed class LegacyDriver : IDisposable
                 return true;
             }, IntPtr.Zero);
         }
-        catch (Exception ex) { Console.WriteLine($"      ⓘ EnumChildWindows : {ex.Message}"); return false; }
+        catch (Exception ex) { Console.WriteLine($"      ⓘ EnumChildWindows : {ex.Message}"); }
+        return enfants;
+    }
+
+    private bool RemplirModaleSaisieAdresse(IntPtr modalHwnd, string cp, string ville)
+    {
+        // ⚠ Le module RECRÉE ses contrôles après ouverture (init async) : des hwnds énumérés trop tôt sont
+        // PÉRIMÉS -> WM_CHAR/WM_SETTEXT écrivent dans le vide (final2/3 : CP jamais pris, GetWindowTextLength=0).
+        // Parade : settle d'init + RÉ-ÉNUMÉRATION FRAÎCHE à chaque tentative d'écriture (3 max).
+        Thread.Sleep(2500); // sleep-ok: settle one-shot, initialisation du module (contrôles recréés)
+        var enfants = EnumEnfantsModale(modalHwnd);
         Console.WriteLine($"      [SAISIE-ADR] {enfants.Count} enfant(s) Win32 de la modale :");
         foreach (var (h, cls, txt, r) in enfants.Take(50))
             Console.WriteLine($"        - cls='{cls}' txt='{LegacyParsing.Truncate(txt, 30)}' ({r.Left},{r.Top} {r.Right - r.Left}x{r.Bottom - r.Top}) hwnd=0x{h.ToInt64():X}");
@@ -6328,31 +6371,72 @@ public sealed class LegacyDriver : IDisposable
         // la même ligne = champ code postal (étape 1 « Choix de la localité via le code postal »). On tape le
         // CP par WM_CHAR (EDIT Win32 : insère au caret + EN_CHANGE -> le module résout la localité, qui
         // s'auto-sélectionne si unique, ex. 38100 GRENOBLE). Puis l'appelant clique « Valider (F12) ».
-        var lblCp = enfants.FirstOrDefault(e => e.cls.IndexOf("STATIC", StringComparison.OrdinalIgnoreCase) >= 0
-                                                && e.txt.IndexOf("C.P", StringComparison.OrdinalIgnoreCase) >= 0);
-        if (lblCp.h == IntPtr.Zero) { Console.WriteLine("      [SAISIE-ADR] label « C.P » introuvable (voir dump)"); return false; }
-        var cpEdit = enfants.Where(e => e.cls.IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0
-                                        && Math.Abs(e.r.Top - lblCp.r.Top) <= 10 && e.r.Left > lblCp.r.Left
-                                        && (e.r.Bottom - e.r.Top) <= 30)
-            .OrderBy(e => e.r.Left).FirstOrDefault();
-        if (cpEdit.h == IntPtr.Zero) { Console.WriteLine("      [SAISIE-ADR] EDIT CP introuvable à droite du label (voir dump)"); return false; }
-        Console.WriteLine($"      [SAISIE-ADR] CP '{cp}' tapé (WM_CHAR) dans l'EDIT hwnd=0x{cpEdit.h.ToInt64():X} @({cpEdit.r.Left},{cpEdit.r.Top})");
-        SendMessageText(cpEdit.h, 0x000C /* WM_SETTEXT vide d'abord */, IntPtr.Zero, "");
-        foreach (char ch in cp)
+        bool ecrit = false;
+        // Voie 1 — UIA MANAGÉ : la modale est un Form .NET (WindowsForms10) -> ses TextBox exposent un
+        // ValuePattern fiable (le WM_SETTEXT brut est rejeté par le subclassing, final4 : hwnd stable mais
+        // texte jamais pris). On cible l'Edit UIA voisin du label « C.P ».
+        try
         {
-            Interaction.PostChar(cpEdit.h, ch);
-            Thread.Sleep(150); // sleep-ok: cadence de frappe (<=500ms), laisse le module résoudre la localité au fil des chiffres
+            var modalEl = _automation!.FromHandle(modalHwnd);
+            var lblCpUia = modalEl.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .FirstOrDefault(t => { try { return SafeText(() => t.Name).IndexOf("C.P", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; } });
+            if (lblCpUia is not null)
+            {
+                var lr = lblCpUia.BoundingRectangle;
+                var cpUia = modalEl.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit))
+                    .Where(e2 => { try { var r2 = e2.BoundingRectangle;
+                            return Math.Abs(r2.Y - lr.Y) <= 12 && r2.X > lr.X && r2.Width <= 120 && e2.Patterns.Value.IsSupported; } catch { return false; } })
+                    .OrderBy(e2 => e2.BoundingRectangle.X).FirstOrDefault();
+                if (cpUia is not null)
+                {
+                    cpUia.Patterns.Value.Pattern.SetValue(cp);
+                    Thread.Sleep(800); // sleep-ok: settle one-shot, TextChanged -> résolution localité
+                    string v = ""; try { v = cpUia.Patterns.Value.Pattern.Value ?? ""; } catch { }
+                    ecrit = v.Trim().Length > 0;
+                    Console.WriteLine($"      [SAISIE-ADR] (UIA managé) CP SetValue -> '{v}' (écrit={ecrit})");
+                }
+                else Console.WriteLine("      [SAISIE-ADR] (UIA managé) Edit CP non trouvé -> repli Win32");
+            }
+            else Console.WriteLine("      [SAISIE-ADR] (UIA managé) label C.P non trouvé -> repli Win32");
         }
+        catch (Exception ex) { Console.WriteLine($"      [SAISIE-ADR] (UIA managé) exception : {ex.Message} -> repli Win32"); }
+        for (int essai = 1; essai <= 3 && !ecrit; essai++)
+        {
+            // Ré-énumération FRAÎCHE (hwnds périmés si le module a recréé ses contrôles).
+            if (essai > 1) { Thread.Sleep(1500); enfants = EnumEnfantsModale(modalHwnd); } // sleep-ok: settle one-shot avant ré-énumération
+            var lblCp = enfants.FirstOrDefault(e => e.cls.IndexOf("STATIC", StringComparison.OrdinalIgnoreCase) >= 0
+                                                    && e.txt.IndexOf("C.P", StringComparison.OrdinalIgnoreCase) >= 0);
+            if (lblCp.h == IntPtr.Zero) { Console.WriteLine($"      [SAISIE-ADR] (essai {essai}) label « C.P » introuvable"); continue; }
+            var cpEdit = enfants.Where(e => e.cls.IndexOf("EDIT", StringComparison.OrdinalIgnoreCase) >= 0
+                                            && Math.Abs(e.r.Top - lblCp.r.Top) <= 10 && e.r.Left > lblCp.r.Left
+                                            && (e.r.Bottom - e.r.Top) <= 30)
+                .OrderBy(e => e.r.Left).FirstOrDefault();
+            if (cpEdit.h == IntPtr.Zero) { Console.WriteLine($"      [SAISIE-ADR] (essai {essai}) EDIT CP introuvable"); continue; }
+            Console.WriteLine($"      [SAISIE-ADR] (essai {essai}) CP '{cp}' -> EDIT hwnd=0x{cpEdit.h.ToInt64():X} @({cpEdit.r.Left},{cpEdit.r.Top})");
+            Interaction.ForceFocus(cpEdit.h);
+            Thread.Sleep(150); // sleep-ok: settle one-shot focus avant frappe
+            foreach (char ch in cp)
+            {
+                Interaction.PostChar(cpEdit.h, ch);
+                Thread.Sleep(150); // sleep-ok: cadence de frappe (<=500ms), le module résout la localité au fil des chiffres
+            }
+            Thread.Sleep(800); // sleep-ok: settle one-shot après frappe
+            if (GetWindowTextLength(cpEdit.h) == 0)
+            {
+                Console.WriteLine($"      [SAISIE-ADR] (essai {essai}) ⚠ CP non pris par WM_CHAR -> repli WM_SETTEXT");
+                SendMessageText(cpEdit.h, 0x000C, IntPtr.Zero, cp);
+                Thread.Sleep(500); // sleep-ok: settle one-shot après WM_SETTEXT
+            }
+            ecrit = GetWindowTextLength(cpEdit.h) > 0;
+            Console.WriteLine($"      [SAISIE-ADR] (essai {essai}) CP écrit = {ecrit}");
+        }
+        if (!ecrit) { Console.WriteLine("      [SAISIE-ADR] ✗ CP jamais pris (3 essais, hwnds ré-énumérés) -> abandon remplissage"); return false; }
         Thread.Sleep(2500); // sleep-ok: settle one-shot, résolution localité via CP (requête du module)
-        // La localité doit s'être auto-résolue (combo « Localité » peuplée). Diag : relire l'edit interne de la combo.
+        // Diag : la localité doit s'être auto-résolue (combo « Localité » peuplée) — ré-énumération fraîche.
+        enfants = EnumEnfantsModale(modalHwnd);
         var comboLoc = enfants.FirstOrDefault(e => e.cls.IndexOf("COMBOBOX", StringComparison.OrdinalIgnoreCase) >= 0
-                                                   && Math.Abs(e.r.Top - lblCp.r.Top) <= 10 && e.r.Left > cpEdit.r.Right);
-        if (comboLoc.h != IntPtr.Zero)
-        {
-            int lenLoc = GetWindowTextLength(comboLoc.h);
-            var sbl = new System.Text.StringBuilder(lenLoc + 2); if (lenLoc > 0) GetWindowText(comboLoc.h, sbl, sbl.Capacity);
-            Console.WriteLine($"      [SAISIE-ADR] Localité après CP : '{sbl}'");
-        }
+                                                   && !string.IsNullOrWhiteSpace(e.txt));
+        Console.WriteLine($"      [SAISIE-ADR] Localité après CP : '{LegacyParsing.Truncate(comboLoc.txt ?? "", 40)}'");
         return true;
     }
 
@@ -6367,15 +6451,34 @@ public sealed class LegacyDriver : IDisposable
         foreach (var (h, t, cls) in EnumRigTopLevelWindows(mh))
         {
             string tl = t.ToLowerInvariant();
-            List<string> textes = DumpGridTextsMsaa(h, 60);
+            List<string> textes = DumpGridTextsMsaa(h, 200);
             string content = string.Join(" ", textes).ToLowerInvariant();
             bool isVisu = tl.Contains("visualis") || content.Contains("liasse cosa") || content.Contains("justificatifs")
+                          || content.Contains("imprimer tout") || content.Contains("document de synthèse")
                           || (content.Contains("liasses") && content.Contains("actes"));
             if (!isVisu) continue;
             Console.WriteLine($"      → « Visualisation des documents » détectée ('{t}') -> Quitter (remarque #1)");
             CaptureFullVirtualScreen("visu-documents");
             if (ClicBoutonFenetreParNomMsaa(h, new[] { "quitter" }, out var b)) { ferme = true; Console.WriteLine($"        ✓ « Quitter » cliqué (boutons : {b})"); }
             else Console.WriteLine($"        ⚠ « Quitter » non trouvé (boutons : {b})");
+        }
+        // La « visualisation des pièces » peut aussi être le VIEWER EXTERNE (RigAffichageDoc / DocDemat,
+        // PROCESS SÉPARÉ ouvert automatiquement à la reprise des demandes INPI avec pièces — res36 : RIG
+        // exige sa fermeture mais aucune fenêtre du process RIG ne matche). Fermeture douce : WM_CLOSE sur
+        // sa fenêtre principale, puis Kill si toujours vivant après 3s.
+        foreach (var pv in Process.GetProcesses().Where(p => { try { return p.ProcessName.IndexOf("RigAffichageDoc", StringComparison.OrdinalIgnoreCase) >= 0
+                                                                       || p.ProcessName.IndexOf("DocDemat", StringComparison.OrdinalIgnoreCase) >= 0
+                                                                       || p.ProcessName.IndexOf("DOC_DEMAT", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; } }))
+        {
+            try
+            {
+                Console.WriteLine($"      → Viewer de pièces détecté : {pv.ProcessName} (PID {pv.Id}) -> WM_CLOSE (remarque #1)");
+                if (pv.MainWindowHandle != IntPtr.Zero) Interaction.PostMessagePublic(pv.MainWindowHandle, 0x0010 /* WM_CLOSE */, IntPtr.Zero, IntPtr.Zero);
+                if (!pv.WaitForExit(3000)) { Console.WriteLine($"        → toujours vivant -> Kill"); pv.Kill(); }
+                ferme = true;
+                Console.WriteLine($"        ✓ Viewer {pv.ProcessName} fermé");
+            }
+            catch (Exception ex) { Console.WriteLine($"        ⓘ fermeture viewer : {ex.Message}"); }
         }
         return ferme;
     }
@@ -7141,16 +7244,16 @@ public sealed class LegacyDriver : IDisposable
         Interaction.Click(charger);
         Console.WriteLine("      ✓ 'Charger cette demande' cliqué");
 
-        // Poll-until-condition : l'onglet du processus (A1_C) apparaît (nouvel onglet OU onglet nommé a1_c).
+        // Poll-until-condition : l'onglet du processus apparaît (nouvel onglet OU onglet nommé <code proc>).
         bool opened = false;
         var swWait = System.Diagnostics.Stopwatch.StartNew();
         while (swWait.ElapsedMilliseconds < 12000)
         {
             var tc = FindByAutomationId("tabControl");
-            bool a1cTab = tc is not null && tc.FindAllChildren()
-                .Any(t => SafeText(() => t.Name).ToLowerInvariant().Contains("a1_c"));
-            if (a1cTab || SnapshotTabCount() > prevTabs) { opened = true; break; }
-            Thread.Sleep(400); // sleep-ok: fréquence de poll (<=500ms), plafond 12s, condition = onglet A1_C présent
+            bool procTab = tc is not null && tc.FindAllChildren()
+                .Any(t => SafeText(() => t.Name).ToLowerInvariant().Contains(CodeProcAttendu()));
+            if (procTab || SnapshotTabCount() > prevTabs) { opened = true; break; }
+            Thread.Sleep(400); // sleep-ok: fréquence de poll (<=500ms), plafond 12s, condition = onglet processus présent
         }
         Console.WriteLine(opened
             ? $"      ✓ Onglet de processus ouvert (demande {numDemande})"
@@ -7219,7 +7322,7 @@ public sealed class LegacyDriver : IDisposable
                 var tc = FindByAutomationId("tabControl");
                 bool procTab = tc is not null && tc.FindAllChildren()
                     .Any(t => { var n = SafeText(() => t.Name).ToLowerInvariant();
-                                return n.Contains("a1_c") || n.Contains("a1"); });
+                                return n.Contains(CodeProcAttendu()); });
                 if (procTab || SnapshotTabCount() > prevTabs) { opened = true; return; }
                 Thread.Sleep(400); // sleep-ok: fréquence de poll (<=500ms), plafond 8s, condition = onglet processus
             }
@@ -7583,7 +7686,7 @@ public sealed class LegacyDriver : IDisposable
         {
             var sw = Stopwatch.StartNew();
             while (sw.ElapsedMilliseconds < 8000)
-            { var tc = FindByAutomationId("tabControl"); bool pt = tc is not null && tc.FindAllChildren().Any(t => SafeText(() => t.Name).ToLowerInvariant().Contains("a1")); if (pt) { opened = true; return; } Thread.Sleep(400); } // sleep-ok: poll <=500ms, plafond 8s, condition = onglet A1
+            { var tc = FindByAutomationId("tabControl"); bool pt = tc is not null && tc.FindAllChildren().Any(t => SafeText(() => t.Name).ToLowerInvariant().Contains(CodeProcAttendu())); if (pt) { opened = true; return; } Thread.Sleep(400); } // sleep-ok: poll <=500ms, plafond 8s, condition = onglet processus
         }, out _);
         Console.WriteLine(opened ? "      ✓ Processus A1_C rouvert après déblocage" : "      ⓘ onglet non confirmé UIA (focus parké ?) — cf. captures");
         return opened;
@@ -7596,16 +7699,22 @@ public sealed class LegacyDriver : IDisposable
     public void ClicBoutonRefusEtObserver()
     {
         if (_window is null) throw new InvalidOperationException("_window null");
+        // 40s + 2 passes : les écrans PM (B1_C…) comptent ~500 contrôles et un lookup UIA y prend 9-11s —
+        // la deadline initiale de 12s abandonnait quasi systématiquement (échec récurrent camp/camp2/inpi).
         AutomationElement? btn = null;
-        RunUiaActionWithDeadline("find-bouton-refus", 12000, () =>
+        RunUiaActionWithDeadline("find-bouton-refus", 40000, () =>
         {
-            try
+            for (int passe = 0; passe < 2 && btn is null; passe++)
             {
-                btn = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
-                    .FirstOrDefault(b => { try { var n = SafeText(() => b.Name).ToLowerInvariant();
-                            return n.Contains("refus") || (n.Contains("attente") && n.Contains("réclam")); } catch { return false; } });
+                try
+                {
+                    btn = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                        .FirstOrDefault(b => { try { var n = SafeText(() => b.Name).ToLowerInvariant();
+                                return n.Contains("refus") || (n.Contains("attente") && n.Contains("réclam")); } catch { return false; } });
+                }
+                catch (Exception ex) { Console.WriteLine($"      ⓘ find bouton refus (passe {passe + 1}) : {ex.Message}"); }
+                if (btn is null) Thread.Sleep(500); // sleep-ok: poll <=500ms entre 2 passes, condition = bouton trouvé
             }
-            catch (Exception ex) { Console.WriteLine($"      ⓘ find bouton refus : {ex.Message}"); }
         }, out _);
         if (btn is null) { CaptureFullVirtualScreen("bouton-refus-introuvable"); throw new Exception("Bouton « attente, réclamation, refus … » introuvable dans le processus"); }
         Console.WriteLine($"      → Bouton issue trouvé : '{SafeText(() => btn.Name)}' → ouverture du panneau (Invoke)");
@@ -7736,6 +7845,13 @@ public sealed class LegacyDriver : IDisposable
         if (string.IsNullOrWhiteSpace(adresseTest)) adresseTest = "38100 Grenoble"; // RIG_DEV (RECETTE : 69001 Lyon via RIG_ADRESSE_TEST)
         if (!RenseignerAdresseClientSiVide(adresseTest))
             Console.WriteLine("      ⚠ Adresse client non confirmée -> Refuser pourrait échouer sur ce contrôle.");
+        // Dénomination PM : depuis la manip métier « décocher Dossier sur entreprise existante » (charge la
+        // dénomination INPI), la saisie forcée est INUTILE et NUISIBLE (inpi-b1_c : « TEST REFUS » écrit dans
+        // un combo à valeurs contrôlées -> popup modale « Valeur Inconnue » qui bloque le motif). Opt-in
+        // uniquement via RIG_DENOMINATION_TEST.
+        string denomTest = Environment.GetEnvironmentVariable("RIG_DENOMINATION_TEST");
+        if (!string.IsNullOrWhiteSpace(denomTest)) RenseignerChampTexteSiVide("dénomination", denomTest);
+        else Console.WriteLine("      ⓘ Saisie dénomination désactivée (chargée par le décochage « entreprise existante ») — RIG_DENOMINATION_TEST pour forcer.");
 
         // ── (1) Motif 9LIB dans l'étape « éléments attendus » ─────────────────────────────────────────
         var combo = FindTypeMotifCombo();
@@ -7803,6 +7919,10 @@ public sealed class LegacyDriver : IDisposable
             throw new Exception("Bouton « Refuser » DÉSACTIVÉ — état non refusable, on ne force pas.");
         }
         int prevTabs = SnapshotTabCount();
+        // Remarque #1 (re-check TARDIF, res35) : la « Visualisation des documents » peut s'être ouverte APRÈS
+        // le check pré (chargement async du processus) -> la fermer juste avant Refuser, sinon le rapport de
+        // vérification bloque (« Veuillez fermer la visualisation des pièces »).
+        FermerVisualisationDocumentsSiPresente();
         Console.WriteLine("      → Click « Refuser » (Processus.Refuser())");
         try { Interaction.Click(btnRefuser); }
         catch (Exception ex) { Console.WriteLine($"      → ⚠ Click Refuser a jeté ({ex.Message}) — fallback Alt+F"); PostWindowAltKey(0x46 /* VK_F */); }
@@ -7832,11 +7952,25 @@ public sealed class LegacyDriver : IDisposable
                 string low = (title + " " + content).ToLowerInvariant();
                 Console.WriteLine($"      → Fenêtre top-level : '{title}' (cls={cls})");
 
-                // (3a) Rapport de vérification / erreurs → capture + remonter à l'utilisateur.
+                // (3a) Rapport de vérification → d'abord tenter « Valider l'alerte » : un rapport à 0 erreur
+                // (alarmes/remarques seulement, ex. mention légale FNIG sur IAC) a ce bouton ACTIF et se ferme
+                // -> le refus continue. S'il reste ouvert (vraies erreurs bloquantes) -> remonter.
                 if (low.Contains("rapport de vérification") || low.Contains("rapport de verification")
                     || low.Contains("obligatoire") || low.Contains("compatible avec un refus") || low.Contains("erreur automate"))
                 {
                     try { Interaction.CaptureWindowByHwnd(hwnd, System.IO.Path.Combine(_snapDir!, $"erreurs-validation-{DateTime.Now:HHmmss}.png")); } catch { }
+                    if (ClicBoutonFenetreParNomMsaa(hwnd, new[] { "valider l'alerte" }, out _))
+                    {
+                        var swAl = Stopwatch.StartNew();
+                        while (swAl.ElapsedMilliseconds < 5000 && EnumRigTopLevelWindows(mainHwnd).Any(w2 => w2.hwnd == hwnd))
+                            Thread.Sleep(400); // sleep-ok: poll <=500ms, plafond 5s, condition = rapport fermé
+                        if (!EnumRigTopLevelWindows(mainHwnd).Any(w2 => w2.hwnd == hwnd))
+                        {
+                            Console.WriteLine("      → Rapport = alarme(s) seulement : « Valider l'alerte » accepté -> le refus continue.");
+                            dejaTraitees.Add(key);
+                            break; // ré-énumère : éditions/facturation vont suivre
+                        }
+                    }
                     CaptureFullVirtualScreen("erreurs-validation-refus");
                     erreursValidation = $"'{title}' : {LegacyParsing.Truncate(content, 700)}";
                     break;
@@ -8005,7 +8139,9 @@ public sealed class LegacyDriver : IDisposable
         IntPtr adrHwnd = IntPtr.Zero;
 
         // ── Phase 1 (UIA, bordée) : localiser le champ adresse + lire sa valeur ──────────────────────
-        RunUiaActionWithDeadline("adresse-locate", 20000, () =>
+        // 40s : les écrans PM (B1_C…) sont lourds (~480 contrôles, lookups UIA 9-11s) — 20s tronquait la
+        // phase APRÈS le locate mais AVANT la lecture du hwnd (res36 : pas de F7).
+        RunUiaActionWithDeadline("adresse-locate", 40000, () =>
         {
             if (Headless) EnsureWindowMaximized();
             List<AutomationElement> texts = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
@@ -8084,8 +8220,18 @@ public sealed class LegacyDriver : IDisposable
             var swc = Stopwatch.StartNew();
             while (swc.ElapsedMilliseconds < 8000 && EnumRigTopLevelWindows(mainHwndAdr).Any(w => w.hwnd == saisieHwnd))
                 Thread.Sleep(400); // sleep-ok: poll <=500ms, plafond 8s, condition = module fermé
-            Console.WriteLine(EnumRigTopLevelWindows(mainHwndAdr).Any(w => w.hwnd == saisieHwnd)
-                ? "      ⚠ Module toujours ouvert après Valider" : "      ✓ Module fermé après Valider");
+            if (EnumRigTopLevelWindows(mainHwndAdr).Any(w => w.hwnd == saisieHwnd))
+            {
+                // Le module MODAL survivant bloquerait TOUT le flux (final2 : SetValue motif jeté) -> on le
+                // FERME de force (Annuler/ESC) plutôt que de continuer avec une modale ouverte.
+                Console.WriteLine("      ⚠ Module toujours ouvert après Valider -> fermeture forcée (Annuler/ESC)");
+                if (!ClicBoutonFenetreParNomMsaa(saisieHwnd, new[] { "annuler (esc)", "annuler" }, out _))
+                    Interaction.PostKey(saisieHwnd, 0x1B /* VK_ESCAPE */);
+                var swf = Stopwatch.StartNew();
+                while (swf.ElapsedMilliseconds < 5000 && EnumRigTopLevelWindows(mainHwndAdr).Any(w => w.hwnd == saisieHwnd))
+                    Thread.Sleep(400); // sleep-ok: poll <=500ms, plafond 5s, condition = module fermé
+            }
+            else Console.WriteLine("      ✓ Module fermé après Valider");
         }
         else
         {
@@ -8175,6 +8321,141 @@ public sealed class LegacyDriver : IDisposable
         Thread.Sleep(1500); // sleep-ok: settle one-shot, laisser le moteur recalculer (EIRL/régul/mention)
         ConfirmerDialogueSiPresent();
         CaptureFullVirtualScreen("nonmicro-configure");
+    }
+
+    /// <summary>Renseigne un champ TEXTE simple (pas une référence) repéré par son LABEL, s'il est VIDE.
+    /// Best-effort : silencieux si le label est absent de l'écran (formalité sans ce champ). Locator : label
+    /// Text contenant <paramref name="labelSub"/> -> Edit avec hwnd le plus proche (même ligne, au-dessus ou
+    /// en dessous ≤ 45px). Écriture : ValuePattern.SetValue, repli frappe WM_CHAR. Bordé anti-hang.</summary>
+    public bool RenseignerChampTexteSiVide(string labelSub, string valeur)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        bool ok = false;
+        RunUiaActionWithDeadline("champ-" + labelSub, 20000, () =>
+        {
+            // Match EXACT prioritaire (« dénomination ») — un Contains attraperait « Dénomination de
+            // correspondance » et remplirait le mauvais champ (lot-b1_a/b1_c).
+            var labels = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+                .Where(t => { try { return t.IsAvailable && !t.IsOffscreen
+                        && SafeText(() => t.Name).ToLowerInvariant().Contains(labelSub.ToLowerInvariant()); } catch { return false; } })
+                .ToList();
+            var lbl = labels.FirstOrDefault(t => SafeText(() => t.Name).Trim().ToLowerInvariant() == labelSub.ToLowerInvariant())
+                      ?? labels.FirstOrDefault();
+            if (lbl is null) { Console.WriteLine($"      ⓘ Label « {labelSub} » absent de l'écran — champ non requis ici."); ok = true; return; }
+            Console.WriteLine($"      → Label retenu : '{SafeText(() => lbl.Name)}' ({labels.Count} candidat(s))");
+            var lr = lbl.BoundingRectangle;
+            var champ = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Edit))
+                .Where(e => { try { if (!e.IsAvailable || e.IsOffscreen) return false; var r = e.BoundingRectangle;
+                        if (r.Width < 40 || r.Height < 10) return false;
+                        bool proche = Math.Abs(r.Y - lr.Y) <= 45 && r.X >= lr.X - 40 && r.X <= lr.X + 400;
+                        return proche && e.Patterns.Value.IsSupported; } catch { return false; } })
+                .OrderBy(e => { var r = e.BoundingRectangle; return Math.Abs(r.X - lr.X) + Math.Abs(r.Y - lr.Y); })
+                .FirstOrDefault();
+            if (champ is null) { Console.WriteLine($"      ⚠ Champ près du label « {labelSub} » introuvable."); return; }
+            string cur = ""; try { cur = champ.Patterns.Value.Pattern.Value ?? ""; } catch { }
+            if (!string.IsNullOrWhiteSpace(cur)) { Console.WriteLine($"      ✓ « {labelSub} » déjà renseigné (len={cur.Length})."); ok = true; return; }
+            bool wrote = false;
+            try { champ.Patterns.Value.Pattern.SetValue(valeur); wrote = true; }
+            catch (Exception ex) { Console.WriteLine($"      ⓘ SetValue « {labelSub} » KO ({ex.Message}) -> frappe WM_CHAR"); }
+            IntPtr fh = IntPtr.Zero; try { fh = champ.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+            if (!wrote && fh != IntPtr.Zero)
+            {
+                Interaction.ForceFocus(fh);
+                Thread.Sleep(150); // sleep-ok: settle one-shot focus
+                foreach (char ch in valeur) { Interaction.PostChar(fh, ch); Thread.Sleep(60); } // sleep-ok: cadence de frappe <=500ms
+            }
+            // COMMIT MOTEUR (lot-b1_a/b1_c : SetValue AFFICHE le texte mais l'ULT moteur reste vide -> rapport
+            // « dénomination doit être renseigné »). Un RIGEdit C++ committe au Tab/kill-focus (MACRO_Validation,
+            // RIGEdit.cpp) -> ForceFocus + Tab (scan) sur le hwnd du champ.
+            if (fh != IntPtr.Zero)
+            {
+                Interaction.ForceFocus(fh);
+                Thread.Sleep(150); // sleep-ok: settle one-shot focus avant Tab
+                Interaction.PostKeyScan(fh, 0x09 /* VK_TAB -> MACRO_Validation = commit ULT */);
+            }
+            Thread.Sleep(500); // sleep-ok: settle one-shot après saisie + commit
+            try { cur = champ.Patterns.Value.Pattern.Value ?? ""; } catch { }
+            ok = !string.IsNullOrWhiteSpace(cur);
+            Console.WriteLine(ok ? $"      ✓ « {labelSub} » = '{valeur}' (len={cur.Length})" : $"      ⚠ « {labelSub} » non confirmé après saisie");
+        }, out _);
+        return ok;
+    }
+
+    /// <summary>Processus de MODIFICATION / RADIATION / AC (MA1, MB1, RB1, IAC…) : l'onglet s'ouvre sur
+    /// l'écran « Entrée dans le RCS » (Choix du dossier, fiche sommaire pré-remplie depuis l'INPI) — il faut
+    /// cliquer « Charger ce dossier » pour entrer dans le processus. Best-effort : silencieux si le bouton est
+    /// absent (immatriculations). Attend ensuite la fin du chargement.</summary>
+    public void ChargerDossierSiPropose()
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        AutomationElement? btn = null;
+        RunUiaActionWithDeadline("charger-dossier", 25000, () =>
+        {
+            if (Headless) EnsureWindowMaximized();
+            btn = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
+                .FirstOrDefault(b => { try { return b.IsAvailable
+                        && SafeText(() => b.Name).Trim().ToLowerInvariant().Contains("charger ce dossier"); } catch { return false; } });
+        }, out _);
+        if (btn is null) { Console.WriteLine("      ⓘ Pas de bouton « Charger ce dossier » — écran d'entrée directe (immatriculation)."); return; }
+        Console.WriteLine("      → « Charger ce dossier » trouvé (écran Entrée dans le RCS) -> Invoke");
+        RunUiaActionWithDeadline("invoke-charger-dossier", 10000, () =>
+        {
+            try { if (btn!.Patterns.Invoke.IsSupported) btn.Patterns.Invoke.Pattern.Invoke(); else Interaction.Click(btn); }
+            catch (Exception ex) { Console.WriteLine($"      ⓘ Invoke Charger ce dossier : {ex.Message}"); }
+        }, out _);
+        Thread.Sleep(3000); // sleep-ok: settle one-shot, le chargement du dossier démarre
+        WaitForLoadingOverlayToClear(maxMs: 40000);
+        // Écran lourd (transformation multi-événements : dirigeants + casier CJN + viewer de pièces) : RIG peut
+        // rester occupé bien après la disparition de l'overlay -> attendre la réactivité UIA effective, sinon
+        // les lookups suivants (adresse, motif, bouton refus) expirent tous à leur deadline sans scanner.
+        WaitForUiResponsive();
+        ConfirmerDialogueSiPresent();
+        CaptureFullVirtualScreen("apres-charger-dossier");
+        Console.WriteLine("      ✓ Dossier chargé (processus de modification/radiation prêt)");
+    }
+
+    /// <summary>MANIP MÉTIER (Emmanuel, 2026-07-21) : pour TOUTES les immatriculations reçues de l'INPI,
+    /// DÉCOCHER « Dossier sur entreprise existante » AVANT le refus -> déclenche le chargement des
+    /// informations INPI (dont la DÉNOMINATION, exigée par la vérification du refus et utilisée dans les
+    /// courriers générés). Best-effort : silencieux si la case est absente (formalité sans ce champ) ou déjà
+    /// décochée. BM_GETCHECK/BM_CLICK (messages BUTTON, postables HDESK) + settle long (chargement INPI).</summary>
+    public void DecocherDossierEntrepriseExistante()
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        AutomationElement? chk = null;
+        RunUiaActionWithDeadline("decocher-entreprise-existante", 25000, () =>
+        {
+            if (Headless) EnsureWindowMaximized();
+            chk = _window!.FindAllDescendants(cf => cf.ByControlType(ControlType.CheckBox))
+                .FirstOrDefault(c => { try { return c.IsAvailable
+                        && SafeText(() => c.Name).Trim().ToLowerInvariant().Contains("dossier sur entreprise existante"); } catch { return false; } });
+        }, out _);
+        if (chk is null) { Console.WriteLine("      ⓘ Case « Dossier sur entreprise existante » absente — rien à décocher."); return; }
+        IntPtr h = IntPtr.Zero; try { h = chk.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        if (h == IntPtr.Zero) { Console.WriteLine("      ⚠ Case « Dossier sur entreprise existante » sans hwnd — non décochable."); return; }
+        long etat = SendMessageText(h, 0x00F0 /* BM_GETCHECK */, IntPtr.Zero, null!).ToInt64();
+        Console.WriteLine($"      → « Dossier sur entreprise existante » BM_GETCHECK = {etat}");
+        if (etat == 0) { Console.WriteLine("      ✓ Déjà décochée."); return; }
+        SendMessageText(h, 0x00F5 /* BM_CLICK */, IntPtr.Zero, null!);
+        var sw = Stopwatch.StartNew();
+        while (sw.ElapsedMilliseconds < 6000 && SendMessageText(h, 0x00F0, IntPtr.Zero, null!).ToInt64() != 0)
+            Thread.Sleep(400); // sleep-ok: poll <=500ms, plafond 6s, condition = case décochée
+        etat = SendMessageText(h, 0x00F0, IntPtr.Zero, null!).ToInt64();
+        Console.WriteLine(etat == 0 ? "      ✓ « Dossier sur entreprise existante » décochée -> chargement des infos INPI" : "      ⚠ Case toujours cochée après BM_CLICK");
+        // Le décochage déclenche le CHARGEMENT des informations INPI (dénomination…) : settle long + overlay.
+        Thread.Sleep(3000); // sleep-ok: settle one-shot, laisser le rechargement INPI démarrer
+        WaitForLoadingOverlayToClear(maxMs: 30000);
+        ConfirmerDialogueSiPresent();
+        CaptureFullVirtualScreen("apres-decochage-entreprise-existante");
+    }
+
+    /// <summary>Code (sous-chaîne, minuscules) attendu dans le NOM de l'onglet du processus repris — env
+    /// RIG_PROC_CODE (ex. « b1_c » pour tester RCSIMPMCR1), défaut « a1 ». Généralise le flux demande-resume
+    /// à toutes les formalités du Lot A (avant : « a1 » codé en dur).</summary>
+    private static string CodeProcAttendu()
+    {
+        var v = Environment.GetEnvironmentVariable("RIG_PROC_CODE");
+        return string.IsNullOrWhiteSpace(v) ? "a1" : v.Trim().ToLowerInvariant();
     }
 
     public void EnterNumGestionInActiveTab(string numGestion, string contextLabel = "tab actif")

@@ -547,6 +547,13 @@ internal static class Program
             // SANS le déclencher (maximise + dump boutons/menus + grep refus/retourn/rejet + screenshot).
             TryStep("Localiser le bouton Refus/Retourner dans le processus A1_C (dump, sans déclencher)", () =>
                 driver.DumpOpenProcessControls("refus-discovery"));
+            // Modifications/radiations/AC : l'onglet s'ouvre sur « Entrée dans le RCS » -> charger le dossier.
+            TryStep("Charger le dossier RCS si l'écran d'entrée le propose (modif/radiation/AC)", () =>
+                driver.ChargerDossierSiPropose());
+            // MANIP MÉTIER immat INPI (Emmanuel 2026-07-21) : décocher « Dossier sur entreprise existante »
+            // AVANT toute saisie -> charge les infos INPI (dont la dénomination exigée au refus).
+            TryStep("Décocher « Dossier sur entreprise existante » (charge les infos INPI, dont la dénomination)", () =>
+                driver.DecocherDossierEntrepriseExistante());
             // ADRESSE D'ABORD (écran encore EN HAUT, zone client visible -> clic posté aux coords VALIDES) :
             // le panneau refus scrolle en bas et met la zone adresse hors écran (Y négatif, res24).
             TryStep("Vérifier/renseigner l'adresse du client divers (écran en haut, avant le panneau refus)", () =>

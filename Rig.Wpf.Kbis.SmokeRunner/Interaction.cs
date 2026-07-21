@@ -517,6 +517,13 @@ namespace Rig.Wpf.Kbis.SmokeRunner
         /// (bits 16-23). Nécessaire pour les contrôles qui traduisent la touche via <c>ToAscii</c> (ex. le combo
         /// C++ RIG <c>CEditCombo.OnKeyDown</c>) : sans scan code, ToAscii ne traduit PAS les chiffres ('9' perdu,
         /// bug res16). Poste WM_KEYDOWN + WM_KEYUP.</summary>
+        /// <summary>Expose PostMessage (usage ciblé : WM_CLOSE d'un viewer externe, remarque #1).</summary>
+        public static void PostMessagePublic(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam)
+        {
+            if (hwnd == IntPtr.Zero) throw new ArgumentException("hwnd zero", nameof(hwnd));
+            PostMessage(hwnd, msg, wParam, lParam);
+        }
+
         /// <summary>Poste un caractère (WM_CHAR) sur un hwnd — voie fiable pour ÉCRIRE dans un EDIT Win32/
         /// WinForms sans focus réel : l'EDIT insère le caractère au caret et notifie EN_CHANGE au parent
         /// (déclenche la logique applicative, ex. « choix de la localité via le code postal »).</summary>
