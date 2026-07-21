@@ -148,6 +148,10 @@ internal static class Program
         // en vue de reprendre le PROCESSUS A1_C (double-clic/Entrée -> ReprendreProcessus).
         if (HasFlag(args, "--legacy-demande-resume"))
             return RunLegacyDemandeResume(args);
+        // --legacy-rechenc = ouvre PROC_RECHENC (recherche encaissements, treeview) + capture headless.
+        //   Avant --legacy (qui matche le préfixe).
+        if (HasFlag(args, "--legacy-rechenc"))
+            return RunLegacyRechenc(args);
         if (HasFlag(args, "--legacy"))
             return RunLegacy(args);
 
@@ -572,6 +576,59 @@ internal static class Program
             TryStep("Refus A1_C : motif 9LIB -> Refuser -> éditions -> facturation (lecture + Annuler) -> Quitter", () =>
                 driver.RefuserA1cEtLireFacturation("9LIB"));
         });
+
+    /// <summary>
+    /// Scenario legacy PROC_RECHENC : ouvre la recherche d'encaissements (treeview) depuis la
+    /// Console d'accueil (zone txtNaviSearch) et capture l'écran. Par défaut aucune recherche
+    /// n'est lancée (pas de donnée métier) ; RIG_RECHENC_SEARCH=1 coche les dates
+    /// (RIG_RECHENC_DEBUT/FIN), lance la recherche et déplie l'arbre — OK headless (cf.
+    /// _SetRechencDate T2 fenêtre-sous-curseur). Self-snap dans self-snaps/$RIG_RUN_STAMP/rechenc/.
+    /// </summary>
+    private static int RunLegacyRechenc(string[] args)
+    {
+        return RunLegacyKbisScenario(
+            scenarioId: "rechenc",
+            banner: "PROC_RECHENC : Recherche d'encaissements (treeview)",
+            runScenario: driver =>
+            {
+                // Ouverture via la ZONE DE RECHERCHE de l'accueil (txtNaviSearch) — plus direct que le
+                // scan des menus. Fallback scan si RIG_RECHENC_VIA_SEARCH=0.
+                bool viaSearch = (Environment.GetEnvironmentVariable("RIG_RECHENC_VIA_SEARCH") ?? "1") != "0";
+                TryStep("RECHENC : Ouvrir via la zone de recherche de l'accueil", () =>
+                {
+                    if (viaSearch) driver.OpenProcessusViaSearch("RECHENC");
+                    else driver.OpenProcessus("RECHENC",
+                        nm => nm.IndexOf("RECHENC", StringComparison.OrdinalIgnoreCase) >= 0
+                           || nm.IndexOf("encaiss", StringComparison.OrdinalIgnoreCase) >= 0);
+                });
+
+                // Découverte (RIG_RECHENC_DUMP=1) : liste les contrôles pour identifier dates/boutons.
+                if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RIG_RECHENC_DUMP")))
+                    driver.DumpActiveTabControls();
+
+                // Recherche automatisée (RIG_RECHENC_SEARCH=1) : plage de dates + Déplier + capture.
+                if (!string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("RIG_RECHENC_SEARCH")))
+                {
+                    var d1 = Environment.GetEnvironmentVariable("RIG_RECHENC_DEBUT");
+                    if (string.IsNullOrWhiteSpace(d1)) d1 = "01/07/2026";
+                    var d2 = Environment.GetEnvironmentVariable("RIG_RECHENC_FIN");
+                    if (string.IsNullOrWhiteSpace(d2)) d2 = "31/07/2026";
+                    TryStep($"RECHENC : Recherche {d1} → {d2} + Déplier", () => driver.SearchRechencDateRangeAndExpand(d1, d2));
+                    driver.CaptureScreenshot("rechenc-juillet-deplie");
+                }
+
+                // Mode visible interactif : garde la fenêtre RECHENC ouverte (sleep borné) pour que
+                // l'utilisateur lance la recherche et clique les entêtes de colonnes (tri) / Déplier
+                // lui-même — le tri n'est PAS automatisable (entêtes RigTreeViewAdv dessinées en GDI,
+                // hors UIA). RIG_RECHENC_HOLD = secondes de maintien.
+                var holdStr = Environment.GetEnvironmentVariable("RIG_RECHENC_HOLD");
+                if (!string.IsNullOrWhiteSpace(holdStr) && int.TryParse(holdStr, out var holdSec) && holdSec > 0)
+                {
+                    Console.WriteLine($"      ⏸ HOLD {holdSec}s : fenêtre RECHENC laissée ouverte pour interaction manuelle…");
+                    Thread.Sleep(holdSec * 1000);
+                }
+            });
+    }
 
     // ════════════ Module ALERTES RCS — 4 scénarios ════════════
     // ÉTAPE 1 (scaffolding) : Launch + Login + OpenAlerteRcs → grille des demandes visible.
