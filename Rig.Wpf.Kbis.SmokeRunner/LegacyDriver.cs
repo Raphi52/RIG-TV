@@ -63,6 +63,7 @@ public sealed class LegacyDriver : IDisposable
     private string? _snapDir;
     private int _snapSeq;
     private volatile bool _snapStopped;
+    private volatile bool _snapReMaximizedOnce;   // self-heal taille : logge le 1er re-maximize par cycle de snap
 
     /// <summary>#2 — dernier index de self-snap publié (le NNNN du PNG snap-…-NNNN.png).
     /// Lu par Program.Pass/Fail/Skip pour tagger chaque ligne d'event d'un [snap=NNNN]
@@ -339,6 +340,12 @@ public sealed class LegacyDriver : IDisposable
         // Snapshot du titre pré-click (typiquement "Connection à la base de données Rig")
         // pour détecter la transition vers "Console d'accueil de RIG (…)".
         var preLoginTitle = SafeText(() => _window.Title);
+        // Snapshot du HANDLE de la main window pré-click : sur ce build RIG, le titre de la Console
+        // d'accueil peut être VIDE (= pré-login) → la détection par titre SEUL donne un faux timeout
+        // alors que la Console est bien affichée (prouvé par les self-snaps du run 20260616-132559).
+        // Le changement de HANDLE (FormLogin fermée → FormAccueil promue main window) est title-indépendant.
+        IntPtr preLoginHwnd = IntPtr.Zero;
+        try { preLoginHwnd = Process.GetProcessById(_app.ProcessId).MainWindowHandle; } catch { }
 
         Interaction.Click(btn);
 
@@ -368,14 +375,36 @@ public sealed class LegacyDriver : IDisposable
                     {
                         var title = SafeText(() => candidate.Title);
                         lastTitle = title;
-                        // Critère d'acceptance : titre différent du pré-login (= FormLogin
-                        // disparue, FormAccueil promue main window). Le titre Console
-                        // d'accueil contient "Console d'accueil" ou au minimum n'est plus
-                        // celui du login. On accepte aussi tout titre non-vide ≠ pré-login.
-                        if (!string.IsNullOrEmpty(title)
-                            && !string.Equals(title, preLoginTitle, StringComparison.Ordinal))
+                        // Critère d'acceptance ROBUSTE (title-indépendant) : transition FormLogin → FormAccueil
+                        // confirmée par le PREMIER signal positif parmi —
+                        //  (1) titre non-vide ≠ pré-login (cas classique) ;
+                        //  (2) le HANDLE de la main window a changé (FormLogin fermée → FormAccueil promue) —
+                        //      couvre le build où la Console a un titre VIDE (détection par titre seul = faux timeout).
+                        bool titleChanged = !string.IsNullOrEmpty(title)
+                            && !string.Equals(title, preLoginTitle, StringComparison.Ordinal);
+                        bool hwndChanged = preLoginHwnd != IntPtr.Zero
+                            && p.MainWindowHandle != IntPtr.Zero
+                            && p.MainWindowHandle != preLoginHwnd;
+                        if (titleChanged || hwndChanged)
                         {
-                            postWin = candidate;
+                            // iter-2 : MainWindowHandle pointe l'overlay UAC (WS_EX_NOREDIRECTIONBITMAP, UIA VIDE),
+                            // PAS la console (verifie 2026-06-16 : DumpDescendants vide + OpenProc ne voit aucun btn).
+                            // On attache _window a la VRAIE fenetre console RIG (WinForms titree/large), resolue par
+                            // ResolveRigConsoleHwnd (meme logique eprouvee que le self-snap). Fallback Zero = on
+                            // N'ACCEPTE QUE quand cette console est reellement enumerable, sinon on continue le poll
+                            // (accepter l'overlay seul = OpenProc scanne une fenetre vide -> faux echec en cascade).
+                            var consoleHwnd = ResolveRigConsoleHwnd(_app.ProcessId, IntPtr.Zero);
+                            if (consoleHwnd != IntPtr.Zero && consoleHwnd != preLoginHwnd)
+                            {
+                                try
+                                {
+                                    postWin = _automation!.FromHandle(consoleHwnd).AsWindow();
+                                    Console.WriteLine($"      → post-login OK via {(titleChanged ? "TITRE" : "HWND-CHANGE")} ; "
+                                        + $"console RIG resolue hwnd=0x{consoleHwnd.ToInt64():X} (overlay/MainWindow=0x{p.MainWindowHandle.ToInt64():X})");
+                                }
+                                catch (Exception ex) { lastUiaErr = ex; }
+                            }
+                            // sinon : console pas encore enumerable -> poll continue (Thread.Sleep plus bas)
                         }
                     }
                 }
@@ -580,6 +609,28 @@ public sealed class LegacyDriver : IDisposable
     }
 
     /// <summary>
+    /// Sélectionne le dernier tab ≠ Accueil du tabControl (ex. le tab ouvert par un processus
+    /// qu'on vient de lancer) — utilisé par les scénarios de diag pour que le screenshot final
+    /// capture le processus et non le menu d'accueil.
+    /// </summary>
+    /// <summary>INC-B — Expect charge-only : nombre de tabs ouverts (public, expose SnapshotTabCount).
+    /// Le charge-only compare le count AVANT/APRÈS l'ouverture : un NOUVEAU tab = proc réellement ouvert.
+    /// ⚠ « un tab non-Accueil existe » NE suffit PAS : le tab « Demandes » est permanent dans la Console
+    /// (faux-vert vécu chargeonly-e2e-1 : PARAMPROC surligné mais jamais ouvert, pourtant PASS).</summary>
+    public int CountTabs() => SnapshotTabCount();
+
+    public void SelectLastNonAccueilTab()
+    {
+        var tabControl = FindByAutomationId("tabControl");
+        if (tabControl is null) { Console.WriteLine("      → SelectLastNonAccueilTab : tabControl introuvable"); return; }
+        var tabs = tabControl.FindAllChildren();
+        var target = tabs.LastOrDefault(t => SafeText(() => t.Name).IndexOf("accueil", StringComparison.OrdinalIgnoreCase) < 0);
+        if (target is null) { Console.WriteLine("      → SelectLastNonAccueilTab : aucun tab non-Accueil"); return; }
+        Console.WriteLine($"      → Select tab '{SafeText(() => target.Name)}'");
+        Interaction.Select(target);
+    }
+
+    /// <summary>
     /// Ouvre un processus de la Console d'accueil en scannant onglets btn1..btn7 +
     /// items lstSousmenu, et double-cliquant le 1er item de lstProcessus dont le
     /// Name matche <paramref name="nameMatcher"/>. Pattern générique extrait de
@@ -662,6 +713,26 @@ public sealed class LegacyDriver : IDisposable
                 }
                 Console.WriteLine($"      → Fast path raté, fallback scan complet…");
             }
+        }
+
+        // Cold-boot sous contention parallèle : la Console d'accueil (btn1..btn7) peut ne pas
+        // être encore rendue au moment du scan → flake "Pass 1 n'a vu AUCUN btn / Console pas
+        // rendue" (mesuré 2026-07-07 : 4/27 fails, tous en 1er wave visible à froid). Poll-until-
+        // rendered AVANT de scanner : attend qu'au moins un btn1..btn7 soit présent (cap 15s, 400ms).
+        // CausalHypothesis: scan lancé avant rendu console au cold-boot // → poll présence btn avant scan.
+        {
+            var renderSw = Stopwatch.StartNew();
+            bool consoleRendered = false;
+            while (renderSw.Elapsed.TotalSeconds < 15)
+            {
+                try { for (int n = 1; n <= 7; n++) if (FindByAutomationId("btn" + n) is not null) { consoleRendered = true; break; } } catch { }
+                if (consoleRendered) break;
+                Thread.Sleep(400);  // sleep-ok: fréquence de poll attente rendu Console d'accueil (cap 15s, condition = btn présent)
+            }
+            if (!consoleRendered)
+                Console.WriteLine($"      [DIAG] ⚠ Console d'accueil non rendue après 15s de poll (btn1..btn7 absents) — scan quand même");
+            else if (renderSw.Elapsed.TotalMilliseconds > 800)
+                Console.WriteLine($"      [DIAG] Console rendue après {renderSw.Elapsed.TotalSeconds:F1}s de poll (cold-boot)");
         }
 
         // ML LOOP fix visible-parallel : scan complet btn1..btn7 avec
@@ -980,6 +1051,13 @@ public sealed class LegacyDriver : IDisposable
     public RecapCounters LastRecapCounters { get; private set; }
 
     /// <summary>
+    /// Texte du dernier DialogBox d'erreur GÉNÉRIQUE capturé (cas ERROR_PARSE / json-malformé : RIG ne
+    /// montre PAS de recap mais un DialogBox.Show — scout 2026-07-06 FORM_RETAUD:223-225). Renseigné dans la
+    /// branche Refus de la gestion popup AVANT fermeture ; consommé par SmokeRunner pour --expected-error-contains.
+    /// </summary>
+    public string LastErrorDialogText { get; private set; }
+
+    /// <summary>
     /// Lit les 4 stat tiles de la recap (label "modifications détectées" / "avertissements"
     /// / "erreur bloquante" / "affaires bloquées") + le label de valeur adjacent (chiffre).
     /// Best-effort : retourne null sur les champs qu'on ne trouve pas. Le matching se fait
@@ -1220,7 +1298,7 @@ public sealed class LegacyDriver : IDisposable
         // pour observer que la valeur est BIEN affichée dans le champ.
         try
         {
-            var dbgDir = @"C:\Code RIG\Audit\screenshots-loop";
+            var dbgDir = AuditPaths.Combine("screenshots-loop");
             Directory.CreateDirectory(dbgDir);
             var dbgPath = Path.Combine(dbgDir, $"dialog-after-setvalue-{DateTime.Now:yyyyMMdd-HHmmss}.png");
             Interaction.CaptureWindow(dialog, dbgPath);
@@ -1488,6 +1566,12 @@ public sealed class LegacyDriver : IDisposable
                 throw new Exception("Popup de confirmation 'Audience créée' pas apparue en 15s — Creator.CreateFromJson a peut-être throw");
             var createdText = ExtractStaticText(createdPopup);
             Console.WriteLine($"      → Popup 'Audience créée' : {createdText}");
+            // Capture le texte de la popup post-création : peut être un REFUS ("Création audience
+            // refusée : Refus : date d'audience JSON invalide ou absente…") → l'assertion
+            // --expected-error-contains le lit via LastErrorDialogText. Sans ça, le refus est loggé
+            // mais jamais asserté (worker.stdout 2026-07-07 : date-invalide/date-audience-manquante 0/2).
+            // fix-ok: refus create loggé mais absent de LastErrorDialogText → capturer ici.
+            if (!string.IsNullOrEmpty(createdText)) LastErrorDialogText = createdText;
             // Match "ID=12345" dans le texte (logique pure testée xUnit, cf. LegacyParsing)
             var newIdOpt = LegacyParsing.ExtractAudienceId(createdText);
             if (newIdOpt.HasValue)
@@ -1596,7 +1680,16 @@ public sealed class LegacyDriver : IDisposable
             return;
         }
 
-        // Refus (défaut) : clique Non / Annuler / Fermer / OK
+        // Refus (défaut) : capture d'abord le TEXTE du dialog (ex. ERROR_PARSE json-malformé : DialogBox
+        // générique sans recap — scout 2026-07-06) pour permettre l'assertion --expected-error-contains,
+        // PUIS clique Non / Annuler / Fermer / OK.
+        try
+        {
+            LastErrorDialogText = ExtractStaticText(popup);
+            if (!string.IsNullOrEmpty(LastErrorDialogText))
+                Console.WriteLine($"      → Dialog text capturé : {LastErrorDialogText.Replace("\r\n", " | ")}");
+        }
+        catch { }
         var btnRefuse = popup.FindAllDescendants(cf => cf.ByControlType(ControlType.Button))
             .FirstOrDefault(b =>
             {
@@ -1925,7 +2018,7 @@ public sealed class LegacyDriver : IDisposable
         //    SelectAudienceInRetaudByDateHeure pour explication. Valider une row
         //    avec chambre tronquée UIA ("Mise " au lieu de "Mise en état") déclenche
         //    RIG.METIER.TableRef.CHAMBRE.GetCHAMBRE("Mise ") → throw → mail envoyé.
-        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT", "CLOT", "DCP" };
         AutomationElement? targetRow = null;
         string targetSummary = "";
         for (int i = 0; i < rows.Count; i++)
@@ -2162,7 +2255,7 @@ public sealed class LegacyDriver : IDisposable
         // Whitelist des codes chambre courts valides (col 4 dans la grille RETAUD greffe 9995).
         // À étendre si nouveau code apparaît. Si content NE contient PAS l'un de ces codes,
         // la row est suspecte (probablement tronquée par UIA) → on skip.
-        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT" };
+        var knownChambreCodes = new[] { "REF", "AU", "CX", "MD", "PC", "TC", "CC", "JI", "JE", "FT", "CLOT", "DCP" };
         for (int i = 0; i < rows.Count; i++)
         {
             var cells = rows[i].FindAllChildren();
@@ -2199,10 +2292,66 @@ public sealed class LegacyDriver : IDisposable
             Console.WriteLine($"      → {matches.Count} matches : choisi celui avec affaires={best.affaireCount} (vs autres)");
         Console.WriteLine($"      → Sélection : {targetSummary}");
         try { Interaction.Select(targetRow); } catch { }
-        Thread.Sleep(500);
+        Thread.Sleep(500); // sleep-ok: settle sélection row avant Valider (FlaUI, pas de signal pollable)
         Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
         Interaction.Click(btnValider);
-        Thread.Sleep(1500);
+        Thread.Sleep(1500); // sleep-ok: settle transition phase Saisie post-Valider (rendu WinForms RIG, pas de signal pollable)
+    }
+
+    /// <summary>
+    /// Sélectionne la row RETAUD par date+heure+CHAMBRE EXACTE (code DB résolu via --audience-id).
+    /// ⚠ Finding scout 2026-07-06 : SelectAudienceInRetaudByDateHeure filtre par whitelist fuzzy + exclusion
+    /// "interactive" comme garde anti-mail-spam contre une chambre TRONQUÉE par UIA (ex "Mise " → GetCHAMBRE throw).
+    /// Ici on connaît la valeur EXACTE attendue (résolue en DB par ID) → on matche DESSUS : c'est SÛR (pas de
+    /// devinette de chambre) ET ça autorise les audiences INT (RIG FORM_RETAUD : bouton "Importer Rapture" =
+    /// eButtonVisibleOnPhase.Toujours, ImporterJsonRapture teste juste audCab==null → aucun blocage sur le type).
+    /// Les méthodes fuzzy existantes restent inchangées (chemins sans ID).
+    /// </summary>
+    public void SelectAudienceInRetaudByDateHeureChambre(string dateFr, string heure, string expectedChambre)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        var btnValider = FindButtonWithRetry("Valider la sélection", timeoutSec: 20.0);
+        if (btnValider is null)
+            throw new Exception("Bouton 'Valider la sélection' introuvable dans la phase Recherche de PROC_RETAUD (20s, pid-filtered)");
+        var rows = _window.FindAllDescendants().Where(c =>
+        {
+            try { var ct = c.ControlType.ToString(); return ct == "DataItem" || ct == "ListItem"; }
+            catch { return false; }
+        }).ToList();
+        var ec = (expectedChambre ?? "").Trim();
+        Console.WriteLine($"      → {rows.Count} rows dans la grille, recherche '{dateFr}' + '{heure}' + chambre EXACTE '{ec}'");
+        var matches = new System.Collections.Generic.List<(AutomationElement row, string content, int affaireCount)>();
+        for (int i = 0; i < rows.Count; i++)
+        {
+            var cells = rows[i].FindAllChildren();
+            var cellNames = cells.Select(c => SafeText(() => c.Name)).Where(n => !string.IsNullOrEmpty(n)).ToList();
+            var content = string.Join(" | ", cellNames);
+            bool hasDate = content.IndexOf(dateFr, StringComparison.OrdinalIgnoreCase) >= 0;
+            bool hasHeure = content.IndexOf(heure, StringComparison.OrdinalIgnoreCase) >= 0;
+            // Match chambre EXACTE (pas de whitelist, pas d'exclusion INT) : une cellule = ec, OU le content
+            // contient ec, OU (tolérance troncature UIA) une cellule est un préfixe non-trivial de ec.
+            bool hasChambre = ec.Length > 0 && (
+                   cellNames.Any(c => c.Trim().Equals(ec, StringComparison.OrdinalIgnoreCase))
+                || content.IndexOf(ec, StringComparison.OrdinalIgnoreCase) >= 0
+                || cellNames.Any(c => { var t = c.Trim(); return t.Length >= 2 && ec.StartsWith(t, StringComparison.OrdinalIgnoreCase); }));
+            if (hasDate && hasHeure && hasChambre)
+            {
+                int affaireCount = cellNames.Select(n => int.TryParse(n, out var v) ? v : 0).Sum();
+                Console.WriteLine($"          row[{i}] ✓ MATCH {dateFr} {heure} chambre~'{ec}' (affaires={affaireCount}) : [{content}]");
+                matches.Add((rows[i], content, affaireCount));
+            }
+        }
+        if (matches.Count == 0)
+            throw new Exception($"Aucune row (date '{dateFr}' + heure '{heure}' + chambre '{ec}') dans la grille RETAUD.");
+        var best = matches.OrderByDescending(m => m.affaireCount).First();
+        if (matches.Count > 1)
+            Console.WriteLine($"      → {matches.Count} matches : choisi affaires={best.affaireCount}");
+        Console.WriteLine($"      → Sélection (chambre exacte, INT autorisé) : {best.content}");
+        try { Interaction.Select(best.row); } catch { }
+        Thread.Sleep(500); // sleep-ok: settle sélection row avant Valider (FlaUI, pas de signal pollable)
+        Console.WriteLine("      → Click 'Valider la sélection' → passage en phase Saisie PROC_RETAUD");
+        Interaction.Click(btnValider);
+        Thread.Sleep(1500); // sleep-ok: settle transition phase Saisie post-Valider (rendu WinForms RIG, pas de signal pollable)
     }
 
     /// <summary>
@@ -2776,10 +2925,15 @@ public sealed class LegacyDriver : IDisposable
             {
                 // RigButton extends RigPanel → UIA Type=Pane. AutomationId = WinForms control.Name
                 // (btnOk) ; le designer dit btnOk.Text="Se &connecter" → UIA Name = "Se connecter".
-                btn = _window.FindFirstDescendant(cf => cf.ByAutomationId("btnOk"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("Se connecter"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("Connexion"))
-                   ?? _window.FindFirstDescendant(cf => cf.ByName("OK"));
+                // FormLogin est un ShowDialog() MODAL → souvent une toplevel UIA HORS de l'arbre de
+                // _window (surtout sur HDESK). On cherche depuis la racine desktop du HDESK (qui ne
+                // contient que les fenêtres RIG → pas de faux positif), fallback _window si GetDesktop KO.
+                AutomationElement root = _window;
+                try { var d = _automation.GetDesktop(); if (d is not null) root = d; } catch { }
+                btn = root.FindFirstDescendant(cf => cf.ByAutomationId("btnOk"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("Se connecter"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("Connexion"))
+                   ?? root.FindFirstDescendant(cf => cf.ByName("OK"));
             }
             catch (Exception ex)
             {
@@ -3483,6 +3637,8 @@ public sealed class LegacyDriver : IDisposable
     public void Dispose()
     {
         StopPeriodicSnap();
+        int rigPid = -1;
+        try { if (_app is not null && !_app.HasExited) rigPid = _app.ProcessId; } catch { }
         try
         {
             if (_app is not null && !_app.HasExited)
@@ -3497,6 +3653,22 @@ public sealed class LegacyDriver : IDisposable
             }
         }
         catch { /* best-effort */ }
+        // .NET Fx 4.8 : Process.Kill() ne tue PAS l'arbre -> RIG legacy peut laisser des enfants vivants
+        // ("Application failed to exit") = contention serveur RIG sur le scenario SUIVANT en batch (Mecanisme B,
+        // fix 2026-06-19). On tue l'ARBRE de NOTRE RIG par PID (cible ce worker uniquement, jamais un RIG de travail user).
+        if (rigPid > 0)
+        {
+            try
+            {
+                using var tk = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = "taskkill", Arguments = $"/T /F /PID {rigPid}",
+                    UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true
+                });
+                tk?.WaitForExit(3000);
+            }
+            catch { }
+        }
         try { _app?.Dispose(); } catch { }
         try { _automation?.Dispose(); } catch { }
         // _desktop est possédé par Program.cs (via RunAttached) — NE PAS le disposer ici.
@@ -3521,7 +3693,14 @@ public sealed class LegacyDriver : IDisposable
         // Cache hwnd cote thread HDESK courant.
         IntPtr hwnd = IntPtr.Zero;
         try { if (_window.Properties.NativeWindowHandle.IsSupported) hwnd = _window.Properties.NativeWindowHandle.ValueOrDefault; } catch { }
+        // FIX 2026-06-16 : MainWindowHandle (_window) peut résoudre un overlay UAC (WS_EX_NOREDIRECTIONBITMAP
+        // → PrintWindow NOIR). On résout la VRAIE fenêtre console RIG par énumération (fallback = MainWindow).
+        try { hwnd = ResolveRigConsoleHwnd(_app.ProcessId, hwnd); } catch { }
         if (hwnd == IntPtr.Zero) { Console.WriteLine("      ⓘ StartPeriodicSnap : hwnd zero, skip"); return; }
+        Console.WriteLine($"      ⓘ StartPeriodicSnap : snap hwnd=0x{hwnd.ToInt64():X} (console RIG résolue)");
+        // FIX 2026-06-16 : EnsureWindowMaximized() maximisait `_window` (= overlay UAC, MainWindowHandle) et
+        // PAS la vraie console → RIG restait en petite résolution (750x480). On maximise la CONSOLE résolue.
+        if (Headless) { try { Interaction.MaximizeWindow(hwnd); } catch { } }
         _snapHwnd = hwnd;
         var runStamp = Environment.GetEnvironmentVariable("RIG_RUN_STAMP");
         if (string.IsNullOrEmpty(runStamp)) runStamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
@@ -3545,6 +3724,7 @@ public sealed class LegacyDriver : IDisposable
         _snapSeq = 0;
         LastSnapSeq = -1;   // #2 : reset le tag [snap=] au début d'un nouveau cycle de self-snap
         _snapStopped = false;
+        _snapReMaximizedOnce = false;   // self-heal : ré-arme le log "re-maximisee" pour ce cycle
         Console.WriteLine($"      ⓘ Self-snap demarre : hwnd=0x{hwnd.ToInt64():X} interval={intervalMs}ms dir={_snapDir}");
         _snapTimer = new System.Threading.Timer(_ => SnapTick(), null, intervalMs, intervalMs);
     }
@@ -3554,6 +3734,27 @@ public sealed class LegacyDriver : IDisposable
         if (_snapStopped || _snapHwnd == IntPtr.Zero || string.IsNullOrEmpty(_snapDir)) return;
         try
         {
+            // Self-heal taille (fix « box minuscule » 2026-06-23) : RIG est maximisé au login + au snap-start
+            // (L3582) UNE fois, mais un PROC ouvert APRÈS le login le dé-maximise → il retombe à sa taille
+            // legacy 750x480 et SnapTick capture alors tout le run en petit (preuve : un run = 1 frame 1920x1080
+            // puis 382 frames 750x480). On re-maximise la console capturée si elle est repassée sous le seuil.
+            // ShowWindow(SW_MAXIMIZE) = même mécanisme prouvé qu'au démarrage (cross-desktop OK), Win32-only donc
+            // sûr depuis ce callback threadpool (pas d'UIA cross-thread). Borné : no-op quand w>=1400 → zéro spam,
+            // zéro effet quand déjà maximisé. Gate Headless : en non-headless la mosaïque tuile volontairement
+            // (<1400px) → ne pas la combattre (cf. RIG_TILE_*, MainWindowViewModel L3165).
+            if (Headless && GetWindowRect(_snapHwnd, out var wr))
+            {
+                int w = wr.Right - wr.Left;
+                if (w > 0 && w < 1400)
+                {
+                    Interaction.MaximizeWindow(_snapHwnd);
+                    if (!_snapReMaximizedOnce)
+                    {
+                        _snapReMaximizedOnce = true;
+                        Console.WriteLine($"      → self-heal : console RIG re-maximisee (etait {w}px < 1400, de-maximisee post-login)");
+                    }
+                }
+            }
             int seq = System.Threading.Interlocked.Increment(ref _snapSeq);
             var now = DateTime.Now;
             var fileName = Observability.SnapFileName(seq, now);   // #4 : ms dans le nom (source unique)
@@ -3731,7 +3932,11 @@ public sealed class LegacyDriver : IDisposable
         // (les 2 passes ont renvoyé null) → aucun impact sur le chemin nominal des scénarios qui voient la
         // grille tout de suite. On ne throw QUE si RIG ne charge plus (overlay absent = écran figé/planté =
         // vrai échec) OU si le plafond dur est atteint. Le run 17:04 (succès) voyait la grille à ~6,4s.
-        const long gridHardCapMs = 45000;
+        // fix-ok: 2026-06-16 — l'alerte 'interrompue' (form-interrompue) charge sa grille PROC_DEMANDE en >45s
+        // (reproduce run 20260616-153933 : cap atteint avec overlay « Traitement en cours » ENCORE present).
+        // Les autres alertes chargent en ~6-50s. Bump 45s->90s puis 90s->180s (2026-06-19) pour couvrir la
+        // grille TRES lourde de l'alerte 'reclamation' (911 demandes) qui depassait 90s par intermittence.
+        const long gridHardCapMs = 180000;
         bool announcedGrace = false;
         while (grid is null
                && LegacyParsing.ShouldKeepWaitingForGrid(swGrid.ElapsedMilliseconds, baseMaxMs: 18000, hardCapMs: gridHardCapMs, overlayPresent: IsLoadingOverlayOnScreen()))
@@ -5055,6 +5260,76 @@ public sealed class LegacyDriver : IDisposable
             catch { }
             Thread.Sleep(250);
         }
+    }
+
+    /// <summary>
+    /// Cockpit RAPTUVAL (Chemin B) : sélectionne la 1ʳᵉ ligne de la grille, clique un bouton d'action
+    /// de la toolbar (Écarter/Réactiver/Valider) par son libellé, et accepte les 2 popups WinForms
+    /// (confirmation OKCancel = bouton défaut OK, puis MessageBox de résultat). La VÉRIFICATION du succès
+    /// se fait CÔTÉ DB par l'appelant (transition RAPTU_ETAT) — le mur HDESK Mode B ne montre pas le
+    /// résultat de façon fiable. Renvoie false si aucune ligne/bouton (log explicite). Aucune impression.
+    /// </summary>
+    public bool DriveCockpitAction(string actionLower)
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + login + ouverture cockpit RAPTUVAL requis avant DriveCockpitAction()");
+
+        EnsureWindowMaximized();
+        WaitForLoadingOverlayToClear(maxMs: 15000);
+
+        // 1. Sélectionner la 1ʳᵉ ligne de données de la grille (DataItem/ListItem/row custom).
+        var rows = _window.FindAllDescendants(cf =>
+            cf.ByControlType(ControlType.DataItem).Or(cf.ByControlType(ControlType.ListItem)));
+        var firstRow = rows.FirstOrDefault(r => { try { return r.IsAvailable && !r.IsOffscreen; } catch { return false; } });
+        if (firstRow is null)
+        {
+            Console.WriteLine("      → DriveCockpitAction : aucune ligne de grille (DataItem/ListItem) trouvée.");
+            DumpDescendants(_window!, maxDepth: 5);
+            return false;
+        }
+        Console.WriteLine($"      → Ligne grille ciblée : '{SafeText(() => firstRow.Name)}'");
+        // Sélection RÉELLE : le RigDataGridView est FullRowSelect + MultiSelect=false.
+        // Un Select() UIA sur la ligne NE peuple PAS SelectedRows (le handler WinForms n'est pas
+        // déclenché) → GetSelectedStagings() renvoyait vide = faux-vert historique. On poste un vrai
+        // WM_LBUTTONDOWN/UP au centre de la 1re cellule (Interaction.ClickAtScreenPoint) : OnCellMouseDown
+        // → sélection FullRowSelect → SelectedRows peuplé → l'action agit réellement sur la ligne.
+        bool rowClicked = false;
+        try
+        {
+            var rect = firstRow.BoundingRectangle; // coords écran
+            if (rect.Width > 0 && rect.Height > 0)
+            {
+                int cx = rect.X + System.Math.Min(40, rect.Width / 2); // 1re cellule (colIdAudience)
+                int cy = rect.Y + rect.Height / 2;
+                var hwnd = Interaction.ClickAtScreenPoint(cx, cy, _app!.ProcessId);
+                rowClicked = hwnd != System.IntPtr.Zero;
+                Console.WriteLine($"      → Clic ligne (WM_LBUTTON) @({cx},{cy}) hwnd={(rowClicked ? "ok" : "ZERO")}");
+            }
+        }
+        catch (Exception ex) { Console.WriteLine($"      → ⚠ clic ligne jeté : {ex.Message}"); }
+        // Filet : Select() UIA si le clic écran n'a pas abouti (point hors-écran / hwnd autre process).
+        if (!rowClicked)
+        {
+            try { firstRow.Patterns.SelectionItem.Pattern.Select(); Console.WriteLine("      → filet SelectionItem.Select()"); }
+            catch { try { Interaction.Click(firstRow); } catch (Exception ex) { Console.WriteLine($"      → ⚠ select ligne jeté : {ex.Message}"); } }
+        }
+        Thread.Sleep(300); // sleep-ok: settle de la sélection avant le clic action (pas de signal pollable)
+
+        // 2. Cliquer le bouton d'action nommé.
+        var btn = FindToolbarActionButton(new[] { actionLower }, System.Array.Empty<string>());
+        if (btn is null)
+        {
+            Console.WriteLine($"      → DriveCockpitAction : bouton '{actionLower}' introuvable dans la toolbar.");
+            return false;
+        }
+        Console.WriteLine($"      → Click action '{SafeText(() => btn.Name)}'");
+        try { Interaction.Click(btn); } catch (Exception ex) { Console.WriteLine($"      → ⚠ click action jeté : {ex.Message}"); }
+
+        // 3. Confirmation (OKCancel, défaut = OK) puis MessageBox de résultat.
+        AcceptConfirmationPopupIfAny(maxMs: 5000);
+        AcceptConfirmationPopupIfAny(maxMs: 5000);
+        EnsureRigStillAlive("DriveCockpitAction " + actionLower);
+        return true;
     }
 
     /// <summary>Agrège le texte (Name + valeur Edit) des descendants Text/Pane/Edit de la fenêtre, jusqu'à
@@ -6593,6 +6868,42 @@ public sealed class LegacyDriver : IDisposable
     [DllImport("user32.dll")] private static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
     [StructLayout(LayoutKind.Sequential)] private struct RECT { public int Left, Top, Right, Bottom; }
 
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int GetWindowText(IntPtr hWnd, System.Text.StringBuilder s, int max);
+
+    /// <summary>Résout le hwnd de la VRAIE fenêtre console RIG à snapper. MainWindowHandle pointe parfois sur
+    /// un overlay (ex. UAC_InputIndicatorOverlayWnd, WS_EX_NOREDIRECTIONBITMAP) qui rend NOIR à PrintWindow.
+    /// On énumère les top-level du process RIG (desktop courant = HDESK) et on prend la fenêtre WinForms
+    /// VISIBLE dont le titre évoque la console ("Console"/"accueil"/"RIG"), fallback = la plus grande WinForms
+    /// visible, fallback = le hwnd fourni. Vérifié 2026-06-16 : la console (WindowsForms10.Window.8, 750x480)
+    /// se capture 100% non-noir sur HDESK, l'overlay UAC rend noir.</summary>
+    private static IntPtr ResolveRigConsoleHwnd(int rigPid, IntPtr fallback)
+    {
+        IntPtr best = IntPtr.Zero; long bestArea = 0; bool bestTitled = false;
+        EnumWindows((h, l) =>
+        {
+            GetWindowThreadProcessId(h, out uint p);
+            if (p != (uint)rigPid || !IsWindowVisible(h)) return true;
+            var cls = new System.Text.StringBuilder(256); GetClassName(h, cls, 256);
+            if (cls.ToString().IndexOf("WindowsForms", StringComparison.OrdinalIgnoreCase) < 0) return true;
+            if (!GetWindowRect(h, out RECT r)) return true;
+            long area = (long)Math.Max(0, r.Right - r.Left) * Math.Max(0, r.Bottom - r.Top);
+            if (area < 120 * 120) return true;
+            var tit = new System.Text.StringBuilder(256); GetWindowText(h, tit, 256);
+            string t = tit.ToString();
+            // fix-ok: 2026-06-16 (cause confirmee DIAG3) — la fenetre LOGIN "Connexion a RIG_DEV-..." contient
+            // "RIG" → l'ancien match bare "RIG" la prenait pour la console (=> _window sur le login, btn1..btn7
+            // introuvables). On EXCLUT le login, et on matche la console par "Console"/"accueil".
+            if (t.IndexOf("Connexion", StringComparison.OrdinalIgnoreCase) >= 0
+             || t.IndexOf("Connection", StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            bool titled = t.IndexOf("Console", StringComparison.OrdinalIgnoreCase) >= 0
+                       || t.IndexOf("accueil", StringComparison.OrdinalIgnoreCase) >= 0;
+            if ((titled && !bestTitled) || (titled == bestTitled && area > bestArea))
+            { best = h; bestArea = area; bestTitled = titled; }
+            return true;
+        }, IntPtr.Zero);
+        return best != IntPtr.Zero ? best : fallback;
+    }
+
     /// <summary>Énumère les fenêtres pour trouver le hwnd du ContextMenuStrip ouvert : visible, du
     /// process RIG, classe "WindowsForms10.Window.*" (le ToolStripDropDown WinForms), distinct de la
     /// console principale et d'une ombre (SysShadow). Retourne IntPtr.Zero si aucun.</summary>
@@ -7189,8 +7500,101 @@ public sealed class LegacyDriver : IDisposable
         Interaction.PressKey(target, 0x09 /* VK_TAB */);
 
         // Attente courte pour que RIG résolve le dossier.
-        Thread.Sleep(1500);
+        Thread.Sleep(1500); // sleep-ok: settle résolution dossier RIG post-Tab, pas de condition UIA à poller
         Console.WriteLine($"      ✓ Numéro de gestion '{numGestion}' saisi + Tab → dossier {contextLabel}");
+    }
+
+    /// <summary>
+    /// INC-A.2 — Recherche d'une instance dans PROC_MJUD : saisit le N° d'instance dans le champ
+    /// « N° de l'instance » (input le plus proche du label « instance », sinon 1er input value-supporté de la
+    /// zone header) puis clique « Rechercher l'instance ». ⚠ Le chargement qui suit pose un verrou
+    /// (instance.Lock via SqlRigConnectionWriteOnly) = écriture DB DEV, levée au Quitter + nettoyée par
+    /// ClearMyEnCoursLocks au scénario suivant. AUCUNE validation/enregistrement (READ-ONLY métier : on charge
+    /// l'écran de modif, on capture, on quitte — jamais Alt+V/Valider).
+    /// </summary>
+    public void SearchInstanceMjud(string numInstance)
+    {
+        if (_window is null) throw new InvalidOperationException("_window null");
+        if (string.IsNullOrWhiteSpace(numInstance)) throw new ArgumentException("numInstance vide", nameof(numInstance));
+
+        AutomationElement? target = null;
+        var labels = _window.FindAllDescendants(cf => cf.ByControlType(ControlType.Text))
+            .Where(t => { try { return t.IsAvailable && !t.IsOffscreen
+                && SafeText(() => t.Name).IndexOf("instance", StringComparison.OrdinalIgnoreCase) >= 0; } catch { return false; } })
+            .ToList();
+        foreach (var lbl in labels)
+        {
+            var lr = lbl.BoundingRectangle;
+            var cand = _window.FindAllDescendants()
+                .Where(c => { try {
+                    if (!c.IsAvailable || c.IsOffscreen || !c.Patterns.Value.IsSupported) return false;
+                    var r = c.BoundingRectangle;
+                    return r.X >= lr.X - 5 && Math.Abs(r.Y - lr.Y) < 40;
+                } catch { return false; } })
+                .OrderBy(c => { var r = c.BoundingRectangle; return (r.X - lr.X) * (r.X - lr.X) + (r.Y - lr.Y) * (r.Y - lr.Y); })
+                .ToList();
+            if (cand.Count > 0) { target = cand[0]; break; }
+        }
+        if (target is null)
+        {
+            target = _window.FindAllDescendants()
+                .Where(c => { try {
+                    if (!c.IsAvailable || c.IsOffscreen || !c.Patterns.Value.IsSupported) return false;
+                    var r = c.BoundingRectangle;
+                    return r.Width >= 50 && r.Width <= 600 && r.Height >= 12 && r.Height <= 40 && r.Y >= 30 && r.Y <= 200;
+                } catch { return false; } })
+                .OrderBy(c => c.BoundingRectangle.Y).ThenBy(c => c.BoundingRectangle.X)
+                .FirstOrDefault();
+        }
+        if (target is null)
+        {
+            try { CaptureScreenshot("mjud-instance-field-not-found"); } catch { }
+            throw new Exception("Champ 'N° de l'instance' introuvable dans l'écran de recherche MJUD");
+        }
+        Console.WriteLine($"      → Saisie N° instance '{numInstance}' dans input Id='{SafeText(() => target.AutomationId)}'");
+        Interaction.SetText(target, numInstance);
+
+        // CausalHypothesis: RIG expose ses boutons WinForms en ControlType.Pane (cf. login btnOk Name='Se
+        // connecter' Type=Pane), donc FindButtonWithRetry (filtre ByControlType(Button)) ne les trouve JAMAIS
+        // → e2e mjud-e2e-2 : « Bouton 'Rechercher' INTROUVABLE après 31 essais ». Fix : chercher par Name sur
+        // TOUT ControlType (Pane inclus), puis Interaction.Click.
+        AutomationElement? searchBtn = null;
+        var swBtn = Stopwatch.StartNew();
+        while (swBtn.Elapsed.TotalSeconds < 15 && searchBtn is null)
+        {
+            searchBtn = _window.FindAllDescendants()
+                .FirstOrDefault(e => { try {
+                    return e.IsAvailable && !e.IsOffscreen
+                        && SafeText(() => e.Name).IndexOf("Rechercher", StringComparison.OrdinalIgnoreCase) >= 0;
+                } catch { return false; } });
+            if (searchBtn is null) Thread.Sleep(300); // sleep-ok: poll bouton Rechercher (settle rendu écran)
+        }
+        if (searchBtn is null) throw new Exception("Bouton 'Rechercher l'instance' introuvable (tout ControlType) dans l'écran MJUD");
+        Console.WriteLine($"      → Clic 'Rechercher' (Type={SafeText(() => searchBtn.ControlType.ToString())})");
+        Interaction.Click(searchBtn);
+        Thread.Sleep(2500); // sleep-ok: settle chargement instance (verrou + écran modif), pas de condition UIA fiable
+        Console.WriteLine($"      ✓ Clic 'Rechercher' effectué pour '{numInstance}' (chargement écran de modif à vérifier via .Expect)");
+    }
+
+    /// <summary>
+    /// INC-A.2 — Vérif DISCRIMINANTE que la recherche a ABOUTI : on a quitté l'écran de recherche (le bouton
+    /// « Rechercher l'instance » n'est plus présent). Sans ce contrôle, le scénario passait VERT même en restant
+    /// sur l'écran de recherche (faux-vert vécu mjud-e2e-3 : mauvais numéro → écran inchangé, PASS mensonger).
+    /// Retourne true si l'écran a avancé (recherche aboutie), false si on est encore sur la recherche.
+    /// </summary>
+    public bool MjudInstanceLoaded()
+    {
+        if (_window is null) return false;
+        try
+        {
+            bool searchButtonStillThere = _window.FindAllDescendants()
+                .Any(e => { try {
+                    return e.IsAvailable && !e.IsOffscreen
+                        && SafeText(() => e.Name).IndexOf("Rechercher l", StringComparison.OrdinalIgnoreCase) >= 0;
+                } catch { return false; } });
+            return !searchButtonStillThere; // écran de recherche disparu = instance chargée en modif
+        }
+        catch { return false; }
     }
 
     /// <summary>
@@ -8168,5 +8572,166 @@ public sealed class LegacyDriver : IDisposable
         // ── Étape 5 : capture screenshot ──────────────────────────────────────
         var label = $"retaud-pubs-en-attente-{audienceId}{(loaded ? "" : "-diag-notloaded")}";
         return CaptureScreenshot(label);
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    //  DUMP-MENU — scan READ-ONLY de toute la navigation Console d'accueil
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// <summary>
+    /// Apres login, parcourt les 7 rails (btn1..btn7) x leurs sous-menus x
+    /// leurs processus et retourne un arbre textuel ASCII. ENUMERE SEULEMENT :
+    /// aucun double-clic / invoke sur un item de lstProcessus (pas d'ouverture
+    /// de PROC, pas de risque mail/etat). La selection d'un sous-menu est un
+    /// clic simple (equivalent a la mise en surbrillance dans la liste).
+    /// </summary>
+    /// <returns>
+    /// Arbre au format :
+    ///   RAIL 1 [label]
+    ///     SOUSMENU: nom
+    ///       PROC: nom1
+    ///       PROC: nom2
+    ///     ...
+    /// </returns>
+    public string DumpMenuTree()
+    {
+        if (_app is null || _automation is null || _window is null)
+            throw new InvalidOperationException("Launch() + ClickSeConnecter() doivent etre appeles avant DumpMenuTree()");
+
+        // Garantit la fenetre maximisee (btn3..btn7 hors viewport sinon)
+        if (Headless)
+            EnsureWindowMaximized();
+
+        var sb = new System.Text.StringBuilder();
+        sb.AppendLine("=== RIG MENU TREE ===");
+        sb.AppendLine($"Generated: {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
+        sb.AppendLine();
+
+        int totalRails = 0;
+        int totalSousmenus = 0;
+        int totalProcessus = 0;
+
+        string prevSousmenuSig = CurrentListSignature("lstSousmenu");
+
+        for (int n = 1; n <= 7; n++)
+        {
+            var btn = FindByAutomationIdWithRetry("btn" + n, timeoutMs: 2500);
+            if (btn is null)
+            {
+                Console.WriteLine($"   [dump] btn{n} absent apres retry — skip");
+                sb.AppendLine($"RAIL {n} [(absent)]");
+                continue;
+            }
+
+            string railLabel = SafeText(() => btn.Name);
+            // ASCII-only : remplace les accentes
+            railLabel = ToAscii(railLabel);
+            Console.WriteLine($"   [dump] === btn{n} '{railLabel}' : activation...");
+
+            // Clic avec retry (meme pattern que OpenProcessus)
+            AutomationElement[] subItems = System.Array.Empty<AutomationElement>();
+            string newSig = prevSousmenuSig;
+            for (int attempt = 1; attempt <= 3; attempt++)
+            {
+                if (!TryActivateRailTab(btn, $"dump-btn{n}")) break;
+                subItems = WaitForListRepopulated("lstSousmenu", prevSousmenuSig, 3000);
+                newSig = string.Join("|", subItems.Select(s => SafeText(() => s.Name)));
+                if (subItems.Length > 0 && newSig != prevSousmenuSig) break;
+                if (attempt < 3)
+                {
+                    Console.WriteLine($"   [dump] btn{n} panneau fige (tentative {attempt}/3) — re-clic");
+                    Thread.Sleep(800); // sleep-ok: RIG async rail reload, pas de signal observable
+                }
+            }
+
+            if (subItems.Length == 0)
+            {
+                Console.WriteLine($"   [dump] btn{n} lstSousmenu vide apres repopulation");
+                sb.AppendLine($"RAIL {n} [{railLabel}] (vide)");
+                prevSousmenuSig = newSig;
+                continue;
+            }
+
+            totalRails++;
+            prevSousmenuSig = newSig;
+            sb.AppendLine($"RAIL {n} [{railLabel}]");
+            Console.WriteLine($"   [dump] btn{n} '{railLabel}' : {subItems.Length} sous-menus");
+
+            string prevProcSig = CurrentListSignature("lstProcessus");
+
+            for (int i = 0; i < subItems.Length; i++)
+            {
+                string subLabel = SafeText(() => subItems[i].Name);
+                subLabel = ToAscii(subLabel);
+
+                // Clic simple (JAMAIS double-clic ni Invoke) pour charger lstProcessus
+                bool activated = false;
+                try
+                {
+                    Interaction.Click(subItems[i]);
+                    activated = true;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"   [dump]   sousmenu[{i}] clic jete : {ex.Message}");
+                }
+
+                AutomationElement[] procItems = System.Array.Empty<AutomationElement>();
+                if (activated)
+                {
+                    procItems = WaitForListRepopulated("lstProcessus", prevProcSig, 2000);
+                    prevProcSig = string.Join("|", procItems.Select(p => SafeText(() => p.Name)));
+                }
+
+                sb.AppendLine($"  SOUSMENU: {subLabel}");
+                totalSousmenus++;
+
+                if (procItems.Length == 0)
+                {
+                    sb.AppendLine($"    (vide)");
+                    Console.WriteLine($"   [dump]   sousmenu[{i}] '{subLabel}' : lstProcessus vide");
+                    continue;
+                }
+
+                Console.WriteLine($"   [dump]   sousmenu[{i}] '{subLabel}' : {procItems.Length} processus");
+                foreach (var pItem in procItems)
+                {
+                    string procName = ToAscii(SafeText(() => pItem.Name));
+                    if (string.IsNullOrWhiteSpace(procName)) continue;
+                    sb.AppendLine($"    PROC: {procName}");
+                    totalProcessus++;
+                }
+            }
+
+            sb.AppendLine();
+        }
+
+        sb.AppendLine($"=== TOTAUX : {totalRails} rails, {totalSousmenus} sous-menus, {totalProcessus} processus ===");
+
+        // Log resume console
+        Console.WriteLine($"   [dump] Arbre complet : {totalRails} rails non vides, {totalSousmenus} sous-menus, {totalProcessus} processus");
+
+        return sb.ToString();
+    }
+
+    /// <summary>
+    /// Transliteration ASCII best-effort : remplace les caracteres accentues
+    /// les plus courants (francais) par leur equivalent ASCII. Garantit une
+    /// sortie propre dans les fichiers texte mono-encodage (UTF-8 sans BOM mais
+    /// lisible sans police speciale).
+    /// </summary>
+    private static string ToAscii(string s)
+    {
+        if (string.IsNullOrEmpty(s)) return s;
+        // Normalise en NFD puis garde les caracteres ASCII (supprime les diacritiques)
+        var normalized = s.Normalize(System.Text.NormalizationForm.FormD);
+        var sb = new System.Text.StringBuilder(normalized.Length);
+        foreach (char c in normalized)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(c);
+            if (cat != System.Globalization.UnicodeCategory.NonSpacingMark)
+                sb.Append(c);
+        }
+        return sb.ToString();
     }
 }
